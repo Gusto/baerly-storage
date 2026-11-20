@@ -397,7 +397,7 @@ To log, trace or refresh auth on every request, wrap `fetch`; the client already
 
 ## Long-poll: `/v1/since`
 
-`GET /v1/since?collection=…&cursor=…` is the long-poll endpoint that streams mutations without WebSockets. The server holds the request open for ~25 s; if new log entries land in that window it flushes them immediately, otherwise it returns an empty batch with the cursor unchanged.
+`GET /v1/since?collection=…&cursor=…` is the long-poll endpoint that streams mutations without WebSockets. The server holds the request open for ~25 s; if new log entries land in that window it flushes them immediately, otherwise it returns an empty batch.
 
 ```ts
 // Wire shape (returned raw — not wrapped in HttpOkEnvelope):
@@ -419,7 +419,7 @@ interface LogEntry {
 }
 ```
 
-**Cursor priming.** First call: pass `cursor=` (empty string). The server's fast path returns immediately _iff_ the log already has entries for this collection — you get `events: [...]` and an opaque `next_cursor`. **If the collection is empty, the first call blocks for the full long-poll budget (~25 s) before returning `events: []` with `next_cursor: ''`.** Either prime by inserting one row first if you need an immediate response, or budget your client / test for the full timeout. Subsequent calls pass the returned cursor back — treat it as an opaque string, and `events` is empty iff the budget elapsed with no new writes (`next_cursor` unchanged).
+**Cursor priming.** First call: pass `cursor=` (empty string). The server's fast path returns immediately _iff_ the log already has entries for this collection — you get `events: [...]` and an opaque `next_cursor`. **If the collection is empty, the first call blocks for the full long-poll budget (~25 s) before returning `events: []` and a new `next_cursor`.** Either prime by inserting one row first if you need an immediate response, or budget your client / test for the full timeout. Every later call passes the returned cursor back, even after an empty batch — treat it as an opaque string. An empty batch can still carry a new `next_cursor` (a position after changes already folded into the snapshot, or one that has learned the collection's generation), so always keep the returned cursor; `events` is empty when the budget elapsed with no new writes. A cursor survives log folds; it expires only when the client falls behind what the log retains.
 
 **Test-mode tuning.** Vitest's default per-test timeout is 5 s; the long-poll's 25 s budget will dominate that. Shrink it on the worker factory under a test-only env switch:
 

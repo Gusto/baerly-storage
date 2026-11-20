@@ -177,7 +177,7 @@ Mapping at the SSE adapter:
 
 A direct bucket consumer reads `current.json` for the snapshot pointer and the `tail_hint` floor, folds the trusted range `[log_seq_start, tail_hint)`, then forward-probes from `max(log_seq_start, tail_hint)` — normally `tail_hint` — and stops at the first 404 (the true tail). Listing the `log/` prefix is still not a commit-discovery protocol.
 
-On the kernel read/fold path, if a consumer GETs an in-range `log/<seq>.json` inside the trusted `[log_seq_start, tail_hint)` range and receives 404, that is a protocol invariant violation; the kernel surfaces it as an error rather than silently skipping the entry. The `/v1/since` consumer route is narrower: when serving a cursor boundary, it tolerates a missing in-range entry by skipping it, since the GC sweeper may have already deleted a log object that has been folded into the snapshot.
+On the kernel read/fold path, if a consumer GETs an in-range `log/<seq>.json` inside the trusted `[log_seq_start, tail_hint)` range and receives 404, that is a protocol invariant violation; the kernel surfaces it as an error rather than silently skipping the entry. The `/v1/since` consumer route answers the same 404 by cursor: a resumed cursor gets `CursorExpired`, because skipping the entry would gap its stream, while an empty cursor skips it, since `""` already means "from the floor" and the GC sweeper may have deleted an entry that a fold has since moved below it.
 
 ## Stability
 

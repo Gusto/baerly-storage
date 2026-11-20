@@ -213,7 +213,11 @@ describe("an idle /v1/since long-poll on Workers Free with storage over fetch", 
 
     const idle = await since("");
     expect(idle.status).toBe(200);
-    await expect(idle.json()).resolves.toEqual({ events: [], next_cursor: "" });
+    // No events, but a position the client resumes from: the collection
+    // has nothing committed yet, so the position before its first change.
+    const idleBody = (await idle.json()) as { events: unknown[]; next_cursor: string };
+    expect(idleBody.events).toEqual([]);
+    expect(idleBody.next_cursor).not.toBe("");
     expect(ledgers.at(-1)!.charged.external).toBeLessThanOrEqual(CF_FREE_EXTERNAL_REQUEST_LIMIT);
     expect(ledgers.at(-1)!.charged.external).toBe(totalCalls(issued.read()));
 
@@ -230,7 +234,7 @@ describe("an idle /v1/since long-poll on Workers Free with storage over fetch", 
     expect(put.status).toBeLessThan(300);
     await drain();
 
-    const next = await since("");
+    const next = await since(idleBody.next_cursor);
     expect(next.status).toBe(200);
     const body = (await next.json()) as { events: Array<{ doc_id: string }> };
     expect(body.events.map((e) => e.doc_id)).toEqual(["d0"]);

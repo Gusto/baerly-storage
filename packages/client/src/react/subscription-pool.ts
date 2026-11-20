@@ -261,15 +261,19 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
           if (controller.signal.aborted) {
             return;
           }
-          if (res.events.length > 0 || res.next_cursor !== poll.cursor) {
-            poll.cursor = res.next_cursor;
-            if (res.events.length > 0) {
-              invalidateForTable(table);
-            }
+          // Adopt `next_cursor` even with no events: the first response to
+          // `""` names a position past everything already folded, and
+          // staying on `""` would let a change commit and fold between two
+          // polls unseen. Only events invalidate.
+          poll.cursor = res.next_cursor;
+          if (res.events.length > 0) {
+            invalidateForTable(table);
           }
-          // An empty bootstrap is only unproven when it minted a non-empty
-          // replacement cursor. A stable empty tail has no replacement left to
-          // prove, while a non-empty request proves the candidate by succeeding.
+          // A recovery bootstrap (`""`) is unproven while it hands back a
+          // replacement cursor, empty batch or not: the replacement proves
+          // itself by succeeding on the next request. `""` back means the
+          // server could not read the collection, so there is no
+          // replacement to prove.
           const recoveryProven =
             !deadCursorRecoveryPending || requestCursor !== "" || res.next_cursor === "";
           if (recoveryProven) {

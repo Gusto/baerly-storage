@@ -8,9 +8,9 @@ import { type RequestContext, request } from "./request.ts";
  * `subscription-pool` is its only first-party consumer.
  *
  * Long-poll semantics live server-side: the call resolves once the
- * server's budget elapses (`{ events: [], next_cursor: <same> }`) or
- * one or more events arrive. Callers are expected to loop over this
- * helper, threading `next_cursor` through.
+ * server's budget elapses (`{ events: [] }`, at the same cursor or, for
+ * `""`, a position cursor) or one or more events arrive. Callers are
+ * expected to loop over this helper, threading `next_cursor` through.
  *
  * `cursor === ""` means "start at `log_seq_start`" (the wire
  * protocol); pass the previously returned `next_cursor` to resume.

@@ -77,16 +77,22 @@ export interface HttpErrorEnvelope {
 /**
  * Long-poll response. `events` is the slice of `LogEntry`s between
  * the request's `cursor` and `next_cursor`. Client passes
- * `next_cursor` back on the next call. Empty `events` + same
- * `next_cursor` means "nothing changed within the budget".
+ * `next_cursor` back on the next call, always, even with no events.
+ * Empty `events` + same `next_cursor` means "nothing changed within
+ * the budget". The first response to `""` may carry empty `events` and
+ * a new `next_cursor`: the position after the changes already folded
+ * into the collection's snapshot.
  *
  * `next_cursor` is **opaque**: echo it back verbatim, never parse it.
  * `""` means "start from the collection's log floor" and is always
- * valid.
+ * valid. It comes back only from a request that ran out of storage
+ * calls before reading the collection. A cursor survives the folds
+ * that compact the log.
  *
  * A `410 CursorExpired` on resume means the cursor is permanently dead:
- * the changes after it are no longer retained, or its generation was
- * truncated by `baerly admin restore --force`. Neither clears on
+ * a change after it is no longer retained (the client fell further
+ * behind than the log keeps), or its generation was truncated by
+ * `baerly admin restore --force`. Neither clears on
  * retry: re-read, then restart with `cursor: ""`. Retrying the rejected
  * cursor loops forever. Back off before re-bootstrapping so a cursor
  * rejected on every lap cannot become a hot loop. A malformed cursor is

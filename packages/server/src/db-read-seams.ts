@@ -113,9 +113,8 @@ export const getCurrentJson = async (
  * Read + parse one `LogEntry` by `seq` from
  * `manifests/<collection>/log/<seq>.json`. Returns `null`
  * when the entry is missing — this typically means the GC sweeper
- * deleted the entry between a `readCurrentJson` and this GET (the
- * `/v1/since` handler treats the race as silent and skips the
- * entry). Throws `BaerlyError{code:"InvalidResponse"}` on a body
+ * deleted the entry between a `readCurrentJson` and this GET.
+ * Throws `BaerlyError{code:"InvalidResponse"}` on a body
  * that isn't valid JSON.
  *
  * `current` is the manifest this read is floored against — pass the
@@ -150,6 +149,48 @@ export const getLogEntry = async (
   // boundary and must not be reclassified as an invariant violation.
   assertNameSegment(collection, "collection");
   assertAtOrAboveLogFloor("getLogEntry", seq, current);
+  return readLogEntry(db, collection, seq, opts);
+};
+
+/**
+ * {@link getLogEntry} for a `seq` that may sit below `log_seq_start`:
+ * an entry already folded into the snapshot whose object GC has not
+ * reclaimed yet. `/v1/since` reads these for a cursor that lags the
+ * floor, so a client a fold overtook can still resume. `null` means the
+ * object was reclaimed, which the caller must surface rather than skip.
+ *
+ * Only the certified delete floor is guarded: below it the object is
+ * gone by certificate, and asking for it is the same caller bug
+ * {@link getLogEntry} rejects.
+ *
+ * @throws BaerlyError code="Internal" — `seq` is below the certified
+ *         prefix bound `current.log_delete_floor`.
+ * @throws BaerlyError code="InvalidConfig" — as for {@link getLogEntry}.
+ *
+ * @internal — typed seam for the HTTP handler.
+ */
+export const getRetainedLogEntry = async (
+  db: Db<BaerlyConfig>,
+  collection: string,
+  seq: number,
+  current: CurrentJson,
+  opts?: { signal?: AbortSignal },
+): Promise<LogEntry | null> => {
+  assertNameSegment(collection, "collection");
+  if (!Number.isSafeInteger(seq) || seq < 0) {
+    throw new BaerlyError("Internal", `getRetainedLogEntry: seq ${seq} is not a log slot`);
+  }
+  assertAtOrAboveDeleteFloor("getRetainedLogEntry", seq, current);
+  return readLogEntry(db, collection, seq, opts);
+};
+
+/** The GET + parse behind {@link getLogEntry} / {@link getRetainedLogEntry}; callers guard `seq` first. */
+const readLogEntry = async (
+  db: Db<BaerlyConfig>,
+  collection: string,
+  seq: number,
+  opts?: { signal?: AbortSignal },
+): Promise<LogEntry | null> => {
   const key = logObjectKey(`${physicalPrefixFor(db.app, db.tenant)}manifests/${collection}`, seq);
   const got = await internalsOf(db).storage.get(key, opts);
   if (got === null) {
@@ -251,8 +292,10 @@ export const probeLogChunk = async (
  * either a stale seq the caller failed to screen, or a caller that
  * never screened at all. Both are protocol-invariant violations by
  * internal code, hence `Internal` rather than `InvalidConfig`: no
- * client input reaches these seams unscreened (`/v1/since` rejects a
- * sub-floor cursor with `CursorExpired` before ever getting here).
+ * client input reaches these seams unscreened (`/v1/since` reads a
+ * lagging cursor's sub-floor entries through {@link getRetainedLogEntry},
+ * and rejects one below the delete floor with `CursorExpired` before
+ * ever getting here).
  *
  * Below `log_delete_floor` the contiguous prefix is certified deleted,
  * so the object is not merely *reclaimable* but already *reclaimed*.
@@ -269,12 +312,24 @@ export const probeLogChunk = async (
  * trade and survives because it throws.
  */
 const assertAtOrAboveLogFloor = (seam: string, seq: number, current: CurrentJson): void => {
+  assertAtOrAboveDeleteFloor(seam, seq, current);
   const floor = logSeqStartOf(current);
-  // The delete floor is checked FIRST, and clamped.
+  if (seq < floor) {
+    throw new BaerlyError(
+      "Internal",
+      `${seam}: seq ${seq} is below the fold floor log_seq_start=${floor}; entries beneath the floor are folded into the snapshot and may already be reclaimed`,
+    );
+  }
+};
+
+/** The delete-floor half of {@link assertAtOrAboveLogFloor}. */
+const assertAtOrAboveDeleteFloor = (seam: string, seq: number, current: CurrentJson): void => {
+  // The delete floor is checked FIRST (before the fold floor in
+  // `assertAtOrAboveLogFloor`), and clamped.
   //
   // First, because `log_delete_floor <= log_seq_start` is a transition
   // invariant: any seq below the delete floor is also below the fold
-  // floor, so an arm appended after the check below would be unreachable
+  // floor, so an arm checked after the fold floor would be unreachable
   // dead code. Ordering it here changes no accept/reject outcome — only
   // which diagnostic wins — and lets the more specific one win.
   //
@@ -296,16 +351,10 @@ const assertAtOrAboveLogFloor = (seam: string, seq: number, current: CurrentJson
     const clamped =
       storedDeleteFloor === deleteFloor
         ? ""
-        : ` (stored log_delete_floor=${storedDeleteFloor}, clamped to log_seq_start=${floor})`;
+        : ` (stored log_delete_floor=${storedDeleteFloor}, clamped to log_seq_start=${logSeqStartOf(current)})`;
     throw new BaerlyError(
       "Internal",
       `${seam}: seq ${seq} is below the certified delete floor ${deleteFloor}${clamped}; the log object is GONE — it has been reclaimed, not merely made reclaimable`,
-    );
-  }
-  if (seq < floor) {
-    throw new BaerlyError(
-      "Internal",
-      `${seam}: seq ${seq} is below the fold floor log_seq_start=${floor}; entries beneath the floor are folded into the snapshot and may already be reclaimed`,
     );
   }
 };
