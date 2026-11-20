@@ -96,8 +96,10 @@
  *
  * {@link foldLogicalMutant} runs the same fold with one single-defect
  * variant from {@link LOGICAL_FOLD_MUTANTS}: the seven fast-check variants,
- * with "skip first/last mutation" split into two, plus one per property that
- * no listed variant reaches (`absent-delete-creates-row`). It exists so the
+ * with "skip first/last mutation" split into two, plus two the list misses:
+ * `absent-delete-creates-row` (the only one the absent-delete property can
+ * catch) and `array-order-not-seq-order` (applies entries in input array
+ * order instead of seq order). It exists so the
  * test suite can prove each property goes red; nothing else should call it.
  */
 
@@ -137,6 +139,7 @@ export const LOGICAL_FOLD_MUTANTS = [
   "skip-first-mutation",
   "skip-last-mutation",
   "first-write-wins",
+  "array-order-not-seq-order",
   "delete-as-noop",
   "absent-delete-creates-row",
   "merge-instead-of-replace",
@@ -255,6 +258,9 @@ const foldWith = (input: LogicalFoldInput, mutant: LogicalFoldMutant | undefined
       throw new Error(`foldLogical: no entry at seq ${seq} inside [${baseSeq}, ${targetSeq})`);
     }
     seqs.push(seq);
+  }
+  if (mutant === "array-order-not-seq-order") {
+    seqs.splice(0, seqs.length, ...entries.map((e) => e.seq).filter((seq) => seqs.includes(seq)));
   }
   if (mutant === "target-inclusive-bound" && bySeq.has(targetSeq)) {
     seqs.push(targetSeq);
