@@ -58,9 +58,10 @@ Generated artifacts (`baerly.spec.json`, `version-matrix.json`) must be fresh at
    git tag "v$V" && git push origin "v$V"
    ```
 
-5. **Approve the deployment.** The tag push runs the `release` workflow in two jobs:
+5. **Approve the deployment.** The tag push runs the `release` workflow in three jobs:
    - `pack` has no OIDC token. It checks that the tag equals `v<version>` for both packages and that the tagged commit is on `origin/main`, installs with the pnpm store cache disabled (so a cache entry written by another run can't reach a tarball), runs `pnpm release --pack` (see [The `pnpm release` script](#the-pnpm-release-script)) and uploads the two tarballs as an artifact.
-   - `publish` waits on the `npm-publish` environment's required reviewer; approve it in the Actions tab. It is the only job with `id-token: write`. It sets up Node with `actions/setup-node` alone and installs nothing, not even pnpm, and runs no build or lifecycle script, so no dependency, build plugin or package-manager release can mint the token. It publishes the uploaded tarballs with the npm CLI bundled with Node (`npm publish <tarball> --provenance`), which exchanges the OIDC token for a short-lived publish credential, then waits until both published versions serve a provenance attestation and fails if they don't.
+   - `publish` waits on the `npm-publish` environment's required reviewer; approve it in the Actions tab. It is the only job with `id-token: write`. It sets up Node with `actions/setup-node` alone and installs nothing, not even pnpm, and runs no build or lifecycle script, so no dependency, build plugin or package-manager release can mint the token. It publishes the uploaded tarballs with the npm CLI bundled with Node (`npm publish <tarball> --provenance`), which exchanges the OIDC token for a short-lived publish credential.
+   - `attest` holds no token and installs nothing. It polls the registry for up to 10 minutes per package until both published versions serve a provenance attestation, and fails if they don't. It is a separate job so that if the registry is slow, "Re-run failed jobs" repeats only this check; re-running `publish` would try to publish an existing version and fail.
 
 6. **Run the [post-publish smoke](#post-publish-smoke).**
 
@@ -179,7 +180,7 @@ rm -f "gusto-baerly-storage-$V.tgz"
 
 Expected: `ok: <version>`. A hand-corrupted or stale tarball makes it exit 1.
 
-Provenance check (the workflow's last step checks the same field for both):
+Provenance check (the workflow's `attest` job checks the same field for both):
 
 ```sh
 pnpm view "@gusto/baerly-storage@$V" dist.attestations.provenance

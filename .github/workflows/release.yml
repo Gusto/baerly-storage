@@ -11,6 +11,8 @@
 #   lifecycle scripts, so no dependency, build plugin or package-manager
 #   release can mint the token. npm's trusted-publisher config names this
 #   file and that environment, so renaming either breaks publishing.
+#   `attest` then checks both published versions carry provenance; it is a
+#   separate job so a re-run never republishes.
 # - workflow_dispatch: the `dry-run` job runs the same audits and gates and
 #   a publish dry run. It never gets `id-token: write`.
 name: release
@@ -158,7 +160,17 @@ jobs:
       - name: Publish the packed tarballs
         run: node scripts/publish.mjs --publish="$RUNNER_TEMP/tarballs"
 
-      # The registry can take a moment to serve a new version's metadata.
+  # Separate from `publish` so "Re-run failed jobs" repeats only this check:
+  # re-running `publish` would try to publish an existing version and fail.
+  # No token, no checkout, nothing installed.
+  attest:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions: {}
+    steps:
+      # The registry can take minutes to serve a new version's metadata
+      # (about 3 minutes after publish on 0.7.0), so poll for up to 10.
       - name: Check both packages carry provenance attestations
         working-directory: ${{ runner.temp }}
         env:
@@ -166,7 +178,7 @@ jobs:
         run: |
           v="${TAG#v}"
           for pkg in @gusto/baerly-storage @gusto/create-baerly-storage; do
-            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            for attempt in $(seq 1 40); do
               # A version the registry doesn't serve yet makes `npm view`
               # exit non-zero with an error object; only a real provenance
               # attestation passes.
@@ -177,6 +189,6 @@ jobs:
               fi
               sleep 15
             done
-            echo "::error::$pkg@$v has no dist.attestations"
+            echo "::error::$pkg@$v has no dist.attestations after 10 minutes"
             exit 1
           done
