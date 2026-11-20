@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { analyze, type NodeBaseline, pct, pctR7 } from "./analyze.ts";
-import { evaluatePrereg, formatPrereg, parsePrereg } from "./prereg.ts";
+import { analyze, formatReport, type NodeBaseline, pct, pctR7 } from "./analyze.ts";
+import { analyzeOptionsOf, evaluatePrereg, formatPrereg, parsePrereg } from "./prereg.ts";
 import { CELLS } from "./src/cells.ts";
 
 const DECISION = CELLS.filter(
@@ -14,12 +14,19 @@ const PREREG = {
   sampleFloor: 50,
   p99ThresholdMs: 8,
   percentileMethod: "nearest-rank",
+  coldInvocations: "exclude",
   capture: { requestsPerCell: 60, warmupsPerCell: 2, concurrency: 2 },
 };
 
 const url = (cell: string, extra = "") => `https://x.workers.dev/?cell=${cell}${extra}`;
+interface Ev {
+  outcome: string;
+  cpuTime: number;
+  url: string;
+  logs?: unknown[];
+}
 /** Request `i` of a cell, as `run-cells.sh` sends it. */
-const ev = (cell: string, i: number, cpu = 5, outcome = "ok") => ({
+const ev = (cell: string, i: number, cpu = 5, outcome = "ok"): Ev => ({
   outcome,
   cpuTime: cpu,
   url: url(cell, `&i=${i}`),
@@ -27,7 +34,7 @@ const ev = (cell: string, i: number, cpu = 5, outcome = "ok") => ({
 });
 
 /** A capture that satisfies PREREG on every decision cell. */
-const goodEvents = (cells: readonly string[] = DECISION) =>
+const goodEvents = (cells: readonly string[] = DECISION): Ev[] =>
   cells.flatMap((c) => [
     ...Array.from({ length: 2 }, () => ({ outcome: "ok", cpuTime: 99, url: url(c, "&warmup=1") })),
     ...Array.from({ length: 60 }, (_, i) => ev(c, i + 1)),
@@ -38,7 +45,7 @@ const at = (events: readonly { url: string }[], cell: string, i: number) =>
 
 const verdict = (events: object[], prereg: object = PREREG) => {
   const p = parsePrereg(prereg);
-  const a = analyze(events, BASE, { method: p.percentileMethod });
+  const a = analyze(events, BASE, analyzeOptionsOf(p));
   return { a, p, v: evaluatePrereg(a, p) };
 };
 
@@ -78,6 +85,8 @@ describe("parsePrereg", () => {
     expect(() => parsePrereg({ ...PREREG, extra: 1 })).toThrow(/unexpected field "extra"/);
     expect(() => parsePrereg({ ...PREREG, decisionCells: ["nope"] })).toThrow(/not a known cell/);
     expect(() => parsePrereg({ ...PREREG, percentileMethod: "r8" })).toThrow(/percentileMethod/);
+    const { coldInvocations: _c, ...noCold } = PREREG;
+    expect(() => parsePrereg(noCold)).toThrow(/coldInvocations must be one of exclude, include/);
     expect(() => parsePrereg({ ...PREREG, capture: { ...PREREG.capture, rate: 1 } })).toThrow(
       /unexpected capture constant "rate"/,
     );
@@ -233,8 +242,47 @@ describe("evaluatePrereg", () => {
     expect(v.cells[0]!.pass).toBe(true);
     expect(v.pass).toBe(true);
     const text = formatPrereg(a, p, v);
-    expect(text).toContain(`${target} | 60 | 0 | 0 | 0 | 0 | 1 / 1 | 5.00 | PASS`);
+    expect(text).toContain(`${target} | 60 | 0 | 0 | 0 | 0 | 0 | 1 / 1 | 5.00 | PASS`);
     expect(text).toContain(`Note: 1 decision cell(s) had killed warmups (${target})`);
+  });
+
+  test("cold invocations: excluded or included from n ok and p99 as declared", () => {
+    const target = DECISION[0]!;
+    const events = goodEvents();
+    const coldLog = [{ message: [`CPUFACTOR ${JSON.stringify({ cell: target, cold: true })}`] }];
+    events[at(events, target, 1)] = { ...ev(target, 1, 30), logs: coldLog };
+    const excluded = verdict(events);
+    expect(excluded.v.cells[0]!.pass).toBe(true);
+    expect(excluded.v.cells[0]!.row!.n).toBe(59);
+    expect(excluded.v.cells[0]!.row!.cold).toBe(1);
+    expect(formatPrereg(excluded.a, excluded.p, excluded.v)).toContain(
+      'Cold invocations ("cold":true): EXCLUDED',
+    );
+    expect(formatReport(excluded.a)).not.toContain("COLD-INCLUSIVE");
+    const included = verdict(events, { ...PREREG, coldInvocations: "include" });
+    expect(included.v.cells[0]!.row!.n).toBe(60);
+    expect(included.v.cells[0]!.reasons).toEqual(["p99 30.00 ms > 8 ms"]);
+    expect(formatReport(included.a)).toContain("COLD-INCLUSIVE");
+  });
+
+  test("a killed cold invocation is a kill under either cold policy", () => {
+    const target = DECISION[0]!;
+    const events = goodEvents();
+    const coldLog = [{ message: [`CPUFACTOR ${JSON.stringify({ cell: target, cold: true })}`] }];
+    events[at(events, target, 1)] = { ...ev(target, 1, 12, "exceededCpu"), logs: coldLog };
+    for (const coldInvocations of ["exclude", "include"]) {
+      expect(verdict(events, { ...PREREG, coldInvocations }).v.cells[0]!.reasons).toEqual([
+        "1 killed",
+      ]);
+    }
+  });
+
+  test("an analysis whose cold handling differs from the prereg FAILs", () => {
+    const p = parsePrereg(PREREG);
+    const a = analyze(goodEvents(), BASE, { includeCold: true });
+    expect(evaluatePrereg(a, p).failures).toContain(
+      "analysis included cold invocations, prereg declares exclude",
+    );
   });
 
   test("without prereg the report is unchanged by incomplete tracking", () => {

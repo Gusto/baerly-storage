@@ -16,6 +16,7 @@
   "sampleFloor": null,
   "p99ThresholdMs": null,
   "percentileMethod": "nearest-rank",
+  "coldInvocations": "exclude",
   "capture": {
     "requestsPerCell": 200,
     "warmupsPerCell": 5,

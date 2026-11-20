@@ -3,7 +3,13 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyze, formatReport, type NodeBaseline, parseStream } from "./analyze.ts";
-import { evaluatePrereg, formatPrereg, parsePrereg, type Prereg } from "./prereg.ts";
+import {
+  analyzeOptionsOf,
+  evaluatePrereg,
+  formatPrereg,
+  parsePrereg,
+  type Prereg,
+} from "./prereg.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -37,7 +43,7 @@ if (preregPath !== undefined) {
 }
 const events = parseStream(readFileSync(eventsPath, "utf8"));
 const base = JSON.parse(readFileSync(basePath, "utf8")) as NodeBaseline;
-const a = analyze(events, base, prereg === undefined ? {} : { method: prereg.percentileMethod });
+const a = analyze(events, base, prereg === undefined ? {} : analyzeOptionsOf(prereg));
 if (a.missingCpu > 0 && a.rows.every((r) => r.n === 0)) {
   console.error(
     `No cpuTime found on ${a.missingCpu} events. This wrangler's tail output lacks cpuTime; export per-invocation CPU from Workers Observability instead (see README).`,
