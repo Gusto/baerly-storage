@@ -9,7 +9,7 @@
  * entry to the most-recently-used end. On overflow, drop
  * `keys().next().value` (the oldest).
  *
- * NOT a runtime `lru-cache` dep — see ticket 53 §D2.
+ * NOT a runtime `lru-cache` dep — a bounded insertion-ordered Map is all the runner needs.
  */
 
 import type {

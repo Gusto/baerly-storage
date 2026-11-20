@@ -1,5 +1,5 @@
 /**
- * Replay phase. Dispatches op-stream entries (ticket 51) through
+ * Replay phase. Dispatches op-stream entries through
  * `Db.collection(collection)` calls, capturing per-op latency and a phase-
  * scoped `StorageSnapshot` from the `CountingStorage` wrapper.
  *
@@ -66,8 +66,8 @@ export async function runReplay(opts: ReplayOpts): Promise<ReplayResult> {
 }
 
 /**
- * Op dispatch. Exhaustive over `OpKind` — adding a new kind in ticket
- * 55 (or later) is a compiler error here, not a runtime no-op.
+ * Op dispatch. Exhaustive over `OpKind` — adding a new kind in a later change
+ * is a compiler error here, not a runtime no-op.
  *
  * `update`, `archive`: drive the by-id verbs directly so only the
  * targeted row is touched.

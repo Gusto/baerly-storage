@@ -14,7 +14,7 @@
  *      determinism across faker majors is NOT guaranteed. The
  *      harness does not depend on faker today, but if a future
  *      preset adopts it, the faker pin must be exact (no `^`, no
- *      `~`) — see ticket 51 §2 for the rationale.
+ *      `~`) — a caret range would let the generated stream drift.
  *
  * Period (2^32 ≈ 4.3e9) covers every preset's worst-case op count
  * (~10^7) with ~400× headroom. Statistical quality is fine for

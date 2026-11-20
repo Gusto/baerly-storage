@@ -153,7 +153,7 @@ const assertBootstrapOptions = (options: BootstrapOptions): void => {
 /**
  * The pinned numeric vectors, one per algorithm tag.
  *
- * The measurement contract descriptor (parent plan Task 8) hashes THIS OBJECT,
+ * The measurement contract descriptor hashes THIS OBJECT,
  * not the module's source bytes: a behavior-preserving refactor must not churn
  * `measurement_contract_hash`, while a changed expected value must — and does,
  * because `statistics.test.ts` asserts against these values and nothing else.

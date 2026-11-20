@@ -221,7 +221,7 @@ export class CountingStorage implements Storage {
 
   /**
    * Run-JSON shape, `object_store` + `latency_ms.by_op` +
-   * `ops_by_prefix` portion. Ticket 54 (load-harness CLI) wraps this
+   * `ops_by_prefix` portion. The load-harness CLI wraps this
    * inside the run envelope. Nearest-rank percentiles match
    * `quantileNearestRank` in `bench/measurement/statistics.ts`. Verbs with no samples are omitted from
    * `latency_ms.by_op`.

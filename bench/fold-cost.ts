@@ -1,5 +1,5 @@
 /**
- * Fold-cost microbench — Phase 2 measurement infrastructure.
+ * Fold-cost microbench — measurement infrastructure.
  *
  * Measures the CPU + peak-memory cost of ONE compaction fold — the
  * UNSLICEABLE snapshot rebuild — as a function of two axes:

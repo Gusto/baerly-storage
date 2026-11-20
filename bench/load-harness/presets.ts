@@ -7,8 +7,8 @@ import type { OpMix } from "./generators/ops.ts";
  * terminates when every dataset record is PUT once); phases 2-6
  * are budget-bounded by `opCount` or wall-clock.
  *
- * Ticket 53's runner walks this array in order. Each phase has a
- * before/after snapshot from `CountingStorage` (ticket 50) so the
+ * The runner walks this array in order. Each phase has a
+ * before/after snapshot from `CountingStorage` so the
  * run-JSON shows per-phase cost.
  */
 export type PipelinePhase =
@@ -43,9 +43,9 @@ export interface Preset {
   readonly pipeline: ReadonlyArray<PresetPipelineSpec>;
   /**
    * Workload metadata for the harness to warn against backend
-   * limits. Set conservatively per preset. The harness in ticket
-   * 54 will check `targetConcurrency` against R2's 1-write/sec-per-
-   * object limit and warn when exceeded.
+   * limits. Set conservatively per preset. The harness may check
+   * `targetConcurrency` against R2's 1-write/sec-per-object limit and warn
+   * when exceeded.
    */
   readonly metadata: {
     readonly targetConcurrency: number;

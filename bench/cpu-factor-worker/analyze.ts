@@ -9,10 +9,10 @@
 // log `"cold":true` are dropped.
 //
 // Output, per cell: deployed p50/p90/p99 cpuTime, killed count, and the
-// deployed/Node factor. Then the measured factor, the compactor-11 gate
+// deployed/Node factor. Then the measured factor, the fold-ceiling gate
 // verdict re-run with it, the largest C and E that pass, the tree fold-step
 // table (leaves per step that fit under 10 ms, measured directly, no
-// factor), and the S1 probe results.
+// factor), and the subrequest probe results.
 //
 // The factor is a diagnostic comparison between matched subjects. It is
 // labelled EXPLORATORY unless the Node baseline was captured on a quiet
@@ -687,7 +687,7 @@ export const formatReport = (a: Analysis): string => {
       ([k, f]) => `  ${k}: p50-basis ${f2(f.p50)}x, p99-basis ${f2(f.p99)}x (${f.n} cells)`,
     ),
     "",
-    `Gate (compactor-11 Task 1): pass iff both C and E fit (>= ${MIN_OK_SAMPLES} ok samples, < 1% kills) and measured deployed p99 <= ${PASS_MS} ms; Free limit ${FREE_LIMIT_MS} ms. Estimates are diagnostic only.${a.exploratory ? " Estimated rows use the exploratory factor." : ""}`,
+    `Gate: pass iff both C and E fit (>= ${MIN_OK_SAMPLES} ok samples, < 1% kills) and measured deployed p99 <= ${PASS_MS} ms; Free limit ${FREE_LIMIT_MS} ms. Estimates are diagnostic only.${a.exploratory ? " Estimated rows use the exploratory factor." : ""}`,
     `  main: ${a.gate.map((v) => `${v.g} p99 ${f2(v.ms)} ms ${v.how}`).join("; ")} => ${a.gate.every((v) => v.pass) ? "PASS" : "FAIL"}`,
     "",
     `Largest passing size (fitting cells with measured deployed p99 <= ${PASS_MS} ms, every smaller size passing too):`,
@@ -705,7 +705,7 @@ export const formatReport = (a: Analysis): string => {
     `Leaves per step that fit, distinct paths (measured p99; every smaller k fits too; 0 = none of the grid):`,
     ...a.tree.maxLeaves.filter((m) => m.path === "distinct").map((m) => leavesLine(m, true)),
     "",
-    "S1 probe (calls before failure; 60 sequential calls per run; valid only on a Workers FREE account, on Paid every probe reads clean):",
+    "subrequest probe (calls before failure; 60 sequential calls per run; valid only on a Workers FREE account, on Paid every probe reads clean):",
     "  probe-cache-match is INCONCLUSIVE on *.workers.dev (the Cache API is a no-op there); only a custom-domain route can show whether Cache API calls count against 50.",
     ...Object.entries(a.probes).map(([name, p]) => probeLine(name, p)),
   );

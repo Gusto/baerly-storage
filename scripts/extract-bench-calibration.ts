@@ -4,9 +4,7 @@
  * `bench/load-harness/presets/calibration.json` — the only artifact
  * checked into the repo.
  *
- * Reuses the `CalibrationParams` shape from ticket 51; if ticket 51
- * has not yet landed when this script runs, the shape is locked by
- * this file's literal output (ticket 51 then aligns).
+ * Reuses the `CalibrationParams` shape from the load-harness presets.
  *
  * Algorithm:
  *

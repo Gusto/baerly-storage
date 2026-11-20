@@ -37,7 +37,7 @@ export interface Cell {
   readonly fixture?: string;
   readonly part?: "all" | "write" | "fold" | "load";
   readonly entries?: number;
-  /** Gate cell: "C" (bytes) or "E" (rows) for the compactor-11 style verdict. */
+  /** Gate cell: "C" (bytes) or "E" (rows) for the fold-ceiling gate verdict. */
   readonly gate?: "C" | "E";
   /** Position on the bytes ladder (KiB of snapshot). */
   readonly ladder?: number;
@@ -72,7 +72,7 @@ export const TREE_K = [1, 2, 4, 8] as const;
 export const TREE_B_KIB = [4, 16, 64] as const;
 export const TREE_D = [1, 2, 3] as const;
 
-/** Sequential calls per S1 probe; the Free subrequest cap (50) sits inside. */
+/** Sequential calls per subrequest probe; the Free subrequest cap (50) sits inside. */
 export const PROBE_CALLS = 60;
 /** Requests per probe cell: each request is an independent invocation. */
 export const PROBE_SAMPLES = 5;
