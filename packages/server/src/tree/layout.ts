@@ -221,9 +221,10 @@ export const TREE_LAYOUT_RULES: readonly TreeLayoutRule[] = Object.freeze([
  * Tree code reads each step from a {@link TreeConfig}, so a mutant passed
  * to {@link createTreeConfig} reaches every caller of that config.
  *
- * The optional members are the canonical builder's steps. When one is
- * absent, the module that runs it uses its own built-in step, which
- * keeps this module free of a runtime import of the builder.
+ * The optional members are the canonical builder's and fold planner's
+ * steps. When one is absent, the module that runs it uses its own
+ * built-in step, which keeps this module free of a runtime import of
+ * the builder.
  */
 export interface TreeSteps {
   /** The rules a layout must satisfy. */
@@ -251,6 +252,23 @@ export interface TreeSteps {
   readonly branchCut?: (count: number, hash: number, layout: TreeLayout) => boolean;
   /** The depth-0 rule: whether a row set with these totals is one root leaf. */
   readonly singleLeaf?: (rows: number, bytes: number, layout: TreeLayout) => boolean;
+  /** The fold planner's ordering of its mutations by `_id`, in `utf8-scalar-v1` order. */
+  readonly sortMutations?: <M extends { readonly id: string }>(mutations: readonly M[]) => M[];
+  /**
+   * Whether a change at or just before the first entry of the old leaf
+   * with these totals also re-chunks the old leaf before it: true when
+   * that earlier leaf's cut may have read the first entry's size.
+   */
+  readonly leafRestartsBefore?: (
+    leaf: { readonly rows: number; readonly bytes: number },
+    layout: TreeLayout,
+  ) => boolean;
+  /**
+   * Whether the fold planner stops re-chunking at an old node boundary
+   * past every pending change, given whether its chunker is empty there.
+   * Stopping with a non-empty chunker closes the partial chunk.
+   */
+  readonly resyncStops?: (chunkerEmpty: boolean) => boolean;
 }
 
 const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
