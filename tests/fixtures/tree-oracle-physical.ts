@@ -299,7 +299,8 @@ const isArrayIndexName = (key: string): boolean =>
  * normalized), booleans, finite numbers, arrays and plain objects (prototype
  * `Object.prototype` or `null`, only own enumerable string-keyed data
  * properties) are in the domain; `null`, `undefined`, functions, symbols,
- * bigints, accessors, array holes and every other object are not. Object keys
+ * bigints, accessors, array holes, own array properties other than the
+ * indices and `length`, and every other object are not. Object keys
  * are reordered: array-index names (`"0"`…`"4294967294"`, canonical decimal)
  * ascending by value, then every other key in UTF-16 code-unit order. A
  * container at depth over 100 (the document is depth 1) is refused before it
@@ -327,6 +328,14 @@ const canonValue = (value: unknown, depth: number): unknown => {
       if (Array.isArray(value)) {
         if (Object.getPrototypeOf(value) !== Array.prototype) {
           throw new DomainError("exotic array");
+        }
+        const extra = Reflect.ownKeys(value).find(
+          (key) =>
+            key !== "length" &&
+            !(typeof key === "string" && ARRAY_INDEX.test(key) && Number(key) < value.length),
+        );
+        if (extra !== undefined) {
+          throw new DomainError(`extra own array property ${String(extra)}`);
         }
         const out: unknown[] = [];
         for (let i = 0; i < value.length; i++) {
