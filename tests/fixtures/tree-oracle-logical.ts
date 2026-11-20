@@ -9,10 +9,28 @@
  * equal this oracle's on the same inputs.
  *
  * The oracle is deliberately naive and shares no code with the kernel: no
- * compactor, log-walk, snapshot or tree import, and its own UTF-8 byte
- * comparator. `tests/unit/tree-oracle-logical.test.ts` checks that comparator
- * against `compareDocIds`, and the fold against the production folds
- * (`foldLogEntriesOnto` and `compact()`), on the same inputs.
+ * compactor, log-walk, snapshot, validator or tree import, and its own UTF-8
+ * byte comparator. `tests/unit/tree-oracle-logical.test.ts` cross-checks it
+ * against production where production has the same rule:
+ *
+ * - `compareUtf8` against `compareDocIds`: equal results on valid and
+ *   near-pair IDs.
+ * - The fold against `foldLogEntriesOnto`: the same row set, ignoring row and
+ *   property order, or the same error code, over generated valid entries plus
+ *   foreign and NFD-alias collection entries. It has no folded seq to compare.
+ * - The fold against `compact()` on `MemoryStorage`, with no ceilings, run to
+ *   a target and then onto that snapshot to the tail: the same row set and
+ *   `log_seq_start`, or the same error code. Row order is not compared,
+ *   because the snapshot is in UTF-16 order, nor are bytes.
+ * - The `_id` domain against `assertSnapshotDocId` (accept and refuse agree;
+ *   the codes differ by design), and the byte cap against
+ *   `assertDocumentSize` at the boundary.
+ *
+ * Not cross-checked, because production does not share the rule: corrupt
+ * candidates (production skips an `I`/`U` without `after`), accessor and
+ * array-hole refusal, and the read oracle. No production point or range read
+ * by `_id` exists to compare against, so reads are checked only against the
+ * folded rows and `compareDocIds`.
  *
  * ## Seq conventions
  *
@@ -94,6 +112,10 @@
  *
  * ## Mutant seam
  *
+ * {@link readPointMutant} and {@link readRangeMutant} do the same for the
+ * read oracle, with the variants in {@link LOGICAL_READ_MUTANTS}: a `gt`/`gte`
+ * swap, an `lt`/`lte` swap, and a point miss that returns the next row.
+ *
  * {@link foldLogicalMutant} runs the same fold with one single-defect
  * variant from {@link LOGICAL_FOLD_MUTANTS}: the seven fast-check variants,
  * with "skip first/last mutation" split into two, plus two the list misses:
@@ -158,10 +180,39 @@ export const foldLogicalMutant = (
   mutant: LogicalFoldMutant,
 ): LogicalView => foldWith(input, mutant);
 
+/** The single-defect read variants the test suite must catch. */
+export const LOGICAL_READ_MUTANTS = [
+  "gt-gte-swap",
+  "lt-lte-swap",
+  "point-miss-returns-successor",
+] as const;
+
+export type LogicalReadMutant = (typeof LOGICAL_READ_MUTANTS)[number];
+
 /** The row with this `_id`, as a fresh copy, or `undefined`. */
-export const readPoint = (view: LogicalView, id: string): DocumentData | undefined => {
+export const readPoint = (view: LogicalView, id: string): DocumentData | undefined =>
+  pointWith(view, id, undefined);
+
+/** {@link readPoint} with one deliberate defect. Test-only mutant seam. */
+export const readPointMutant = (
+  view: LogicalView,
+  id: string,
+  mutant: LogicalReadMutant,
+): DocumentData | undefined => pointWith(view, id, mutant);
+
+const pointWith = (
+  view: LogicalView,
+  id: string,
+  mutant: LogicalReadMutant | undefined,
+): DocumentData | undefined => {
   const body = view.rows.get(id);
-  return body === undefined ? undefined : copyDocument(body);
+  if (body !== undefined) {
+    return copyDocument(body);
+  }
+  if (mutant === "point-miss-returns-successor") {
+    return readScan(view).find((row) => compareUtf8(row["_id"] as string, id) > 0);
+  }
+  return undefined;
 };
 
 /**
@@ -177,7 +228,28 @@ export interface LogicalRange {
 }
 
 /** Rows whose `_id` lies within `range`, in `utf8-scalar-v1` order, as fresh copies. */
-export const readRange = (view: LogicalView, range: LogicalRange): DocumentData[] => {
+export const readRange = (view: LogicalView, range: LogicalRange): DocumentData[] =>
+  rangeWith(view, range, undefined);
+
+/** {@link readRange} with one deliberate defect. Test-only mutant seam. */
+export const readRangeMutant = (
+  view: LogicalView,
+  range: LogicalRange,
+  mutant: LogicalReadMutant,
+): DocumentData[] => rangeWith(view, range, mutant);
+
+const rangeWith = (
+  view: LogicalView,
+  given: LogicalRange,
+  mutant: LogicalReadMutant | undefined,
+): DocumentData[] => {
+  let range = given;
+  if (mutant === "gt-gte-swap") {
+    range = { ...given, gt: given.gte, gte: given.gt };
+  }
+  if (mutant === "lt-lte-swap") {
+    range = { ...given, lt: given.lte, lte: given.lt };
+  }
   if (range.gt !== undefined && range.gte !== undefined) {
     throw new Error("readRange: pass at most one of gt / gte");
   }

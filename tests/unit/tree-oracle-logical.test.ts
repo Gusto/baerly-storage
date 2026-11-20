@@ -44,8 +44,12 @@ import {
   type LogicalFoldMutant,
   type LogicalRange,
   type LogicalView,
+  LOGICAL_READ_MUTANTS,
+  type LogicalReadMutant,
   readPoint,
+  readPointMutant,
   readRange,
+  readRangeMutant,
   readScan,
 } from "../fixtures/tree-oracle-logical.ts";
 
@@ -74,10 +78,14 @@ type Invariant =
   | "insertion-order-invisible"
   | "no-aliasing"
   | "prefix-split"
+  | "scan-read"
+  | "point-read"
+  | "range-read"
   | "production-agreement";
 
-/** The invariants with a mutation-block catcher. */
-type PropertyInvariant = Exclude<Invariant, "production-agreement">;
+type ReadInvariant = "scan-read" | "point-read" | "range-read";
+/** The fold invariants with a mutation-block catcher. */
+type FoldInvariant = Exclude<Invariant, "production-agreement" | ReadInvariant>;
 
 /** A property failure, naming the invariant and the first differing `_id`. */
 class Violation extends Error {
@@ -484,30 +492,80 @@ const rangeArb: fc.Arbitrary<LogicalRange> = fc
   .tuple(lowerArb, upperArb)
   .map(([lower, upper]) => Object.assign({}, lower, upper));
 
+interface Reads {
+  readonly point: (view: LogicalView, id: string) => DocumentData | undefined;
+  readonly range: (view: LogicalView, range: LogicalRange) => DocumentData[];
+  readonly scan: (view: LogicalView) => DocumentData[];
+}
+
+const ORACLE_READS: Reads = { point: readPoint, range: readRange, scan: readScan };
+
+const mutantReads = (mutant: LogicalReadMutant): Reads => ({
+  point: (view, id) => readPointMutant(view, id, mutant),
+  range: (view, range) => readRangeMutant(view, range, mutant),
+  scan: readScan,
+});
+
+const expectBodies = (
+  invariant: ReadInvariant,
+  actual: readonly (DocumentData | undefined)[],
+  expected: readonly (DocumentData | undefined)[],
+  where: string,
+): void => {
+  if (stable(actual) !== stable(expected)) {
+    throw new Violation(invariant, `${where}: got ${stable(actual)}, want ${stable(expected)}`);
+  }
+};
+
+const checkScanRead = (reads: Reads, c: FoldCase): void => {
+  const view = foldLogical(inputOf(c));
+  const scan = reads.scan(view);
+  expectBodies(
+    "scan-read",
+    scan,
+    sortedRows(view.rows).map(([, body]) => body),
+    "scan",
+  );
+};
+
+const checkPointRead = (reads: Reads, c: FoldCase): void => {
+  const view = foldLogical(inputOf(c));
+  for (const id of [...ID_POOL, ABSENT_ID]) {
+    expectBodies(
+      "point-read",
+      [reads.point(view, id)],
+      [view.rows.get(id)],
+      `point ${JSON.stringify(id)}`,
+    );
+  }
+};
+
+const checkRangeRead = (reads: Reads, c: FoldCase, range: LogicalRange): void => {
+  const view = foldLogical(inputOf(c));
+  const inRange = (id: string): boolean =>
+    (range.gt === undefined || compareDocIds(id, range.gt) > 0) &&
+    (range.gte === undefined || compareDocIds(id, range.gte) >= 0) &&
+    (range.lt === undefined || compareDocIds(id, range.lt) < 0) &&
+    (range.lte === undefined || compareDocIds(id, range.lte) <= 0);
+  const want = sortedRows(view.rows)
+    .filter(([id]) => inRange(id))
+    .map(([, body]) => body);
+  expectBodies("range-read", reads.range(view, range), want, `range ${JSON.stringify(range)}`);
+};
+
 describe("logical read oracle", () => {
+  fcTest.prop({ c: foldCaseArb })("scan returns every row in compareDocIds order", ({ c }) => {
+    checkScanRead(ORACLE_READS, c);
+  });
+
+  fcTest.prop({ c: foldCaseArb })("point reads return the row or nothing", ({ c }) => {
+    checkPointRead(ORACLE_READS, c);
+  });
+
   fcTest.prop({ c: foldCaseArb, range: rangeArb })(
-    "point, range and scan agree with the folded rows in compareDocIds order",
+    "range reads return exactly the rows within the bounds",
     ({ c, range }) => {
-      const view = foldLogical(inputOf(c));
-      const expected = sortedRows(view.rows).map(([, body]) => body);
-
-      const scan = readScan(view);
-      expect(stable(scan)).toBe(stable(expected));
-      for (let i = 1; i < scan.length; i++) {
-        expect(compareDocIds(scan[i - 1]!["_id"] as string, scan[i]!["_id"] as string)).toBe(-1);
-      }
-
-      for (const id of [...ID_POOL, ABSENT_ID]) {
-        expect(stable(readPoint(view, id))).toBe(stable(view.rows.get(id)));
-      }
-
-      const inRange = (id: string): boolean =>
-        (range.gt === undefined || compareDocIds(id, range.gt) > 0) &&
-        (range.gte === undefined || compareDocIds(id, range.gte) >= 0) &&
-        (range.lt === undefined || compareDocIds(id, range.lt) < 0) &&
-        (range.lte === undefined || compareDocIds(id, range.lte) <= 0);
-      const wantRange = expected.filter((body) => inRange(body["_id"] as string));
-      expect(stable(readRange(view, range))).toBe(stable(wantRange));
+      checkRangeRead(ORACLE_READS, c, range);
     },
   );
 
@@ -966,10 +1024,7 @@ describe("mutation", () => {
     return { failed: details.failed, error: details.errorInstance };
   };
 
-  const catchers: Record<
-    Exclude<Invariant, "production-agreement">,
-    (fold: Fold) => CheckOutcome
-  > = {
+  const catchers: Record<FoldInvariant, (fold: Fold) => CheckOutcome> = {
     "empty-identity": (fold) => run(foldCaseArb, (c) => checkEmptyIdentity(fold, c)),
     "last-write-wins": (fold) => run(foldCaseArb, (c) => checkLastWriteWins(fold, c)),
     "folded-seq": (fold) => run(foldCaseArb, (c) => checkFoldedSeq(fold, c)),
@@ -984,7 +1039,7 @@ describe("mutation", () => {
   };
 
   /** The properties that must name each variant. Others may also go red. */
-  const caughtBy: Record<LogicalFoldMutant, readonly PropertyInvariant[]> = {
+  const caughtBy: Record<LogicalFoldMutant, readonly FoldInvariant[]> = {
     "target-inclusive-bound": ["empty-identity", "last-write-wins", "beyond-target-invisible"],
     "skip-first-mutation": ["last-write-wins"],
     "skip-last-mutation": ["last-write-wins"],
@@ -996,6 +1051,36 @@ describe("mutation", () => {
     "wrong-folded-seq": ["empty-identity", "folded-seq"],
     "aliased-bodies": ["no-aliasing", "insertion-order-invisible"],
   };
+
+  const readCatchers: Record<ReadInvariant, (reads: Reads) => CheckOutcome> = {
+    "scan-read": (reads) => run(foldCaseArb, (c) => checkScanRead(reads, c)),
+    "point-read": (reads) => run(foldCaseArb, (c) => checkPointRead(reads, c)),
+    "range-read": (reads) =>
+      run(fc.tuple(foldCaseArb, rangeArb), ([c, range]) => checkRangeRead(reads, c, range)),
+  };
+
+  const readCaughtBy: Record<LogicalReadMutant, readonly ReadInvariant[]> = {
+    "gt-gte-swap": ["range-read"],
+    "lt-lte-swap": ["range-read"],
+    "point-miss-returns-successor": ["point-read"],
+  };
+
+  test("every read catcher is green on the oracle", () => {
+    for (const catcher of Object.values(readCatchers)) {
+      const outcome = catcher(ORACLE_READS);
+      expect(outcome.error).toBeNull();
+      expect(outcome.failed).toBe(false);
+    }
+  });
+
+  test.each(LOGICAL_READ_MUTANTS)("read mutant %s is red", (mutant) => {
+    for (const invariant of readCaughtBy[mutant]) {
+      const outcome = readCatchers[invariant](mutantReads(mutant));
+      expect(outcome.failed).toBe(true);
+      expect(outcome.error).toBeInstanceOf(Violation);
+      expect((outcome.error as Violation).invariant).toBe(invariant);
+    }
+  });
 
   test("every catcher is green on the oracle", () => {
     for (const catcher of Object.values(catchers)) {
