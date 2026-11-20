@@ -31,7 +31,11 @@
  * `[baseSeq, targetSeq)` must be present: a gap is a protocol violation, not
  * a no-op. Entries outside the range are ignored. An entry for another
  * collection occupies its slot, counts toward the folded seq and changes no
- * row, as in the production folds.
+ * row, as in the production folds. An in-range entry whose `collection` is
+ * byte-different from the folded one but equal under NFC throws
+ * `BaerlyError{code:"InvalidConfig"}`, restating `isOwnCollection`: R2 stores
+ * canonically-equivalent keys as one object, so the entry may be this
+ * collection's, and neither skipping nor applying it is safe.
  *
  * Two mutants are defined against these conventions:
  *
@@ -246,7 +250,7 @@ const foldWith = (input: LogicalFoldInput, mutant: LogicalFoldMutant | undefined
   const writtenThisFold = new Set<string>();
   for (const seq of seqs) {
     const entry = bySeq.get(seq)!;
-    if (entry.collection !== collection) {
+    if (!isOwnCollection(entry.collection, collection, seq)) {
       continue;
     }
     const id: unknown = entry.doc_id;
@@ -296,6 +300,20 @@ const foldWith = (input: LogicalFoldInput, mutant: LogicalFoldMutant | undefined
     foldedSeq: mutant === "wrong-folded-seq" ? targetSeq - 1 : targetSeq,
     rows,
   };
+};
+
+/** Exact match is own; NFC-equal but byte-different is refused; anything else is foreign. */
+const isOwnCollection = (stored: unknown, expected: string, seq: number): boolean => {
+  if (stored === expected) {
+    return true;
+  }
+  if (typeof stored === "string" && stored.normalize("NFC") === expected.normalize("NFC")) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `logical oracle: seq ${seq} names collection ${JSON.stringify(stored)}, canonically equivalent to ${JSON.stringify(expected)}`,
+    );
+  }
+  return false;
 };
 
 const isSeq = (value: number): boolean => Number.isSafeInteger(value) && value >= 0;
