@@ -735,6 +735,24 @@ describe("assertCurrentJson — schema_version guard", () => {
     },
   );
 
+  plainTest.each([
+    ["array", (n: number) => "[".repeat(n) + "]".repeat(n)],
+    ["object", (n: number) => '{"a":'.repeat(n) + "null" + "}".repeat(n)],
+  ] as const)(
+    "a deeply nested %s schema_version is an InvalidResponse, not a stack overflow",
+    async (_n, nest) => {
+      const s = new MemoryStorage();
+      // Built as JSON text: JSON.stringify of a value this deep overflows.
+      const { schema_version: _drop, ...rest } = rawSeed();
+      const body = JSON.stringify(rest).replace(/^\{/, `{"schema_version":${nest(50_000)},`);
+      await s.put("k", new TextEncoder().encode(body));
+      const err = await readCurrentJson(s, "k").catch((error: unknown) => error);
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect(err).toMatchObject({ code: "InvalidResponse" });
+      expect((err as Error).message.length).toBeLessThan(1024);
+    },
+  );
+
   plainTest("accepts CURRENT_JSON_SCHEMA_VERSION exactly", async () => {
     const s = new MemoryStorage();
     await putRaw(s, "k", rawSeed());

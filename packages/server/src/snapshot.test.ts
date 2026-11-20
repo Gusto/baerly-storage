@@ -1,4 +1,5 @@
 import {
+  BaerlyError,
   encodeJsonBytes,
   MemoryStorage,
   snapshotHash,
@@ -40,4 +41,24 @@ describe("loadSnapshotAsMap — schema_version refusal", () => {
       expect(msg).toMatch(/restore/i);
     }
   });
+
+  test.each([
+    ["array", (n: number) => "[".repeat(n) + "]".repeat(n)],
+    ["object", (n: number) => '{"a":'.repeat(n) + "null" + "}".repeat(n)],
+  ] as const)(
+    "a deeply nested %s schema_version is an InvalidResponse, not a stack overflow",
+    async (_n, nest) => {
+      const s = new MemoryStorage();
+      // Built as JSON text: JSON.stringify of a value this deep overflows.
+      const body = new TextEncoder().encode(
+        `{"schema_version":${nest(50_000)},"min_seq":0,"max_seq":1,"collection":"c","docs":[]}`,
+      );
+      const key = snapshotKey("c", 0, 1, await snapshotHash(body));
+      await s.put(key, body, { contentType: "application/json" });
+      const err = await loadSnapshotAsMap(s, key, "c").catch((error: unknown) => error);
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect(err).toMatchObject({ code: "InvalidResponse" });
+      expect((err as Error).message.length).toBeLessThan(1024);
+    },
+  );
 });

@@ -153,6 +153,23 @@ describe("gc-pending", () => {
     }
   });
 
+  test.each([
+    ["array", (n: number) => "[".repeat(n) + "]".repeat(n)],
+    ["object", (n: number) => '{"a":'.repeat(n) + "null" + "}".repeat(n)],
+  ] as const)(
+    "a deeply nested %s schema_version is an InvalidResponse, not a stack overflow",
+    async (_n, nest) => {
+      const s = new MemoryStorage();
+      // Built as JSON text: JSON.stringify of a value this deep overflows.
+      const body = `{"schema_version":${nest(50_000)},"candidates":[],"last_swept_at":""}`;
+      await s.put(KEY, new TextEncoder().encode(body), { contentType: "application/json" });
+      const err = await readGcPending(s, KEY).catch((error: unknown) => error);
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect(err).toMatchObject({ code: "InvalidResponse" });
+      expect((err as Error).message.length).toBeLessThan(1024);
+    },
+  );
+
   test("rejects malformed body on read", async () => {
     const s = new MemoryStorage();
     await s.put(KEY, new TextEncoder().encode("{ not json"), {
