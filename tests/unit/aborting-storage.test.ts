@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { MemoryStorage } from "@baerly/protocol";
+import { BaerlyError, MemoryStorage } from "@baerly/protocol";
 import { abortingStorage } from "../fixtures/aborting-storage.ts";
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(s);
@@ -189,5 +189,149 @@ describe("abortingStorage torn-object trap", () => {
     handle.tearAt(undefined);
     await handle.storage.put("d", bytes("dddd"));
     expect(text((await inner.get("d"))!.body)).toBe("dddd");
+  });
+});
+
+describe("abortingStorage post-apply trap", () => {
+  const lostAck = { code: "NetworkError", retriable: true };
+
+  test("a put lands in full, then throws a retryable NetworkError", async () => {
+    const inner = new MemoryStorage();
+    const handle = abortingStorage(inner);
+    handle.armPostApplyAt(1);
+    const err = await handle.storage.put("k", bytes("abcdefgh")).catch((error: unknown) => error);
+    expect(err).toBeInstanceOf(BaerlyError);
+    expect(err).toMatchObject(lostAck);
+    // The object IS there, byte for byte (a pre-apply abort would leave it absent).
+    expect(text((await inner.get("k"))!.body)).toBe("abcdefgh");
+    expect(handle.faultsFired()).toBe(1);
+    expect(handle.postApplied()).toEqual([{ op: "put", key: "k" }]);
+    expect(handle.tornKeys()).toEqual([]);
+    // One fault per arm.
+    await handle.storage.put("k2", bytes("x"));
+    expect(handle.faultsFired()).toBe(1);
+  });
+
+  test("a create-only put applies, so the retry meets a conflict on its own bytes", async () => {
+    const inner = new MemoryStorage();
+    const handle = abortingStorage(inner);
+    handle.armPostApplyAt(1);
+    await expect(
+      handle.storage.put("log/1", bytes("mine"), { ifNoneMatch: "*" }),
+    ).rejects.toMatchObject(lostAck);
+    await expect(
+      handle.storage.put("log/1", bytes("mine"), { ifNoneMatch: "*" }),
+    ).rejects.toMatchObject({ code: "WriteConflict" });
+    expect(text((await inner.get("log/1"))!.body)).toBe("mine");
+  });
+
+  test("a CAS put applies and advances the etag the caller never saw", async () => {
+    const inner = new MemoryStorage();
+    const first = await inner.put("head", bytes("v1"));
+    const handle = abortingStorage(inner);
+    handle.armPostApplyAt(1);
+    await expect(
+      handle.storage.put("head", bytes("v2"), { ifMatch: first.etag }),
+    ).rejects.toMatchObject(lostAck);
+    const now = await inner.get("head");
+    expect(text(now!.body)).toBe("v2");
+    expect(now!.etag).not.toBe(first.etag);
+    // The stale etag now loses.
+    await expect(
+      handle.storage.put("head", bytes("v3"), { ifMatch: first.etag }),
+    ).rejects.toMatchObject({ code: "WriteConflict" });
+  });
+
+  test("a delete applies, then throws", async () => {
+    const inner = new MemoryStorage();
+    await inner.put("k", bytes("v"));
+    const handle = abortingStorage(inner);
+    handle.armPostApplyAt(1, { ops: ["delete"] });
+    await expect(handle.storage.delete("k")).rejects.toMatchObject(lostAck);
+    await expect(inner.get("k")).resolves.toBeNull();
+    expect(handle.postApplied()).toEqual([{ op: "delete", key: "k" }]);
+  });
+
+  test("a get is issued to inner and its result discarded; state is unchanged", async () => {
+    const calls: string[] = [];
+    const inner = new MemoryStorage();
+    await inner.put("k", bytes("v"));
+    const spy = {
+      get: (key: string) => {
+        calls.push(`get ${key}`);
+        return inner.get(key);
+      },
+      put: inner.put.bind(inner),
+      delete: inner.delete.bind(inner),
+      list: inner.list.bind(inner),
+    };
+    const handle = abortingStorage(spy);
+    handle.armPostApplyAt(1, { ops: ["get"] });
+    await expect(handle.storage.get("k")).rejects.toMatchObject(lostAck);
+    expect(calls).toEqual(["get k"]);
+    expect(text((await inner.get("k"))!.body)).toBe("v");
+  });
+
+  test("a list reaches inner.list and throws synchronously", async () => {
+    const prefixes: string[] = [];
+    const inner = new MemoryStorage();
+    const handle = abortingStorage({
+      get: inner.get.bind(inner),
+      put: inner.put.bind(inner),
+      delete: inner.delete.bind(inner),
+      list: (prefix, opts) => {
+        prefixes.push(prefix);
+        return inner.list(prefix, opts);
+      },
+    });
+    handle.armPostApplyAt(1, { ops: ["list"] });
+    expect(() => handle.storage.list("t/")).toThrow(expect.objectContaining(lostAck));
+    expect(prefixes).toEqual(["t/"]);
+  });
+
+  test("counts from the call, honours prefix and ops targets, and clears", async () => {
+    const inner = new MemoryStorage();
+    const handle = abortingStorage(inner);
+    handle.armPostApplyAt(2, { prefix: "t/node/", ops: ["put"] });
+    await handle.storage.put("t/other", bytes("o"));
+    await handle.storage.get("t/node/a");
+    await handle.storage.put("t/node/a", bytes("a"));
+    await expect(handle.storage.put("t/node/b", bytes("b"))).rejects.toMatchObject(lostAck);
+    expect(text((await inner.get("t/node/b"))!.body)).toBe("b");
+    expect(handle.opCount()).toBe(4);
+
+    handle.armPostApplyAt(1);
+    handle.armPostApplyAt(undefined);
+    await handle.storage.put("t/node/c", bytes("c"));
+    expect(handle.faultsFired()).toBe(1);
+    expect(() => handle.armPostApplyAt(0)).toThrow(RangeError);
+  });
+
+  test("a rejected precondition surfaces as-is, fires no fault, and consumes the trap", async () => {
+    const inner = new MemoryStorage();
+    await inner.put("k", bytes("original"));
+    const handle = abortingStorage(inner);
+    handle.armPostApplyAt(1);
+    await expect(
+      handle.storage.put("k", bytes("replacement"), { ifNoneMatch: "*" }),
+    ).rejects.toMatchObject({ code: "WriteConflict" });
+    expect(handle.faultsFired()).toBe(0);
+    expect(handle.postApplied()).toEqual([]);
+    await handle.storage.put("k2", bytes("fine"));
+  });
+
+  test("a pre-apply abort on the same op wins and leaves the post-apply trap armed", async () => {
+    const inner = new MemoryStorage();
+    const handle = abortingStorage(inner);
+    handle.armPostApplyAt(2);
+    handle.armAt(1);
+    await expect(handle.storage.put("a", bytes("a"))).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await expect(inner.get("a")).resolves.toBeNull();
+    await handle.storage.put("b", bytes("b"));
+    await expect(handle.storage.put("c", bytes("c"))).rejects.toMatchObject(lostAck);
+    expect(text((await inner.get("c"))!.body)).toBe("c");
+    expect(handle.faultsFired()).toBe(2);
   });
 });

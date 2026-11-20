@@ -2,7 +2,7 @@
  * `abortingStorage(inner)` — a `Storage` proxy that injects one-shot
  * faults into the operations it forwards.
  *
- * Two fault kinds, each with its own trap slot:
+ * Three fault kinds, each with its own trap slot:
  *
  * - **Abort** (`armAt`): the chosen op throws an `AbortError`-named
  *   `Error` *before* it touches the wrapped storage, simulating process
@@ -12,6 +12,19 @@
  *   caller's preconditions), then throws the same `AbortError`. This
  *   models a backend without atomic object writes (a crashed local-fs
  *   write, a non-atomic gateway): a truncated object at a valid key.
+ * - **Post-apply** (`armPostApplyAt`): the chosen op is applied to the
+ *   wrapped storage with the caller's arguments and preconditions, then a
+ *   retryable `BaerlyError("NetworkError")` is thrown in place of the
+ *   result: the request landed but the response was lost (a dropped
+ *   connection after the server committed). The caller sees a failure
+ *   for a write that took effect, which is what exercises
+ *   create-conflict adoption and resume-after-lost-ack paths. For `put`
+ *   (including `ifNoneMatch: "*"` creates and `ifMatch` CAS) and
+ *   `delete` the state change is real. A `get` is issued and its result
+ *   discarded; a `list` is lazy and effect-free, so its post-apply form
+ *   is the same synchronous throw as the abort, after `inner.list` is
+ *   called. Reads therefore never change state under any arm; the arm
+ *   only differs from `armAt` in whether `inner` saw the call.
  *
  * Either trap can target a key prefix and a set of op kinds
  * ({@link FaultTarget}), so a test can fault the `log/<seq>` create while
@@ -26,7 +39,7 @@
  * Test-only. NOT part of the protocol contract; do not import from
  * `src/` or any package source.
  */
-import type { Storage, StorageListEntry } from "@baerly/protocol";
+import { BaerlyError, type Storage, type StorageListEntry } from "@baerly/protocol";
 
 /** The four `Storage` methods, as fault-target op kinds. */
 export type StorageOpKind = "get" | "put" | "delete" | "list";
@@ -86,6 +99,23 @@ export interface AbortingStorageHandle {
     target?: FaultTarget,
     opts?: TearOptions,
   ) => void;
+  /**
+   * Arm the post-apply trap, replacing any armed post-apply. The
+   * `nthFromCurrent`-th op from now that matches `target` (every op when
+   * `target` is omitted) is forwarded to `inner` unchanged, then a
+   * `BaerlyError("NetworkError")` (retryable) is thrown instead of the
+   * result, and the trap clears. Works for `put`, `delete`, `get` and
+   * `list` (see the file header for what post-apply means for reads).
+   *
+   * If `inner` itself rejects (a failed precondition), that error
+   * surfaces instead and no fault fires; the trap is still consumed, so
+   * op K is deterministic whatever the outcome. A pre-apply abort or a
+   * tear on the same op wins and leaves this trap un-stepped. Pass
+   * `undefined` to clear without rearming.
+   */
+  readonly armPostApplyAt: (nthFromCurrent: number | undefined, target?: FaultTarget) => void;
+  /** Op kind and key of each post-apply fault fired so far, in order. */
+  readonly postApplied: () => readonly { readonly op: StorageOpKind; readonly key: string }[];
   /** Keys of the objects torn so far, in order. */
   readonly tornKeys: () => readonly string[];
   /** Number of faults (aborts and tears) that have fired. */
@@ -127,6 +157,12 @@ const abortError = (): Error => {
   return err;
 };
 
+const lostResponseError = (op: StorageOpKind, key: string): BaerlyError =>
+  new BaerlyError(
+    "NetworkError",
+    `${op} ${key}: response lost after the op was applied (injected by abortingStorage)`,
+  );
+
 const keptLength = (length: number, opts: TearOptions | undefined): number => {
   const keep = opts?.keepBytes;
   let raw = Math.floor(length / 2);
@@ -151,7 +187,8 @@ const armed = (nth: number | undefined, target: FaultTarget | undefined): Trap |
 /**
  * Wrap a `Storage` so armed faults fire on chosen operations. The
  * aborted operation does NOT reach the underlying storage; a torn `put`
- * reaches it with a truncated body.
+ * reaches it with a truncated body; a post-apply op reaches it intact
+ * and then fails.
  */
 export const abortingStorage = (inner: Storage): AbortingStorageHandle => {
   let count = 0;
@@ -159,7 +196,23 @@ export const abortingStorage = (inner: Storage): AbortingStorageHandle => {
   let abortTrap: Trap | undefined = undefined;
   let tearTrap: Trap | undefined = undefined;
   let tearOpts: TearOptions | undefined = undefined;
+  let postApplyTrap: Trap | undefined = undefined;
   const torn: string[] = [];
+  const postApplyLog: { op: StorageOpKind; key: string }[] = [];
+
+  /** Step the post-apply trap; true when this op must throw after applying. */
+  const postApplyDue = (op: StorageOpKind, key: string): boolean => {
+    if (!step(postApplyTrap, op, key)) {
+      return false;
+    }
+    postApplyTrap = undefined;
+    return true;
+  };
+  const lost = (op: StorageOpKind, key: string): never => {
+    postApplyLog.push({ op, key });
+    fired += 1;
+    throw lostResponseError(op, key);
+  };
 
   const before = (op: StorageOpKind, key: string): void => {
     count += 1;
@@ -173,6 +226,10 @@ export const abortingStorage = (inner: Storage): AbortingStorageHandle => {
   const storage: Storage = {
     async get(key, opts) {
       before("get", key);
+      if (postApplyDue("get", key)) {
+        await inner.get(key, opts);
+        return lost("get", key);
+      }
       return inner.get(key, opts);
     },
     async put(key, body, opts) {
@@ -186,10 +243,18 @@ export const abortingStorage = (inner: Storage): AbortingStorageHandle => {
         fired += 1;
         throw abortError();
       }
+      if (postApplyDue("put", key)) {
+        await inner.put(key, body, opts);
+        return lost("put", key);
+      }
       return inner.put(key, body, opts);
     },
     async delete(key, opts) {
       before("delete", key);
+      if (postApplyDue("delete", key)) {
+        await inner.delete(key, opts);
+        return lost("delete", key);
+      }
       return inner.delete(key, opts);
     },
     list(prefix, opts): AsyncIterable<StorageListEntry> {
@@ -199,6 +264,10 @@ export const abortingStorage = (inner: Storage): AbortingStorageHandle => {
       // call is a discrete logical op in the writer / compactor / GC
       // pipelines, and the trap lands before the first page is fetched.
       before("list", prefix);
+      if (postApplyDue("list", prefix)) {
+        inner.list(prefix, opts);
+        return lost("list", prefix);
+      }
       return inner.list(prefix, opts);
     },
   };
@@ -213,6 +282,10 @@ export const abortingStorage = (inner: Storage): AbortingStorageHandle => {
       tearTrap = armed(n, target?.prefix === undefined ? undefined : { prefix: target.prefix });
       tearOpts = tearTrap === undefined ? undefined : opts;
     },
+    armPostApplyAt: (n, target) => {
+      postApplyTrap = armed(n, target);
+    },
+    postApplied: () => [...postApplyLog],
     tornKeys: () => [...torn],
     faultsFired: () => fired,
     resetCount: () => {
