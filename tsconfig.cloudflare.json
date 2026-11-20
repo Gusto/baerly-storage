@@ -25,6 +25,7 @@
   "include": [
     "packages/adapter-cloudflare/src",
     "bench/cpu-factor-worker/src",
+    "bench/paid-memory-worker/src",
     "tests/fixtures/mock-execution-context.ts",
     "tests/fixtures/r2-bucket.ts",
     "tests/integration/public-surface.test.ts",

@@ -1,0 +1,30 @@
+// Memory bench Worker for Workers Paid. Synthetic data only, workers.dev
+// only: no routes, no account_id (wrangler deploys to the account its
+// token names). The one binding is a throwaway R2 bucket that holds the
+// synthetic fixtures; create it before deploying and delete it (objects
+// first) afterwards. `BENCH_SECRET` is a wrangler secret gating every
+// route. Usage is in drive.ts.
+{
+  "name": "baerly-paid-memory-bench",
+  "main": "./dist/worker.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "upload_source_maps": false,
+  // Raised to the Paid maximum so CPU never ends a cell before memory does.
+  "limits": { "cpu_ms": 300000 },
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "baerly-paid-memory-synthetic" }],
+  "vars": {
+    "APP": "pm",
+    // Tuned main: the paid profile, with the byte ceiling raised to 128 MiB
+    // so every cell is allowed to fold. The row ceiling has no variable;
+    // cf-paid's 32,768 covers every cell.
+    "BAERLY_MAINTENANCE_PROFILE": "cf-paid",
+    "BAERLY_MAINTENANCE_MAX_FOLD_BYTES": "134217728",
+    // Bumped to force a new version, and with it fresh isolates.
+    "BENCH_EPOCH": "0",
+  },
+  "observability": { "enabled": true },
+}

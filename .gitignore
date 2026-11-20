@@ -100,3 +100,5 @@ docs/whisper/
 
 # CPU-factor bench Worker: generated fixtures, Node baseline, run outputs
 bench/cpu-factor-worker/out/
+# Paid memory bench Worker: generated fixtures and manifest
+bench/paid-memory-worker/out/
