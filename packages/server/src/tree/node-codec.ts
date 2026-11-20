@@ -248,6 +248,11 @@ const canonValue = (value: unknown, depth: number, fail: Fail): TreeValue => {
       }
       out.push(canonValue(descriptor.value, depth + 1, fail));
     }
+    // Every index is present, so any key past `length + 1` is an extra
+    // own property, which JSON.stringify would silently drop.
+    if (Reflect.ownKeys(value).length !== value.length + 1) {
+      fail("document array has an own property other than its indices and length");
+    }
     return out;
   }
   const proto: unknown = Object.getPrototypeOf(value);

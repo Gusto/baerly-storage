@@ -213,6 +213,21 @@ describe("canonical document encoding", () => {
     }
   });
 
+  test("an array with an own property other than its indices and length is refused", () => {
+    const named = Object.assign([1], { extra: 1 });
+    const hidden = Object.defineProperty([1], "extra", { value: 1 });
+    const symbol = Object.assign([1], { [Symbol("k")]: 1 });
+    for (const v of [named, hidden, symbol]) {
+      expect(() => canonicalDocument({ _id: "x", v }, "test")).toThrow(
+        expect.objectContaining({ code: "InvalidResponse" }),
+      );
+      expect(() => encodeNode(leaf([{ _id: "a", v } as unknown as TreeDocument]))).toThrow(
+        expect.objectContaining({ code: "Internal" }),
+      );
+    }
+    expect(canonicalDocument({ _id: "x", v: [1, [2]] }, "test").bytes).toBe(23);
+  });
+
   test("a null-prototype object is a plain object", () => {
     const value = Object.assign(Object.create(null) as Record<string, unknown>, { _id: "x" });
     expect(canonicalDocument(value, "test").bytes).toBe(11);
