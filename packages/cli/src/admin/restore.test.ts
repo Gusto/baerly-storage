@@ -27,6 +27,7 @@ import {
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Writer } from "@baerly/server/_internal/testing";
+import { compact } from "@baerly/server/_internal/maintenance";
 import { canonicalStringify, runDump } from "./dump.ts";
 import { runRestore } from "./restore.ts";
 import { captureStream } from "../_internal/testing.ts";
@@ -68,6 +69,53 @@ describe("baerly admin restore", () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
+  });
+
+  test("--force keeps hidden folded log survivors outside the restored generation", async () => {
+    const args = [
+      `--bucket=file://${root}`,
+      `--app=${APP}`,
+      `--tenant=${TENANT}`,
+      `--collection=${COLL}`,
+    ];
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    await expect(
+      runRestore(args, { streams: { stdin: createReadStream(stdinPath) } }),
+    ).resolves.toBe(0);
+    await compact({ storage, currentJsonKey: CURRENT_JSON_KEY }, { minEntriesToCompact: 1 });
+    const folded = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(folded?.json.log_seq_start).toBe(2);
+    // A retirement interrupted after its first DELETE leaves log/1 alive.
+    await storage.delete(`${TABLE_PREFIX}/log/0.json`);
+    const realList = LocalFsStorage.prototype.list;
+    const list = vi.spyOn(LocalFsStorage.prototype, "list").mockImplementation(function (
+      this: LocalFsStorage,
+      ...listArgs: Parameters<LocalFsStorage["list"]>
+    ) {
+      const entries = realList.apply(this, listArgs);
+      return (async function* () {
+        for await (const entry of entries) {
+          if (entry.key !== `${TABLE_PREFIX}/log/1.json`) {
+            yield entry;
+          }
+        }
+      })();
+    });
+    try {
+      await writeFile(stdinPath, '{"_id":"new"}\n', "utf8");
+      await expect(
+        runRestore([...args, "--force"], { streams: { stdin: createReadStream(stdinPath) } }),
+      ).resolves.toBe(0);
+    } finally {
+      list.mockRestore();
+    }
+    const dump = captureStream(process.stdout);
+    try {
+      await expect(runDump(args)).resolves.toBe(0);
+    } finally {
+      dump.restore();
+    }
+    expect(dump.captured.join("")).toBe('{"_id":"new"}\n');
   });
 
   test("seeds a fresh bucket and lands tail_hint === rowCount", async () => {
@@ -238,24 +286,7 @@ describe("baerly admin restore", () => {
     expect(head?.json.writer_fence.epoch).toBeGreaterThanOrEqual(1);
   });
 
-  test("--force may reset log_seq_start below the old floor — the deliberate admin exemption", async () => {
-    // `casUpdateCurrentJson` rejects any floor regression. `--force` is the
-    // one path that lowers the floor on purpose, and it reaches storage by
-    // its own If-Match PUT rather than through that helper. This test pins
-    // the exemption so it cannot be closed by accident.
-    //
-    // Why it is sound: the reseed floor is `max(listed log seq) + 1`, so it
-    // is strictly above every log object still present and the committing
-    // `log/<seq>` create cannot collide with the old generation. The
-    // reseed sets `snapshot: null`, so the old generation becomes
-    // unreachable to every reader — the intent of truncating. Sub-fold-floor
-    // `log/` survivors are reclaimed by computed-range retirement; legacy
-    // `content/` side objects are left in place and are inert. See the
-    // FLOOR EXEMPTION comment in `restore.ts`.
-    //
-    // This case is the empty-prefix extreme (floor → 0); the next test
-    // covers the partial-survivor case, which is what a budget-bounded
-    // or crash-interrupted retirement pass leaves behind.
+  test("--force retains the old fold floor when the old log prefix is empty", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
     await expect(
       runRestore(
@@ -290,25 +321,14 @@ describe("baerly admin restore", () => {
       ),
     ).resolves.toBe(0);
 
-    // The floor legitimately went 2 → 0: the log prefix was empty, so there
-    // was nothing to skip past.
+    // An empty LIST cannot prove that folded log objects are gone.
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
-    expect(head?.json.log_seq_start).toBe(0);
-    expect(head?.json.tail_hint).toBe(1);
+    expect(head?.json.log_seq_start).toBe(2);
+    expect(head?.json.tail_hint).toBe(3);
   });
 
-  test("--force reseeds above surviving log objects even when that lowers the floor", async () => {
-    // The realistic shape, and the one the exemption's soundness argument
-    // actually rests on. GC's sweep is budget-bounded and walks `log/` in
-    // lex order, so it routinely clears the TOP of the old range while
-    // leaving sub-fold-floor objects behind. The reseed must then land
-    // strictly above the highest survivor — which can be below the old fold
-    // floor.
-    //
-    // Here: fold the whole range (floor → 2), then sweep only `log/1`.
-    // `log/0` survives, so `truncatedNext` is 1 — below the old floor of 2,
-    // with an old-generation object still on the bucket. That refutes any
-    // "the floor only drops once every entry beneath it is gone" reading.
+  test("--force keeps folded log survivors below the reseeded floor", async () => {
+    // A partial retirement leaves log/0 below the old fold floor of 2.
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
     await expect(
       runRestore(
@@ -339,11 +359,10 @@ describe("baerly admin restore", () => {
       ),
     ).resolves.toBe(0);
 
-    // Floor 2 → 1: strictly above the surviving `log/0`, and below the old
-    // floor. The survivor is still on the bucket — GC sweeps it later as an
-    // unreachable orphan, and readers never walk below the new floor.
+    // The survivor stays unreachable until computed-range retirement
+    // reclaims it; the new generation starts at the old fold floor.
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
-    expect(head?.json.log_seq_start).toBe(1);
+    expect(head?.json.log_seq_start).toBe(2);
     const survivors: string[] = [];
     for await (const entry of storage.list(`${TABLE_PREFIX}/log/`)) {
       survivors.push(entry.key);
@@ -351,13 +370,7 @@ describe("baerly admin restore", () => {
     expect(survivors).toContain(`${TABLE_PREFIX}/log/0.json`);
   });
 
-  test("--force drops a certified delete floor before reseeding an empty old log", async () => {
-    // A nonzero delete floor certifies that every lower log object is gone.
-    // When the certified prefix is the entire old log, LIST finds no old
-    // survivor and `--force` safely reseeds at 0, below that old floor.
-    // Carrying the field through the unchecked truncate PUT would publish
-    // `log_delete_floor > log_seq_start`; dropping it correctly resets the
-    // new generation to "no deleted prefix is certified."
+  test("--force resets the old generation's certified delete floor", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
     await expect(
       runRestore(
@@ -405,12 +418,10 @@ describe("baerly admin restore", () => {
     ).resolves.toBe(0);
 
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
-    expect(head?.json.log_seq_start).toBe(0);
-    expect(head?.json.log_seq_start).toBeLessThan(oldDeleteFloor);
+    expect(head?.json.log_seq_start).toBe(oldDeleteFloor);
     expect(head?.json.log_delete_floor).toBeUndefined();
 
-    // The reseed leaves a manifest that still admits validated transitions.
-    // Had the old floor been carried, this no-op CAS would reject it.
+    // The new generation remains valid after resetting its certificate.
     await expect(
       casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({ ...c })),
     ).resolves.toBeDefined();
@@ -546,6 +557,121 @@ describe("baerly admin restore", () => {
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
     expect(head?.json.log_seq_start).toBe(2);
     expect(head?.json.tail_hint).toBe(3);
+  });
+
+  test("--force starts the probe at tail_hint, past a hole that LIST lag leaves in front of the tail", async () => {
+    // Old log: log/0 listed, log/1 a hole, log/2..4 exist but are hidden from
+    // LIST. The head's tail_hint (3) is stale, so the real tail is 5. Probing
+    // from the listed tail (1) stops at the hole; probing from tail_hint
+    // reaches 5.
+    await writeFile(stdinPath, `{"_id":"a-1"}\n{"_id":"a-2"}\n{"_id":"a-3"}\n`, "utf8");
+    await expect(
+      runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+    const before = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(before?.json.tail_hint).toBe(3);
+
+    const body = new TextEncoder().encode("{}");
+    for (const seq of [3, 4]) {
+      await storage.put(`${TABLE_PREFIX}/log/${seq}.json`, body, {
+        contentType: "application/json",
+      });
+    }
+    await storage.delete(`${TABLE_PREFIX}/log/1.json`);
+
+    const realList = LocalFsStorage.prototype.list;
+    vi.spyOn(LocalFsStorage.prototype, "list").mockImplementation(function (
+      this: LocalFsStorage,
+      ...args: Parameters<LocalFsStorage["list"]>
+    ) {
+      const inner = realList.apply(this, args);
+      return (async function* () {
+        for await (const entry of inner) {
+          if (!/\/log\/[234]\.json$/.test(entry.key)) {
+            yield entry;
+          }
+        }
+      })();
+    });
+
+    await writeFile(stdinPath, `{"_id":"u-1","x":1}\n`, "utf8");
+    await expect(
+      runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--force",
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(head?.json.log_seq_start).toBe(5);
+    expect(head?.json.tail_hint).toBe(6);
+  });
+
+  test("--force finds the old tail by probing past a LIST that hides the newest log keys", async () => {
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    await expect(
+      runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    // Eventually consistent LIST: `log/1.json` exists (a GET returns it)
+    // but the listing has not caught up. The old tail is 2, not 1.
+    const realList = LocalFsStorage.prototype.list;
+    vi.spyOn(LocalFsStorage.prototype, "list").mockImplementation(function (
+      this: LocalFsStorage,
+      ...args: Parameters<LocalFsStorage["list"]>
+    ) {
+      const inner = realList.apply(this, args);
+      return (async function* () {
+        for await (const entry of inner) {
+          if (!entry.key.endsWith("/log/1.json")) {
+            yield entry;
+          }
+        }
+      })();
+    });
+
+    await writeFile(stdinPath, `{"_id":"u-1","x":1}\n`, "utf8");
+    await expect(
+      runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--force",
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(head?.json.log_seq_start).toBe(2);
+    expect(head?.json.tail_hint).toBe(3);
+    // The old `t-2` row at `log/1.json` must not be replayed into the new generation.
+    const dump = captureStream(process.stdout);
+    try {
+      await runDump([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+      ]);
+    } finally {
+      dump.restore();
+    }
+    expect(dump.captured.join("")).not.toContain("t-2");
   });
 
   test("line missing _id → InvalidConfig (exit 1), no rows committed", async () => {

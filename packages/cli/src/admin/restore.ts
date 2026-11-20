@@ -33,7 +33,9 @@
  *   one committing `log/<seq>` create per row, final `tail_hint` stamp),
  *   force non-empty `N + 2 + P`, fresh empty `1`, and force empty
  *   `1 + P`, where `P` is the number of provider LIST pages consumed by
- *   the one `Storage.list()` iterator in `tailFromListedLogKeys`.
+ *   the one `Storage.list()` iterator in `oldGenerationTail`, plus one
+ *   forward-probe GET per old log slot at or past the listed tail (at
+ *   least one).
  *   Maintenance adds the same measured profile overhead as the main
  *   cost model.
  *
@@ -70,6 +72,8 @@ import {
   type DocumentData,
   encodeJsonBytes,
   gcPendingKey,
+  LOG_FORWARD_PROBE_CAP,
+  logObjectKey,
   mintGeneration,
   readCurrentJson,
   type Storage,
@@ -111,9 +115,20 @@ const RESTORE_ARGS = {
   json: JSON_ARG,
 } as const satisfies ArgsDef;
 
-const tailFromListedLogKeys = async (
+/**
+ * Safe reseed position for `--force`: at least the old fold floor and
+ * above every surviving log object found by LIST or forward point GETs.
+ * LIST is eventually consistent, so probe from `max(old floor, listed
+ * tail)` and also from the old `tail_hint` when it lies further on.
+ * Keeping the old floor covers folded survivors hidden by LIST after
+ * interrupted retirement; an empty probe cannot certify their absence.
+ * Probes only test existence, so malformed old entries do not block restore.
+ */
+const oldGenerationTail = async (
   storage: Storage,
   collectionPrefix: string,
+  logSeqStart: number,
+  tailHint: number,
 ): Promise<number> => {
   const logPrefix = `${collectionPrefix}/log/`;
   let maxSeq = -1;
@@ -128,7 +143,28 @@ const tailFromListedLogKeys = async (
       maxSeq = seq;
     }
   }
-  return maxSeq + 1;
+  const listed = maxSeq + 1;
+  // An empty walk contributes no evidence beyond LIST; the final floor
+  // bound still excludes any folded survivors LIST has not shown.
+  const walk = async (start: number): Promise<number> => {
+    let seq = start;
+    for (let probed = 0; probed < LOG_FORWARD_PROBE_CAP; probed++) {
+      if ((await storage.get(logObjectKey(collectionPrefix, seq))) === null) {
+        return seq > start ? seq : listed;
+      }
+      seq++;
+    }
+    throw new BaerlyError(
+      "Internal",
+      `baerly admin restore: forward probe exceeded ${LOG_FORWARD_PROBE_CAP} slots past log/${seq - LOG_FORWARD_PROBE_CAP} on ${collectionPrefix}`,
+    );
+  };
+  const fromListed = await walk(Math.max(logSeqStart, listed));
+  // A hole between the listed tail and `tail_hint` stops the first walk
+  // short of entries LIST has not shown yet; `tail_hint` is a lower bound
+  // on the tail, so a second walk from it is sound.
+  const fromHint = tailHint > Math.max(logSeqStart, listed) ? await walk(tailHint) : listed;
+  return Math.max(logSeqStart, fromListed, fromHint);
 };
 
 const bundle = defineBaerlySubcommand({
@@ -194,75 +230,25 @@ const bundle = defineBaerlySubcommand({
       // commits land at fresh sequence numbers and the old log files
       // become unreferenced orphans (computed-range retirement reclaims
       // them once the new generation's fold floor advances past them).
-      // Do this from LISTed log keys, not
+      // Do this from log key existence, not
       // by folding the old log bodies: `--force` must be able to recover
       // from malformed old entries, and a hole must not make us
-      // under-shoot a later old entry.
-      const truncatedNext = await tailFromListedLogKeys(bucket.storage, collectionPrefix);
+      // under-shoot a later old entry. LIST seeds the search but is never
+      // trusted for membership; point GETs walk forward to the first 404.
+      const truncatedNext = await oldGenerationTail(
+        bucket.storage,
+        collectionPrefix,
+        head.json.log_seq_start,
+        head.json.tail_hint,
+      );
       baseSeq = truncatedNext;
-      // FLOOR EXEMPTION — deliberate. `casUpdateCurrentJson` rejects any
-      // write that lowers `log_seq_start`; this PUT is not routed through
-      // it, so `--force` can reseed BELOW the old floor. The compactor's
-      // fold CAS also bypasses that helper, but calls the shared transition
-      // validator directly before publication. `--force` is the only path
-      // that intentionally lowers the floor.
-      //
-      // Why lowering is sound. `truncatedNext` is strictly greater than
-      // every log object still on the bucket, so the writer's committing
-      // `log/<seq>` create cannot collide with an old-generation object —
-      // that 412 hazard is the whole point of the reseed (see above). It
-      // can land below the old FOLD floor whenever the surviving log
-      // objects stop short of it. Retirement is budget-bounded, so it
-      // normally leaves a contiguous suffix and `truncatedNext` reaches
-      // the fold floor — but two paths break that. A pass that crashes
-      // between its floor CAS and the end of its DELETE loop leaves an
-      // arbitrary subset of the authorized range behind
-      // (`log-retention.ts`: leak, never corruption), and a failed
-      // phantom cleanup on the `AmbiguousCommit` path leaves an isolated
-      // sub-floor object. So fold floor 12 with `log/8` and `log/9`
-      // retained and `log/10`, `log/11` gone is reachable, yielding
-      // `truncatedNext` 10 < 12.
-      //
-      // Nothing is lost by that. Readers never see the survivors: they
-      // walk from the new floor, and `fsck` bounds itself by listed keys,
-      // so sub-floor objects produce no findings. The truncate is complete
-      // with respect to every reader, which is what truncating means.
-      //
-      // It is not complete with respect to BYTES, and deliberately so.
-      // Resetting `snapshot` to `null` makes the whole old generation
-      // unreachable. The surviving sub-floor `log/` objects are reclaimed
-      // by computed-range retirement once the new generation's fold floor
-      // advances past them — the reseed literal below omits
-      // `log_delete_floor`, so it decodes to 0 and the computed range
-      // starts there, covering every survivor. Legacy `content/<sha>.json`
-      // side objects stay put: no kernel reader opens one, so they are
-      // inert, and an operator who wants the bytes back deletes the prefix
-      // directly (`docs/guide/backups.md`).
-      //
-      // Do not "repair" this with `Math.max`; that reseeds a floor above
-      // `tail_hint`, trips `assertCurrentJson`, and breaks truncate.
-      // `restore.test.ts` pins both the empty-prefix and partial-sweep
-      // cases.
-      // `log_delete_floor` IS DELIBERATELY ABSENT from this literal. Do not
-      // "repair" that with `...head.json`.
-      //
-      // Dropping it is the correct truncate semantics: the field is the
-      // exclusive upper bound of the contiguous log prefix certified
-      // deleted. A truncate starts a new generation, so its certification
-      // resets to "no deleted prefix is certified."
-      //
-      // Carrying it forward is not merely redundant, it is unsound. This PUT
-      // is the one `current.json` writer that does not call
-      // `assertCurrentJsonTransition` (invariant 12 names it as the deliberate
-      // exemption), so a carried floor is published UNCHECKED. A reseed can
-      // land below the old delete floor only when the certified old prefix —
-      // potentially the entire old log — is gone. With no surviving log
-      // objects, LIST yields `truncatedNext = 0`; restored rows then reuse
-      // slots below the old floor. Carrying that old-generation certificate
-      // would store `log_delete_floor > log_seq_start`, which the very next
-      // validated write rejects — in practice this command's own post-reseed
-      // tail stamp. `restore.test.ts` pins the empty-old-log case, the field
-      // omission, and the subsequent validated transition.
+      // Both bounds move together, keeping every old log object below
+      // the new generation's readable range. The old fold floor remains
+      // a lower bound even when LIST reports no surviving objects.
+      // Resetting snapshot discards old rows; omitting log_delete_floor
+      // resets the new generation's deletion certificate so computed-range
+      // retirement can reclaim every remaining old log object. Legacy
+      // content side objects are inert and left for operator cleanup.
       const reseeded: CurrentJson = {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
@@ -279,12 +265,9 @@ const bundle = defineBaerlySubcommand({
         },
         snapshot_bytes: 0,
         snapshot_rows: 0,
-        // New generation. This is the one write in the system that
-        // lowers `log_seq_start`, so it is the one write that can leave
-        // a live `/v1/since` cursor pointing above the floor but into a
-        // dead generation. Re-minting here is what lets the next resume
-        // on that cursor fail loudly (`CursorExpired` → re-bootstrap)
-        // instead of silently skipping the restored rows beneath it.
+        // A truncate replaces the collection even though its fold floor
+        // stays at or above the old one. Re-mint so pre-restore cursors
+        // expire before reading retained old-generation entries.
         generation: mintGeneration(),
       };
       try {

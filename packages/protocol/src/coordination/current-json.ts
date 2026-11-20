@@ -86,8 +86,7 @@ export interface CurrentJson {
    *   - `0 <= log_seq_start <= tail_hint`
    *   - `log_seq_start` advances monotonically (never decreases).
    *     {@link assertCurrentJsonTransition} rejects a writer that lowers
-   *     it; `baerly admin restore
-   *     --force` is the deliberate truncate exemption.
+   *     it; `baerly admin restore --force` also retains the old floor.
    *   - `log_seq_start > 0` implies `snapshot !== null` (the snapshot
    *     covers `[0, log_seq_start)`) — except after a `--force`
    *     truncate, which resets `snapshot` to `null` while reseeding
@@ -174,11 +173,10 @@ export interface CurrentJson {
    *
    * `/v1/since` pairs it with each entry's `lsn` to build the cursor it
    * hands clients, then rejects a resume whose generation no longer
-   * matches. Without it, a `restore --force` that reseeds
-   * `log_seq_start` BELOW the old floor (the deliberate floor exemption
-   * — invariant 12 in `docs/spec/sync-protocol.md`) lets a pre-restore
-   * cursor clear the `cursorSeq < log_seq_start` gate and silently skip
-   * every restored row beneath it.
+   * matches. A pre-restore cursor must expire before it can read retained
+   * old-generation entries below the fold floor. Older restore builds
+   * could also lower the floor and reuse slots, letting seq-only cursors
+   * silently skip restored rows.
    *
    * Deliberately NOT `writer_fence.epoch`: the fresh-target restore
    * branch seeds `epoch: 0`, so a truncate-to-empty is indistinguishable

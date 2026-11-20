@@ -702,47 +702,12 @@ describe("Writer", () => {
   });
 
   test("a commit never lands below the log_seq_start observed after it", async () => {
-    // Every other seq assertion in this file is an exact literal
-    // (`toBe(0)`, `toBe(1)`, …) against a floor that never moves DOWN. Not
-    // "a floor of 0" — the `[log_seq_start, tail_hint)` walk test asserts
-    // a seq under a static floor of 2. The point is narrower: in
-    // all of them the commit lands at or above a floor that only ever rose,
-    // so none can observe a commit landing BENEATH the floor. This states
-    // the relation instead, against the one manifest shape in the system
-    // where the floor has moved DOWN.
-    //
-    // That shape is what `baerly admin restore --force` writes: its
-    // deliberate floor exemption reseeds `log_seq_start` from the
-    // surviving log objects, which can land below the old floor, and it
-    // resets `snapshot` to null. `CurrentJson.log_seq_start`'s own docs
-    // name the trap — `log_seq_start > 0` implies `snapshot !== null`,
-    // "except after a `--force`". A writer that reads `snapshot: null` as
-    // "nothing has been folded, so there is no floor to respect" probes
-    // from zero, finds a swept slot beneath the floor, and commits there.
-    // Nothing collides, nothing errors, the write is acknowledged — and
-    // readers walk from the floor, so the row is invisible forever.
-    //
-    // HONEST FRAMING, do not overstate this test: `assertCurrentJson`
-    // enforces `0 <= log_seq_start <= tail_hint`, so today `probeFloor`'s
-    // `Math.max` is a defensive no-op and this invariant holds by
-    // construction. This is a TRIPWIRE on the floor exemption, not
-    // coverage of a live defect — mutating `probeFloor` reddens other
-    // tests too, though none of them NAMES this invariant. It exists
-    // because the exemption is the only write in the system that lowers
-    // the floor. The read-side counterpart is `http/since.test.ts`, which
-    // pins cursor REJECTION across the same post-`--force` shape; its only
-    // commit happens before the truncation, so it does not cover the write
-    // path this test does.
+    // Restore can leave snapshot:null with a positive log floor. The
+    // writer must respect that floor rather than infer zero from the
+    // absent snapshot, which would acknowledge an invisible sub-floor row.
+    // Manifest validation enforces log_seq_start <= tail_hint, so probing
+    // from the hint also respects the floor for this post-restore shape.
     const storage = new MemoryStorage();
-    // The post-`--force` manifest, in the fields this test turns on:
-    // floor and hint both reseeded to 10, snapshot dropped. Ten, not
-    // zero, is what makes the assertion non-trivial. It is NOT byte-
-    // identical to what `restore.ts` writes — the real reseed bumps
-    // `writer_fence.epoch` and stamps `RESTORE_OWNER`, and re-mints
-    // `generation` rather than reusing the fixture's fixed nonce.
-    // `commit()` reads neither field, so neither difference reaches the
-    // behaviour under test; the shared shape is `snapshot: null` over a
-    // positive floor.
     const RESEEDED_FLOOR = 10;
     await createCurrentJson(
       storage,
