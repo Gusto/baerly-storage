@@ -1,35 +1,25 @@
-// CLI wrapper: pnpm bench:cpu-factor:analyze <events> [node-baseline.json] [--prereg <file.json>]
+// CLI wrapper: pnpm bench:cpu-factor:analyze <events> [node-baseline.json] [--prereg[=]<file.json>]
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyze, formatReport, type NodeBaseline, parseStream } from "./analyze.ts";
 import {
+  ANALYZE_USAGE,
   analyzeOptionsOf,
   evaluatePrereg,
   formatPrereg,
+  parseAnalyzeArgs,
   parsePrereg,
   type Prereg,
 } from "./prereg.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const argv = process.argv.slice(2);
-const flag = argv.indexOf("--prereg");
-let preregPath: string | undefined;
-if (flag >= 0) {
-  preregPath = argv[flag + 1];
-  if (preregPath === undefined || preregPath.startsWith("--")) {
-    console.error("--prereg needs a file argument");
-    process.exit(2);
-  }
-  argv.splice(flag, 2);
-}
-const [eventsPath, basePath = join(here, "out/node-baseline.json")] = argv;
-if (eventsPath === undefined) {
-  console.error(
-    "usage: pnpm bench:cpu-factor:analyze <events> [node-baseline.json] [--prereg <file.json>]",
-  );
+const args = parseAnalyzeArgs(process.argv.slice(2));
+if ("error" in args) {
+  console.error(`${args.error}\n${ANALYZE_USAGE}`);
   process.exit(2);
 }
+const { eventsPath, basePath = join(here, "out/node-baseline.json"), preregPath } = args;
 let prereg: Prereg | undefined;
 if (preregPath !== undefined) {
   try {
