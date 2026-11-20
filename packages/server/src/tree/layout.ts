@@ -223,10 +223,28 @@ export const TREE_LAYOUT_RULES: readonly TreeLayoutRule[] = Object.freeze([
 export interface TreeSteps {
   /** The rules a layout must satisfy. */
   readonly layoutRules: readonly TreeLayoutRule[];
+  /**
+   * The strict decoder's canonical-bytes check: the stored body must
+   * equal the canonical re-encoding of what it parsed to, byte for byte.
+   */
+  readonly canonicalBytesMatch: (stored: Uint8Array, reencoded: Uint8Array) => boolean;
 }
+
+const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
+  if (a.byteLength !== b.byteLength) {
+    return false;
+  }
+  for (let i = 0; i < a.byteLength; i++) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
+};
 
 const TREE_STEPS: TreeSteps = Object.freeze({
   layoutRules: TREE_LAYOUT_RULES,
+  canonicalBytesMatch: bytesEqual,
 });
 
 /**
