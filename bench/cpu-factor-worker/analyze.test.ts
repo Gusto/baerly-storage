@@ -35,6 +35,23 @@ const makeEvents = (perCell = 60, factor = FACTOR) =>
   });
 
 describe("analyze", () => {
+  test("an event with no outcome field is not counted as an ok sample", () => {
+    const events = makeEvents(60, 1);
+    const target = events[0]!;
+    const name = new URL(target.url).searchParams.get("cell")!;
+    const stripped = events.map((e) =>
+      new URL(e.url).searchParams.get("cell") === name
+        ? { cpuTime: e.cpuTime, url: e.url, logs: e.logs }
+        : e,
+    );
+    const a = analyze(stripped, makeBaseline(QUIET));
+    const row = a.rows.find((r) => r.cell.name === name)!;
+    expect(row.n).toBe(0);
+    expect(row.other).toBe(60);
+    expect(a.missingOutcome).toBe(60);
+    expect(formatReport(a)).toContain("missing outcome: 60");
+  });
+
   test("recovers an injected factor from a quiet baseline and is not exploratory", () => {
     const a = analyze(makeEvents(), makeBaseline(QUIET));
     expect(a.exploratory).toBe(false);
