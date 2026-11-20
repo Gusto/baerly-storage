@@ -288,7 +288,9 @@ const checkAbsentDeleteInvisible = (fold: Fold, c: FoldCase): void => {
     entries: ops.map((op, i) => entryOf(op, c.baseSeq + i)),
     targetSeq: input.targetSeq + 1,
   });
-  expectRows("absent-delete-invisible", withDelete.rows, fold(inputOf(c)).rows);
+  const without = fold(inputOf(c));
+  expectRows("absent-delete-invisible", withDelete.rows, without.rows);
+  expectSeq("absent-delete-invisible", withDelete.foldedSeq, without.foldedSeq + 1);
 };
 
 const checkPrefixSplit = (fold: Fold, c: FoldCase): void => {
@@ -980,6 +982,7 @@ describe("mutation", () => {
     "skip-last-mutation": ["last-write-wins"],
     "first-write-wins": ["last-write-wins"],
     "delete-as-noop": ["last-write-wins"],
+    "absent-delete-creates-row": ["absent-delete-invisible", "last-write-wins"],
     "merge-instead-of-replace": ["last-write-wins"],
     "wrong-folded-seq": ["empty-identity", "folded-seq"],
     "aliased-bodies": ["no-aliasing", "insertion-order-invisible"],
