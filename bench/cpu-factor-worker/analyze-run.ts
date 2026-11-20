@@ -31,7 +31,16 @@ if (preregPath !== undefined) {
     process.exit(1);
   }
 }
-const events = parseStream(readFileSync(eventsPath, "utf8"));
+let events: ReturnType<typeof parseStream>;
+try {
+  events = parseStream(readFileSync(eventsPath, "utf8"), { strict: prereg !== undefined });
+} catch (error) {
+  if (prereg === undefined) {
+    throw error;
+  }
+  console.error(`PREREG VERDICT: FAIL (invalid capture): ${(error as Error).message}`);
+  process.exit(1);
+}
 const base = JSON.parse(readFileSync(basePath, "utf8")) as NodeBaseline;
 const a = analyze(events, base, prereg === undefined ? {} : analyzeOptionsOf(prereg));
 if (a.missingCpu > 0 && a.rows.every((r) => r.n === 0)) {
