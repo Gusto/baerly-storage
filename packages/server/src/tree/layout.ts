@@ -15,6 +15,7 @@
  * so no override can widen what a reader accepts.
  */
 import { BaerlyError } from "@baerly/protocol";
+import type { ChunkKey } from "./chunk.ts";
 
 /** Leaf target size: 16 KiB. */
 const LEAF_TARGET_BYTES = 16 * 1024;
@@ -219,6 +220,10 @@ export const TREE_LAYOUT_RULES: readonly TreeLayoutRule[] = Object.freeze([
  * Injection points for test mutants: one member per replaceable step.
  * Tree code reads each step from a {@link TreeConfig}, so a mutant passed
  * to {@link createTreeConfig} reaches every caller of that config.
+ *
+ * The optional members are the canonical builder's steps. When one is
+ * absent, the module that runs it uses its own built-in step, which
+ * keeps this module free of a runtime import of the builder.
  */
 export interface TreeSteps {
   /** The rules a layout must satisfy. */
@@ -228,6 +233,24 @@ export interface TreeSteps {
    * equal the canonical re-encoding of what it parsed to, byte for byte.
    */
   readonly canonicalBytesMatch: (stored: Uint8Array, reencoded: Uint8Array) => boolean;
+  /**
+   * Whether a leaf is cut after the entry that took its document bytes
+   * from `before` to `after`, given that entry's level-0 chunk hash.
+   */
+  readonly leafCut?: (before: number, after: number, hash: number, layout: TreeLayout) => boolean;
+  /** The chunk hash `h(level, id)` under a collection's chunk key. */
+  readonly chunkHash?: (key: ChunkKey, level: number, id: string) => Promise<number>;
+  /** The order of `_id`s: `utf8-scalar-v1`. */
+  readonly orderIds?: (a: string, b: string) => number;
+  /** Whether a document of `bytes` document bytes is isolated in its own leaf. */
+  readonly isolates?: (bytes: number, layout: TreeLayout) => boolean;
+  /**
+   * Whether a branch node is cut after its `count`-th entry, given the
+   * chunk hash of that entry's `hi` at the level being chunked.
+   */
+  readonly branchCut?: (count: number, hash: number, layout: TreeLayout) => boolean;
+  /** The depth-0 rule: whether a row set with these totals is one root leaf. */
+  readonly singleLeaf?: (rows: number, bytes: number, layout: TreeLayout) => boolean;
 }
 
 const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
