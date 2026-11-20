@@ -8,7 +8,11 @@
  * chosen when the format is adopted.
  */
 
-import { MAX_KEY_BYTES, STORAGE_RETRY_MAX_ATTEMPTS } from "@baerly/protocol";
+import {
+  MAX_KEY_BYTES,
+  MAX_PARALLEL_LOG_READS,
+  STORAGE_RETRY_MAX_ATTEMPTS,
+} from "@baerly/protocol";
 import { MAX_SEGMENT_BYTES } from "../path-segment.ts";
 
 /** Namespace segment under the collection prefix that holds every tree object. */
@@ -44,7 +48,8 @@ export const TREE_MAX_LEVEL = 16;
 
 /**
  * Calls the request ledger is charged for one node GET, node PUT or head
- * GET of a fold. Each goes through `retryStorageCall`
+ * GET of a fold, and for each base GET a scan admission check counts.
+ * Each goes through `retryStorageCall`
  * (`packages/protocol/src/storage/retry.ts`), which may make up to
  * `STORAGE_RETRY_MAX_ATTEMPTS` attempts, and the ledger charges every
  * attempt as it is issued, so a plan charged at this rate cannot run out
@@ -58,6 +63,14 @@ export const TREE_RETRIED_CALL_CHARGE: number = STORAGE_RETRY_MAX_ATTEMPTS;
  * would meet its own landed write as a 412.
  */
 export const TREE_HEAD_CAS_CHARGE = 1;
+
+/**
+ * Most sibling nodes a read fetches at once. The same concurrency as the
+ * log walk (`MAX_PARALLEL_LOG_READS`): it bounds simultaneous GETs, not
+ * their total, which the request ledger bounds. On Workers the platform
+ * runs at most 6 outgoing connections at a time whatever this value is.
+ */
+export const TREE_READ_PARALLEL_GETS: number = MAX_PARALLEL_LOG_READS;
 
 /** Most child entries one branch may hold. */
 export const BRANCH_MAX_ENTRIES = 256;
