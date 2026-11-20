@@ -229,12 +229,13 @@ export const formatPrereg = (a: Analysis, p: Prereg, v: PreregVerdict): string =
     `Percentile method: ${p.percentileMethod === "r7" ? "R-7 (linear interpolation, Hyndman-Fan type 7)" : "nearest-rank"}`,
     `Declared: sample floor ${p.sampleFloor} ok; p99 threshold ${p.p99ThresholdMs} ms; ${p.capture.requestsPerCell} requests + ${p.capture.warmupsPerCell} warmups per cell; concurrency ${p.capture.concurrency} (not observable in the capture, taken as declared)`,
     "Rule per decision cell: no incomplete events, killed = 0, other = 0, n ok >= floor, p99 <= threshold. Overall: any decision cell passes and no run-level mismatch.",
-    "cell | n ok | killed | other | missing outcome | incomplete | p99 ms | result",
+    "Warmups (&warmup=1) are excluded from every check by preregistration; their kills and other outcomes are listed, never counted.",
+    "cell | n ok | killed | other | missing outcome | incomplete | warmups killed / other | p99 ms | result",
   ];
   for (const c of v.cells) {
     const r = c.row;
     out.push(
-      `${c.cell} | ${r?.n ?? 0} | ${r?.killed ?? 0} | ${r?.other ?? 0} | ${a.incomplete.filter((i) => i.cell === c.cell && i.missing.includes("outcome")).length} | ${c.incomplete} | ${f2(r?.d.p99 ?? Number.NaN)} | ${c.pass ? "PASS" : `FAIL (${c.reasons.join("; ")})`}`,
+      `${c.cell} | ${r?.n ?? 0} | ${r?.killed ?? 0} | ${r?.other ?? 0} | ${a.incomplete.filter((i) => i.cell === c.cell && i.missing.includes("outcome")).length} | ${c.incomplete} | ${r?.warmupKilled ?? 0} / ${r?.warmupOther ?? 0} | ${f2(r?.d.p99 ?? Number.NaN)} | ${c.pass ? "PASS" : `FAIL (${c.reasons.join("; ")})`}`,
     );
   }
   out.push(
@@ -245,6 +246,12 @@ export const formatPrereg = (a: Analysis, p: Prereg, v: PreregVerdict): string =
         `  event #${i.index} cell ${i.cell ?? "(unattributed)"}: missing ${i.missing.join(", ")}`,
     ),
   );
+  const warmKills = v.cells.filter((c) => (c.row?.warmupKilled ?? 0) > 0);
+  if (warmKills.length > 0) {
+    out.push(
+      `Note: ${warmKills.length} decision cell(s) had killed warmups (${warmKills.map((c) => c.cell).join(", ")}); excluded by preregistration, so they do not affect the verdict.`,
+    );
+  }
   if (v.failures.length > 0) {
     out.push("Mismatches:", ...v.failures.map((f) => `  - ${f}`));
   }
