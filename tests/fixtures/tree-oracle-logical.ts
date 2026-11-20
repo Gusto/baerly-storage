@@ -47,7 +47,9 @@
  * `logSeqStartAfter`). A reader's view at true tail `tail` (its first 404)
  * is the same fold with `targetSeq = tail`. Every seq in
  * `[baseSeq, targetSeq)` must be present: a gap is a protocol violation, not
- * a no-op. Entries outside the range are ignored. An entry for another
+ * a no-op. Entries outside the range change no row, but every entry's `seq`,
+ * in range or not, must be a distinct non-negative integer: a duplicate or
+ * invalid seq anywhere in `entries` is oracle misuse. An entry for another
  * collection occupies its slot, counts toward the folded seq and changes no
  * row, as in the production folds. An in-range entry whose `collection` is
  * byte-different from the folded one but equal under NFC throws

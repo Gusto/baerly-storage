@@ -119,6 +119,7 @@ const expectRows = (
   invariant: Invariant,
   actual: ReadonlyMap<string, DocumentData>,
   expected: ReadonlyMap<string, DocumentData>,
+  where = "",
 ): void => {
   const ids = [...new Set([...actual.keys(), ...expected.keys()])].toSorted(compareDocIds);
   for (const id of ids) {
@@ -127,15 +128,15 @@ const expectRows = (
     if ((got === undefined) !== (want === undefined) || stable(got) !== stable(want)) {
       throw new Violation(
         invariant,
-        `first differing _id ${JSON.stringify(id)}: got ${stable(got)}, want ${stable(want)}`,
+        `${where}first differing _id ${JSON.stringify(id)}: got ${stable(got)}, want ${stable(want)}`,
       );
     }
   }
 };
 
-const expectSeq = (invariant: Invariant, actual: number, expected: number): void => {
+const expectSeq = (invariant: Invariant, actual: number, expected: number, where = ""): void => {
   if (actual !== expected) {
-    throw new Violation(invariant, `folded seq ${actual}, want ${expected}`);
+    throw new Violation(invariant, `${where}folded seq ${actual}, want ${expected}`);
   }
 };
 
@@ -320,8 +321,9 @@ const checkPrefixSplit = (fold: Fold, c: FoldCase): void => {
   const first = fold({ ...input, targetSeq: split });
   const second = fold({ ...input, base: first.rows, baseSeq: first.foldedSeq });
   const whole = fold(inputOf(c));
-  expectRows("prefix-split", second.rows, whole.rows);
-  expectSeq("prefix-split", second.foldedSeq, whole.foldedSeq);
+  const where = `split at seq ${split} of [${c.baseSeq}, ${input.targetSeq}): `;
+  expectRows("prefix-split", second.rows, whole.rows, where);
+  expectSeq("prefix-split", second.foldedSeq, whole.foldedSeq, where);
 };
 
 /** Overwrite every field except `_id`, recursing into arrays and objects. */
@@ -460,6 +462,22 @@ describe("logical fold properties", () => {
 
   fcTest.prop({ c: foldCaseArb })("folding in two steps equals one fold", ({ c }) => {
     checkPrefixSplit(foldLogical, c);
+  });
+
+  test("a prefix-split failure names the split seq", () => {
+    const c: FoldCase = {
+      base: [],
+      baseSeq: 3,
+      ops: [
+        { kind: "I", id: "a", fields: {} },
+        { kind: "D", id: "a", fields: {} },
+      ],
+      cut: 2,
+      pick: 1,
+      entryOrder: [0, 1],
+    };
+    const fold: Fold = (input) => foldLogicalMutant(input, "skip-last-mutation");
+    expect(() => checkPrefixSplit(fold, c)).toThrow(/^prefix-split: split at seq 4 of \[3, 5\): /);
   });
 
   test("an empty base and log fold to no rows", () => {
