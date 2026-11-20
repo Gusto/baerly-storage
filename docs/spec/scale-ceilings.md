@@ -43,7 +43,7 @@ baerly-storage is built for production apps that live within a defined workload 
 
 ⁴ Derivation: [Collection fan-out](#collection-fan-out).
 
-⁵ 1,048,576 bytes of the row's JSON, `_id` included (`MAX_DOCUMENT_BYTES`). An insert, `replace`, or `update` whose resulting row is larger fails with `InvalidConfig` and writes nothing, so a small patch that would grow a row past the limit is refused too. A row stored larger by an earlier release stays readable and deletable, and an update that shrinks it under the limit commits.
+⁵ 1,048,576 bytes of the row's JSON, `_id` included (`MAX_DOCUMENT_BYTES`). An insert, `replace`, or `update` whose resulting row is larger fails with `InvalidConfig` and writes nothing, so a small patch that would grow a row past the limit is refused too. A row stored larger by an earlier release stays readable and deletable, and an update that shrinks it under the limit commits. Store 64-bit ids (Snowflake, Postgres `bigint`) as strings: a JSON number above 2^53 − 1 is rounded by `JSON.parse` before it reaches the database, and a write carrying one is counted on `db.write.unsafe_integer_total` and logged as `unsafe_integer`.
 
 ⁶ Each object or array is a level, the document itself included (`MAX_DOCUMENT_DEPTH`, MongoDB's limit). An insert, `replace`, `update` patch, or merged row nested deeper fails with `SchemaError` and writes nothing. A row stored deeper by an earlier release stays readable and deletable, and an update that flattens it under the limit commits.
 

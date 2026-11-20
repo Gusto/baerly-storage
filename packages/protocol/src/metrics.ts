@@ -48,6 +48,10 @@
  *     An SDK-minted insert (`mintedId`) found its identical row already
  *     stored and returned it as the original success, committing nothing.
  *     A rate tracks clients retransmitting inserts after lost responses.
+ *   - `db.write.unsafe_integer_total` — counter, labelled by `collection`
+ *     and `verb` (`insert` / `update` / `replace`). A write carried an
+ *     integer outside the safe range (|v| > 2^53 - 1), which `JSON.parse`
+ *     had already rounded; counted once per write, nothing is refused.
  *   - `db.read.decoded_entries_total` / `db.read.live_documents_total` /
  *     `db.read.returned_rows_total` — counters, labelled by `collection`,
  *     emitted together by every collection read (a read terminal, or a

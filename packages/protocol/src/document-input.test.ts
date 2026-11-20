@@ -268,3 +268,29 @@ describe("assertInsertIdType", () => {
     );
   });
 });
+
+describe("assertDocumentValues: unsafe integers", () => {
+  const paths = (value: unknown): string[] => {
+    const seen: string[] = [];
+    assertDocumentValues(value, "insert", { onUnsafeInteger: (path) => seen.push(path) });
+    return seen;
+  };
+
+  test("reports the first integer beyond the safe range, once, with its path", () => {
+    expect(paths({ a: { b: [1, 2 ** 53 + 2] }, c: 2 ** 60 })).toEqual(["a.b[1]"]);
+    expect(paths({ n: -(2 ** 53) })).toEqual(["n"]);
+  });
+
+  test("ignores safe integers, floats and a document refused for another reason", () => {
+    expect(
+      paths({ a: Number.MAX_SAFE_INTEGER, b: Number.MIN_SAFE_INTEGER, c: 0.5, d: -0 }),
+    ).toEqual([]);
+    const seen: string[] = [];
+    expect(() =>
+      assertDocumentValues({ a: 2 ** 60, b: Number.NaN }, "insert", {
+        onUnsafeInteger: (path) => seen.push(path),
+      }),
+    ).toThrow(/NaN/);
+    expect(seen).toEqual([]);
+  });
+});
