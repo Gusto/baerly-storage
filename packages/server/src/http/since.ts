@@ -4,13 +4,25 @@
  *  - {@link longPollSince} — the long-poll itself. Fast path first;
  *    if `listEventsSince` already sees events, return immediately.
  *    Otherwise race a poll loop against a 25 s wall-clock timeout and
- *    return either the next batch of events or
- *    `{ events: [], next_cursor: <same> }` ("nothing changed within
- *    the budget").
+ *    return either the next batch of events or an empty batch at the
+ *    request's position ("nothing changed within the budget").
  *  - {@link listEventsSince} — one poll cycle. Reads `current.json`,
- *    validates the caller's cursor against `log_seq_start`, discovers
+ *    validates the caller's cursor against the retained log, discovers
  *    the true tail by forward-probe, GETs each body by integer `seq`,
  *    and returns the parsed `LogEntry`s in causal order.
+ *
+ * Cursor positions. A cursor names the last `seq` its holder has seen;
+ * the next poll resumes at `seq + 1`. A fold moves `log_seq_start` but
+ * does not delete anything at once (GC reclaims folded entries after a
+ * grace), so a cursor below the floor resumes by reading the retained
+ * entries, and expires only when one it still needs is gone: below the
+ * certified `log_delete_floor`, or a 404. `""` means "from
+ * `log_seq_start`"; the first response to it carries a position cursor
+ * even when it has no events (one below the floor, or the position
+ * before seq 0 while the floor is 0 or the collection is not yet
+ * provisioned), so a subscriber that idles on `""` cannot have a write
+ * commit and fold between two polls unseen. `""` comes back only from a
+ * request that ran out of storage calls before reading `current.json`.
  *
  * The handler is wired into the Hono router (`router.ts`); the
  * router itself owns request parsing and error → HTTP mapping. This
@@ -43,8 +55,10 @@
 import {
   type BaerlyConfig,
   BaerlyError,
+  certifiedDeleteFloor,
   CODE_RESOLUTIONS,
   COUNT_BIT_WIDTH,
+  countKey,
   currentRequestLedger,
   formatCursor,
   type LogEntry,
@@ -54,9 +68,17 @@ import {
   NO_GENERATION,
   parseCursor,
   type RequestPool,
+  SINCE_ANY_GENERATION,
+  SINCE_NO_GENERATION,
+  SINCE_ORIGIN_GENERATION,
 } from "@baerly/protocol";
 import type { Db } from "../db.ts";
-import { getCurrentJson, getLogEntry, probeLogChunk } from "../db-read-seams.ts";
+import {
+  getCurrentJson,
+  getLogEntry,
+  getRetainedLogEntry,
+  probeLogChunk,
+} from "../db-read-seams.ts";
 import type { SinceResponse } from "../contract.ts";
 import { forwardProbeCap, isStorageRefusal } from "../log-tail.ts";
 
@@ -151,6 +173,30 @@ const DEFAULT_POLL_INTERVAL_MS = 1_000;
  */
 const IDLE_POLL_CALLS = 2;
 
+/**
+ * Mint the LSN half of a cursor that names `seq` without the entry in
+ * hand: an empty poll from `""` positions its holder below the floor.
+ * Only the seq segment is ever read back (`lsnParts(lsn).seq`), so the
+ * time and session segments are fixed placeholders that pass
+ * `LSN_RE`. A build that predates position cursors decodes it the same
+ * way.
+ */
+const positionLsn = (seq: number): string => `0_0_${countKey(seq)}`;
+
+/**
+ * The cursor for the position before seq 0: what an empty poll from
+ * `""` hands back while the floor is 0. Its generation half is the
+ * `SINCE_ORIGIN_GENERATION` marker and the generation it belongs to is
+ * the LSN's session segment — `SINCE_NO_GENERATION` for a manifest
+ * without one, `SINCE_ANY_GENERATION` when there is no manifest; the
+ * seq segment is a placeholder.
+ */
+const originCursor = (manifest: { generation?: string } | null): string =>
+  formatCursor(
+    SINCE_ORIGIN_GENERATION,
+    `0_${manifest === null ? SINCE_ANY_GENERATION : (manifest.generation ?? SINCE_NO_GENERATION)}_${countKey(0)}`,
+  );
+
 export interface LongPollSinceOptions {
   readonly db: Db<BaerlyConfig>;
   readonly collection: string;
@@ -173,13 +219,15 @@ export interface ListEventsSinceOptions {
  * Long-poll wrapper around {@link listEventsSince}. Returns as soon
  * as the first non-empty poll lands, or when the wall-clock timeout
  * elapses (whichever comes first). On timeout the response is
- * `{ events: [], next_cursor: <same> }` — shipped as `200`, not `304`,
- * because the response body carries the unchanged cursor the client
- * needs for the next poll cycle.
+ * `{ events: [], next_cursor }` with the request's cursor — or, for
+ * `""`, the position the poll found — shipped as `200`, not `304`,
+ * because the response body carries the cursor the client needs for
+ * the next poll cycle.
  *
  * @throws BaerlyError{code:"SchemaError"} — invalid cursor shape.
- * @throws BaerlyError{code:"CursorExpired"} — the cursor sits below the
- *   retained log, or was minted in a truncated generation.
+ * @throws BaerlyError{code:"CursorExpired"} — an entry past the cursor
+ *   is no longer retained, or the cursor was minted in a truncated
+ *   generation.
  */
 export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceResponse> {
   const { db, collection, cursor, signal } = opts;
@@ -211,8 +259,11 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
   // Fast path: the first poll already sees new events.
   const initial = await pollOnce({ db, collection, cursor, signal }, budget);
   if (initial.events.length > 0) {
-    return { events: initial.events, next_cursor: nextCursor(initial) };
+    return { events: initial.events, next_cursor: initial.nextCursor };
   }
+  // Later polls resume from the position the first one found, which for
+  // `""` is no longer `""` once the collection has committed anything.
+  let position = initial.nextCursor;
 
   // No events yet. Race a timeout against a polling loop.
   const start = Date.now();
@@ -250,10 +301,10 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
     };
 
     function onAbort(): void {
-      // Treat client disconnect as "no events, same cursor" — the
-      // socket is gone anyway; the resolve is a no-op for response
-      // serialization but keeps the promise from leaking.
-      settleResolve({ events: [], next_cursor: cursor });
+      // Treat client disconnect as "no events" — the socket is gone
+      // anyway; the resolve is a no-op for response serialization but
+      // keeps the promise from leaking.
+      settleResolve({ events: [], next_cursor: position });
     }
 
     if (signal !== undefined) {
@@ -272,21 +323,22 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
       // passed since the request began, so an empty batch is safe to
       // return: a client re-polling it waits that long per request.
       if (budget.left() < IDLE_POLL_CALLS) {
-        settleResolve({ events: [], next_cursor: cursor });
+        settleResolve({ events: [], next_cursor: position });
         return;
       }
       try {
-        const polled = await pollOnce({ db, collection, cursor, signal }, budget);
+        const polled = await pollOnce({ db, collection, cursor: position, signal }, budget);
         if (settled) {
           return;
         }
         if (polled.events.length > 0) {
-          settleResolve({ events: polled.events, next_cursor: nextCursor(polled) });
+          settleResolve({ events: polled.events, next_cursor: polled.nextCursor });
           return;
         }
+        position = polled.nextCursor;
         const remaining = deadline - Date.now();
         if (remaining <= 0) {
-          settleResolve({ events: [], next_cursor: cursor });
+          settleResolve({ events: [], next_cursor: position });
           return;
         }
         const delay = Math.min(pollIntervalMs, remaining);
@@ -325,8 +377,10 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
  *
  * No `current.json` yet → `[]` (clients can poll a not-yet-existing
  * collection without erroring). Under a request ledger that runs out,
- * the result is a prefix of the entries past the cursor. Cursor inside `[0, log_seq_start)`, or
- * minted in a truncated generation → `BaerlyError{code:"CursorExpired"}`.
+ * the result is a prefix of the entries past the cursor. A cursor below
+ * `log_seq_start` reads the folded entries GC has not reclaimed yet. An
+ * entry past the cursor that is no longer retained, or a cursor minted
+ * in a truncated generation → `BaerlyError{code:"CursorExpired"}`.
  */
 export async function listEventsSince(opts: ListEventsSinceOptions): Promise<LogEntry[]> {
   const polled = await pollOnce(opts, pollBudget());
@@ -376,18 +430,19 @@ const pollBudget = (): PollBudget => {
 
 /**
  * The body of {@link listEventsSince}, additionally surfacing the
- * manifest `generation` the poll read.
+ * `next_cursor` the poll's position mints.
  *
- * `longPollSince` needs that generation to mint `next_cursor`, and
+ * `longPollSince` needs the manifest's generation to mint it, and
  * re-reading `current.json` to get it would add a Class A op to every
  * poll — the idle-reader cost bound this protocol is built around.
  * {@link listEventsSince} is public surface pinned by
  * `tests/integration/public-surface.test.ts`, so it keeps returning a
  * bare array and this internal variant carries the extra field.
  *
- * `generation` is `undefined` when the collection has no `current.json`
- * (no events either, so it is never consumed) or when the manifest
- * predates the field.
+ * `nextCursor` is the last event's cursor; with no events, the request's
+ * cursor, or for `""` a position just below `log_seq_start` (before
+ * seq 0 while the floor is 0 or there is no `current.json`); `""`
+ * itself only when the `current.json` read was refused.
  *
  * Entry reads and the probe are capped by the budget's room, and a
  * refused storage call ends the cycle: the entries read so far come back
@@ -396,19 +451,32 @@ const pollBudget = (): PollBudget => {
 async function pollOnce(
   opts: ListEventsSinceOptions,
   budget: PollBudget,
-): Promise<{ events: LogEntry[]; generation: string | undefined }> {
+): Promise<{ events: LogEntry[]; nextCursor: string }> {
   const { db, collection, cursor, signal } = opts;
 
   const decoded = cursor.length > 0 ? decodeCursor(cursor) : undefined;
 
   const entries: LogEntry[] = [];
   let generation: string | undefined;
+  // Where an empty result leaves the caller: its own cursor, or for `""`
+  // the position below the floor once the manifest is read.
+  let emptyCursor = cursor;
+  const done = (): { events: LogEntry[]; nextCursor: string } => ({
+    events: entries,
+    nextCursor:
+      entries.length > 0 ? formatCursor(generation, entries[entries.length - 1]!.lsn) : emptyCursor,
+  });
   try {
     const read = await budget.observe(() => getCurrentJson(db, collection, signalOpt(signal)));
     if (read === null) {
       // No collection provisioned yet. Clients polling for a collection that
-      // doesn't exist see an empty stream, NOT an error.
-      return { events: [], generation: undefined };
+      // doesn't exist see an empty stream, NOT an error. An empty cursor
+      // gets the position before seq 0, in whichever generation the
+      // writer that provisions the collection mints.
+      if (decoded === undefined) {
+        emptyCursor = originCursor(null);
+      }
+      return done();
     }
     generation = read.json.generation;
     const logSeqStart = logSeqStartOf(read.json);
@@ -418,12 +486,25 @@ async function pollOnce(
 
     // Derive the seq range to scan. Empty cursor → start at
     // `log_seq_start` (the first un-snapshotted entry). Non-empty
-    // cursor → start at `cursorSeq + 1`, after two rejections.
+    // cursor → start at `cursorSeq + 1` (0 for the position before
+    // seq 0), after two rejections.
     let startSeq: number;
     if (decoded === undefined) {
       startSeq = logSeqStart;
+      emptyCursor =
+        logSeqStart > 0
+          ? formatCursor(generation, positionLsn(logSeqStart - 1))
+          : originCursor(read.json);
     } else {
-      const { generation: cursorGeneration, lsn } = decoded;
+      const origin = decoded.generation === SINCE_ORIGIN_GENERATION;
+      const { lsn } = decoded;
+      // The generation the cursor belongs to; a before-seq-0 cursor
+      // carries it in its session segment, possibly as "any".
+      const session = origin ? lsnParts(lsn).session : undefined;
+      let cursorGeneration = session ?? decoded.generation;
+      if (session === SINCE_NO_GENERATION) {
+        cursorGeneration = NO_GENERATION;
+      }
       // (1) Wrong generation. A seq identifies a `log/<seq>` slot, and
       // slots are REUSED: `restore --force` truncates and reseeds
       // `log_seq_start` to one past the highest surviving log object,
@@ -439,43 +520,59 @@ async function pollOnce(
       // decode to `NO_GENERATION`, so this stays one comparison with no
       // fail-open branch. See the truth table in `sync-protocol.md`.
       const currentGeneration = read.json.generation ?? NO_GENERATION;
-      if (cursorGeneration !== currentGeneration) {
+      // An unbound before-seq-0 cursor was minted before any manifest
+      // existed. It may resume only at floor 0: `restore --force` reseeds
+      // the floor above every surviving log object, so an earlier
+      // generation's leftovers can sit only below a floor above 0, and
+      // reading from 0 there could deliver them.
+      const anyGeneration = session === SINCE_ANY_GENERATION && logSeqStart === 0;
+      if (!anyGeneration && cursorGeneration !== currentGeneration) {
         throw new BaerlyError(
           "CursorExpired",
           `cursor ${JSON.stringify(cursor)} was minted in a generation that no longer exists (the collection has been truncated and restored)`,
           { resolution: CODE_RESOLUTIONS.CursorExpired },
         );
       }
-      // (2) Folded away. The entry is below the floor, so the compactor
-      // folded it into the snapshot and the GC sweep deleted it.
-      const cursorSeq = lsnParts(lsn).seq;
-      if (cursorSeq < logSeqStart) {
-        throw new BaerlyError(
-          "CursorExpired",
-          `cursor ${JSON.stringify(cursor)} is older than the oldest change this collection retains (log_seq_start=${logSeqStart}); the changes after it are no longer retained`,
-          { resolution: CODE_RESOLUTIONS.CursorExpired },
-        );
+      // (2) Reclaimed. The next entry the cursor needs is below the
+      // certified delete floor, so GC has deleted it. Above that floor
+      // a folded entry may still be on disk; the reads below find out.
+      startSeq = origin ? 0 : lsnParts(lsn).seq + 1;
+      if (origin) {
+        // Still nothing committed: bind an "any" position to the
+        // generation now known.
+        emptyCursor = originCursor(read.json);
       }
-      startSeq = cursorSeq + 1;
+      const deleteFloor = certifiedDeleteFloor(read.json);
+      if (startSeq < deleteFloor) {
+        throw notRetained(cursor, startSeq);
+      }
     }
 
     // At most `DEFAULT_MAX_EVENTS` per cycle (hard ceiling per the
     // module docstring), and at most what the budget has room for.
     const endSeq = startSeq + DEFAULT_MAX_EVENTS;
 
-    // Entries below the hint the cursor has not seen: GET each by seq.
+    // Entries below the hint the cursor has not seen: GET each by seq,
+    // folded-but-retained ones below the floor included. Every slot
+    // below the hint is committed, so a missing one was reclaimed: for
+    // a cursor that is a gap it cannot skip. An empty cursor skips it,
+    // since `""` already means "from the floor", wherever that now is.
     // Sequential GETs (NOT Promise.all). Long-poll is latency-bound,
     // per-poll batch is typically 0-10 entries, sequential keeps
     // memory bounded under pathological workloads.
     let s = startSeq;
     for (; s < Math.min(hint, endSeq); s++) {
       if (budget.left() < 1) {
-        return { events: entries, generation };
+        return done();
       }
-      const entry = await getLogEntry(db, collection, s, read.json, signalOpt(signal));
+      const entry =
+        s < logSeqStart
+          ? await getRetainedLogEntry(db, collection, s, read.json, signalOpt(signal))
+          : await getLogEntry(db, collection, s, read.json, signalOpt(signal));
       if (entry === null) {
-        // Race: the GC sweeper deleted this entry between
-        // `getCurrentJson` and the GET. Skip; don't error.
+        if (decoded !== undefined) {
+          throw notRetained(cursor, s);
+        }
         continue;
       }
       entries.push(entry);
@@ -498,24 +595,21 @@ async function pollOnce(
     }
   } catch (error) {
     if (isStorageRefusal(error)) {
-      return { events: entries, generation };
+      return done();
     }
     throw error;
   }
 
-  return { events: entries, generation };
+  return done();
 }
 
-/**
- * Mint the `next_cursor` for a poll that produced events: the last
- * entry's `lsn`, paired with the generation the poll read it under.
- *
- * Only called when `events` is non-empty, which is exactly when the
- * poll saw a `current.json` — so the generation here is the manifest's,
- * not a stand-in.
- */
-const nextCursor = (polled: { events: LogEntry[]; generation: string | undefined }): string =>
-  formatCursor(polled.generation, polled.events[polled.events.length - 1]!.lsn);
+/** `CursorExpired` for a cursor whose entry at `seq` is no longer retained. */
+const notRetained = (cursor: string, seq: number): BaerlyError =>
+  new BaerlyError(
+    "CursorExpired",
+    `cursor ${JSON.stringify(cursor)} can no longer resume: the change at seq ${seq} is no longer retained`,
+    { resolution: CODE_RESOLUTIONS.CursorExpired },
+  );
 
 /** Pack an optional `signal` into the `{ signal? }` shape callers expect. */
 const signalOpt = (signal: AbortSignal | undefined): { signal?: AbortSignal } | undefined =>

@@ -866,6 +866,72 @@ describe("subscription-pool", () => {
     }
   });
 
+  test("an empty bootstrap adopts its position cursor without invalidating", async () => {
+    // `/v1/since` answers `""` with a position cursor even when every
+    // change is already folded. Staying on `""` would let a change commit
+    // and fold between two polls unseen, so the pool must send it next.
+    const cursors: Array<string | null> = [];
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", (req: Request) => {
+      cursors.push(new URL(req.url).searchParams.get("cursor"));
+      return cursors.length === 1 ? sinceOk("deadbeef.0_0_vvvvvvvvvvu") : sinceForever();
+    });
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const fetcher = vi.fn<() => Promise<unknown>>().mockResolvedValue([]);
+    const unsubscribe = pool.attach(
+      "position",
+      ["notes"],
+      new Set(["notes"]),
+      fetcher,
+      vi.fn<() => void>(),
+    );
+    await waitMicrotasks(40);
+    expect(cursors).toEqual(["", "deadbeef.0_0_vvvvvvvvvvu"]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  test("an empty recovery bootstrap with a position cursor keeps backoff until that cursor succeeds", async () => {
+    // As the repeatedly-rejected case above, but the bootstrap carries no
+    // events: a position cursor is still an unproven replacement.
+    const callTimes: number[] = [];
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", (req: Request) => {
+      callTimes.push(Date.now());
+      const cursor = new URL(req.url).searchParams.get("cursor");
+      if (cursor !== null && cursor.length > 0) {
+        return Promise.resolve(sinceError("CursorExpired", 410, false));
+      }
+      return sinceOk("deadbeef.0_0_vvvvvvvvvvu");
+    });
+
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const client = makeClient(mock);
+      const pool = poolFor(client);
+      const unsubscribe = pool.attach(
+        "empty-position-recovery",
+        ["notes"],
+        new Set(["notes"]),
+        vi.fn<() => Promise<unknown>>().mockResolvedValue([]),
+        vi.fn<() => void>(),
+      );
+
+      await waitMicrotasks(40);
+      expect(callTimes).toEqual([0, 0]);
+      await vi.advanceTimersByTimeAsync(125);
+      expect(callTimes).toEqual([0, 0, 125, 125]);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(callTimes).toEqual([0, 0, 125, 125, 375, 375]);
+      unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("an empty recovery bootstrap resets backoff when it yields no replacement cursor", async () => {
     const callTimes: number[] = [];
     const cursors: Array<string | null> = [];

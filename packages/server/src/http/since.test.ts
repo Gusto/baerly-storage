@@ -8,7 +8,10 @@
  *   4. blocks then unblocks mid-poll → resolves with new entry.
  *   5. idle timeout → empty events + same cursor.
  *   6. AbortSignal aborts promptly → empty events.
- *   7. pre-snapshot or truncated-generation cursor → CursorExpired.
+ *   7. cursors across a fold: a caught-up cursor survives, a lagging
+ *      one reads retained entries, a reclaimed one → CursorExpired; an
+ *      empty cursor gets a position back; a truncated generation →
+ *      CursorExpired.
  *   8. under a request ledger (Workers Free): idle polls end in an empty
  *      200, busy polls deliver a resumable prefix, an exhausted start
  *      refuses with a retriable MaintenancePending.
@@ -25,15 +28,19 @@ import {
   type CurrentJson,
   createCurrentJson,
   formatCursor,
+  logObjectKey,
+  logSeqStartOf,
   MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
   MemoryStorage,
   RequestLedger,
   type RequestPool,
+  type Storage,
 } from "@baerly/protocol";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ledgeredStorage } from "../../../../tests/fixtures/ledgered-storage.ts";
 import { LOG_STATE_GENERATION, logStateCurrentJson } from "../../../../tests/fixtures/log-state.ts";
 import { CallTally, totalCalls } from "../../../../tests/fixtures/request-counting-storage.ts";
+import { compact } from "../compactor.ts";
 import type { SinceResponse } from "../contract.ts";
 import { Db } from "../db.ts";
 import { createObservabilityContext, runWithContext } from "../observability/context.ts";
@@ -122,7 +129,8 @@ describe("longPollSince — fake-timer cases", () => {
     await vi.runAllTimersAsync();
     const result = await promise;
     expect(result.events).toEqual([]);
-    expect(result.next_cursor).toBe("");
+    // A position before seq 0, so the first commit cannot fold unseen.
+    expect(result.next_cursor).not.toBe("");
   });
 
   test("fast path: two pre-existing entries return without polling", async () => {
@@ -234,50 +242,94 @@ describe("longPollSince — fake-timer cases", () => {
   });
 });
 
-describe("listEventsSince — pre-snapshot cursor → CursorExpired", () => {
-  test("cursor inside [0, log_seq_start) rejects", async () => {
-    const { db, storage } = makeDb();
-    await provision(storage);
-    const { _id } = await db.collection(TABLE).insert({ title: "to-be-folded" });
-    expect(_id).toBeDefined();
+describe("listEventsSince — cursors across a fold", () => {
+  const fold = async (storage: MemoryStorage): Promise<void> => {
+    const res = await compact(
+      { storage, currentJsonKey: currentJsonKey() },
+      { minEntriesToCompact: 1 },
+    );
+    expect(res.written).toBe(true);
+  };
 
-    // Capture the lsn of the seed entry via a fast-path poll.
-    const seed = await longPollSince({
+  const readCurrent = async (storage: MemoryStorage): Promise<CurrentJson> => {
+    const cj = await storage.get(currentJsonKey());
+    expect(cj).not.toBeNull();
+    return JSON.parse(new TextDecoder().decode(cj!.body)) as CurrentJson;
+  };
+
+  const writeCurrent = async (storage: MemoryStorage, cj: CurrentJson): Promise<void> => {
+    await storage.put(currentJsonKey(), new TextEncoder().encode(JSON.stringify(cj)));
+  };
+
+  const logKey = (seq: number): string =>
+    logObjectKey(`app/${APP}/tenant/${TENANT}/manifests/${TABLE}`, seq);
+
+  /** Insert `n` rows and return the cursor a caught-up client holds. */
+  const caughtUp = async (db: Db, n: number): Promise<SinceResponse> => {
+    for (let i = 0; i < n; i++) {
+      await db.collection(TABLE).insert({ title: `row-${i}` });
+    }
+    const res = await longPollSince({
       db,
       collection: TABLE,
       cursor: "",
-      timeoutMs: 500,
-      pollIntervalMs: 25,
+      timeoutMs: 50,
+      pollIntervalMs: 10,
     });
-    expect(seed.events).toHaveLength(1);
-    // The full composite cursor, NOT the bare `lsn`. A bare lsn decodes
-    // to the `NO_GENERATION` sentinel and would trip the generation
-    // check instead — leaving this test green while no longer
-    // exercising the folded-cursor path it exists to cover.
-    const cursor = seed.next_cursor;
+    expect(res.events).toHaveLength(n);
+    return res;
+  };
 
-    // Bump current.json.log_seq_start past the seed entry (which lands
-    // at seq 0) to mark it as "folded" (the test takes the shortcut; the
-    // production compactor goes through casUpdateCurrentJson). The
-    // physical `log/<seq>.json` file is left in place — the handler
-    // decides "folded" by comparing the cursor's seq against
-    // `log_seq_start`, not by probing for the file. Under single-write
-    // commit the writer no longer advances `tail_hint`, so we set
-    // `log_seq_start: 1` explicitly (the seed wrote exactly seq 0).
-    const cjKey = currentJsonKey(TABLE);
-    const cj = await storage.get(cjKey);
-    expect(cj).not.toBeNull();
-    const parsed = JSON.parse(new TextDecoder().decode(cj!.body)) as CurrentJson;
-    const mutated: CurrentJson = {
-      ...parsed,
-      // tail_hint must stay >= log_seq_start (manifest invariant). The
-      // seed wrote seq 0; mark it folded by lifting both to 1.
-      tail_hint: 1,
-      log_seq_start: 1,
-    };
-    await storage.put(cjKey, new TextEncoder().encode(JSON.stringify(mutated)));
+  test("a caught-up cursor survives a fold of the whole tail", async () => {
+    const { db, storage } = makeDb();
+    await provision(storage);
+    const seed = await caughtUp(db, 2);
+    await fold(storage);
+    expect(logSeqStartOf(await readCurrent(storage))).toBe(2);
 
-    await expect(listEventsSince({ db, collection: TABLE, cursor })).rejects.toMatchObject({
+    // Nothing new: an empty batch at the same cursor, not CursorExpired.
+    await expect(
+      listEventsSince({ db, collection: TABLE, cursor: seed.next_cursor }),
+    ).resolves.toEqual([]);
+
+    // And the next write still reaches it.
+    await db.collection(TABLE).insert({ title: "after-fold" });
+    const next = await longPollSince({
+      db,
+      collection: TABLE,
+      cursor: seed.next_cursor,
+      timeoutMs: 50,
+      pollIntervalMs: 10,
+    });
+    expect(next.events.map((e) => e.seq)).toEqual([2]);
+  });
+
+  test("a lagging cursor reads retained entries below the floor", async () => {
+    const { db, storage } = makeDb();
+    await provision(storage);
+    const seed = await caughtUp(db, 1);
+    await db.collection(TABLE).insert({ title: "folded-unseen-1" });
+    await db.collection(TABLE).insert({ title: "folded-unseen-2" });
+    await fold(storage);
+    await db.collection(TABLE).insert({ title: "live" });
+    expect(logSeqStartOf(await readCurrent(storage))).toBe(3);
+
+    const events = await listEventsSince({ db, collection: TABLE, cursor: seed.next_cursor });
+    expect(events.map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+
+  test("a cursor whose next entry was reclaimed rejects", async () => {
+    const { db, storage } = makeDb();
+    await provision(storage);
+    const seed = await caughtUp(db, 1);
+    await db.collection(TABLE).insert({ title: "folded-unseen" });
+    await fold(storage);
+    // GC reclaimed the folded entry the cursor still needs.
+    await storage.delete(logKey(1));
+
+    await expect(
+      listEventsSince({ db, collection: TABLE, cursor: seed.next_cursor }),
+    ).rejects.toMatchObject({
       name: "BaerlyError",
       code: "CursorExpired",
       retriable: false,
@@ -286,6 +338,224 @@ describe("listEventsSince — pre-snapshot cursor → CursorExpired", () => {
       // paths and a bare `code` assertion cannot tell them apart.
       message: expect.stringContaining("no longer retained"),
     });
+  });
+
+  test("a cursor below the certified delete floor rejects without reading the log", async () => {
+    const { db, storage } = makeDb();
+    await provision(storage);
+    const seed = await caughtUp(db, 1);
+    await db.collection(TABLE).insert({ title: "folded-unseen" });
+    await fold(storage);
+    // The entry is still on disk, but the manifest certifies it gone.
+    await writeCurrent(storage, { ...(await readCurrent(storage)), log_delete_floor: 2 });
+
+    const issued = new CallTally();
+    const counted = Db.create({
+      storage: ledgeredStorage(storage, "external", issued),
+      app: APP,
+      tenant: TENANT,
+    });
+    await expect(
+      listEventsSince({ db: counted, collection: TABLE, cursor: seed.next_cursor }),
+    ).rejects.toMatchObject({
+      code: "CursorExpired",
+      message: expect.stringContaining("no longer retained"),
+    });
+    // Only `current.json`.
+    expect(totalCalls(issued.read())).toBe(1);
+  });
+
+  test("an empty-cursor poll after a fold returns a position, so a later fold cannot hide a write", async () => {
+    const { db, storage } = makeDb();
+    await provision(storage);
+    await db.collection(TABLE).insert({ title: "folded-before-subscribe" });
+    await fold(storage);
+
+    // The subscriber bootstraps from the floor: nothing to deliver, but
+    // the cursor it gets back names that position.
+    const first = await longPollSince({
+      db,
+      collection: TABLE,
+      cursor: "",
+      timeoutMs: 50,
+      pollIntervalMs: 10,
+    });
+    expect(first.events).toEqual([]);
+    expect(first.next_cursor).not.toBe("");
+
+    // A write commits and folds before the next poll.
+    await db.collection(TABLE).insert({ title: "committed-and-folded-between-polls" });
+    await fold(storage);
+
+    const second = await longPollSince({
+      db,
+      collection: TABLE,
+      cursor: first.next_cursor,
+      timeoutMs: 50,
+      pollIntervalMs: 10,
+    });
+    expect(second.events.map((e) => e.seq)).toEqual([1]);
+  });
+
+  /** Poll `cursor` once; the result of an empty long-poll at its deadline. */
+  const pollOnceAt = (db: Db, cursor: string): Promise<SinceResponse> =>
+    longPollSince({ db, collection: TABLE, cursor, timeoutMs: 0, pollIntervalMs: 0 });
+
+  test("an empty-cursor poll on an empty collection returns a position before seq 0", async () => {
+    const { db, storage } = makeDb();
+    await provision(storage);
+    const first = await pollOnceAt(db, "");
+    expect(first.events).toEqual([]);
+    expect(first.next_cursor).not.toBe("");
+
+    // The first write commits at seq 0 and a scheduled pass folds it
+    // before the next poll.
+    await db.collection(TABLE).insert({ title: "first" });
+    await fold(storage);
+    expect(logSeqStartOf(await readCurrent(storage))).toBe(1);
+
+    const second = await pollOnceAt(db, first.next_cursor);
+    expect(second.events.map((e) => e.seq)).toEqual([0]);
+    expect(second.next_cursor).toBe(formatCursor(LOG_STATE_GENERATION, second.events[0]!.lsn));
+  });
+
+  test("an empty-cursor poll on an unprovisioned collection returns a position before seq 0", async () => {
+    const { db } = makeDb();
+    const first = await pollOnceAt(db, "");
+    expect(first).toMatchObject({ events: [] });
+    expect(first.next_cursor).not.toBe("");
+    // Still nothing: the same position comes back.
+    await expect(pollOnceAt(db, first.next_cursor)).resolves.toEqual(first);
+
+    // The writer auto-provisions and commits at seq 0.
+    await db.collection(TABLE).insert({ title: "first" });
+
+    const second = await pollOnceAt(db, first.next_cursor);
+    expect(second.events.map((e) => e.seq)).toEqual([0]);
+  });
+
+  test("an unbound position before seq 0 expires rather than read a restored generation's leftovers", async () => {
+    const { db, storage } = makeDb();
+    // Taken before the collection existed, then left idle.
+    const first = await pollOnceAt(db, "");
+
+    // Meanwhile: provisioned, written at seq 0..2, then `restore --force`
+    // reseeds a new generation one past the surviving log objects.
+    for (let i = 0; i < 3; i++) {
+      await db.collection(TABLE).insert({ title: `old-generation-${i}` });
+    }
+    await writeCurrent(storage, {
+      ...(await readCurrent(storage)),
+      snapshot: null,
+      tail_hint: 3,
+      log_seq_start: 3,
+      generation: "ffffffffffff",
+    });
+
+    await expect(pollOnceAt(db, first.next_cursor)).rejects.toMatchObject({
+      code: "CursorExpired",
+      message: expect.stringContaining("generation that no longer exists"),
+    });
+  });
+
+  test("an unbound position before seq 0 binds to the generation it first sees", async () => {
+    const { db, storage } = makeDb();
+    const first = await pollOnceAt(db, "");
+    await provision(storage);
+
+    // Nothing committed yet, but the position now names this generation.
+    const bound = await pollOnceAt(db, first.next_cursor);
+    expect(bound.events).toEqual([]);
+    expect(bound.next_cursor).not.toBe(first.next_cursor);
+
+    // A restore that keeps the floor at 0 still retires it.
+    await writeCurrent(storage, { ...(await readCurrent(storage)), generation: "ffffffffffff" });
+    await expect(pollOnceAt(db, bound.next_cursor)).rejects.toMatchObject({
+      code: "CursorExpired",
+      message: expect.stringContaining("generation that no longer exists"),
+    });
+  });
+
+  test("a position before seq 0 on a manifest without a generation expires once one is minted", async () => {
+    const { db, storage } = makeDb();
+    await createCurrentJson(
+      storage,
+      currentJsonKey(),
+      logStateCurrentJson({ generation: undefined }),
+    );
+    const first = await pollOnceAt(db, "");
+    expect(first.events).toEqual([]);
+
+    // Still the legacy manifest: the position resumes as usual.
+    await db.collection(TABLE).insert({ title: "legacy" });
+    await expect(pollOnceAt(db, first.next_cursor)).resolves.toMatchObject({
+      events: [expect.objectContaining({ seq: 0 })],
+    });
+
+    // A restore mints a generation; the floor stays 0.
+    await writeCurrent(storage, {
+      ...(await readCurrent(storage)),
+      snapshot: null,
+      tail_hint: 0,
+      log_seq_start: 0,
+      generation: "ffffffffffff",
+    });
+    await expect(pollOnceAt(db, first.next_cursor)).rejects.toMatchObject({
+      code: "CursorExpired",
+      message: expect.stringContaining("generation that no longer exists"),
+    });
+  });
+
+  test("a position before seq 0 expires once seq 0 is reclaimed", async () => {
+    const { db, storage } = makeDb();
+    await provision(storage);
+    const first = await pollOnceAt(db, "");
+    await db.collection(TABLE).insert({ title: "first" });
+    await fold(storage);
+    await storage.delete(logKey(0));
+
+    await expect(pollOnceAt(db, first.next_cursor)).rejects.toMatchObject({
+      code: "CursorExpired",
+      message: expect.stringContaining("no longer retained"),
+    });
+  });
+
+  test("a position before seq 0 is bound to the generation that minted it", async () => {
+    const { db, storage } = makeDb();
+    await provision(storage);
+    const first = await pollOnceAt(db, "");
+    await writeCurrent(storage, { ...(await readCurrent(storage)), generation: "ffffffffffff" });
+
+    await expect(pollOnceAt(db, first.next_cursor)).rejects.toMatchObject({
+      code: "CursorExpired",
+      message: expect.stringContaining("generation that no longer exists"),
+    });
+  });
+
+  test("a write and fold between an empty-cursor long-poll's ticks is delivered", async () => {
+    const { storage } = makeDb();
+    await provision(storage);
+    const writer = Db.create({ storage, app: APP, tenant: TENANT });
+    // Between the first poll and the tick: the poll's second read of
+    // `current.json` first lets a write commit at seq 0 and fold.
+    let manifestReads = 0;
+    const hooked: Storage = {
+      get: async (key, opts) => {
+        if (key === currentJsonKey() && ++manifestReads === 2) {
+          await writer.collection(TABLE).insert({ title: "between-ticks" });
+          await fold(storage);
+        }
+        return storage.get(key, opts);
+      },
+      put: (key, body, opts) => storage.put(key, body, opts),
+      delete: (key, opts) => storage.delete(key, opts),
+      list: (prefix, opts) => storage.list(prefix, opts),
+    };
+    const db = Db.create({ storage: hooked, app: APP, tenant: TENANT });
+
+    const res = await pollOnceAt(db, "");
+    expect(manifestReads).toBe(2);
+    expect(res.events.map((e) => e.seq)).toEqual([0]);
   });
 });
 

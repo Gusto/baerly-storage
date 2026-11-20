@@ -15,8 +15,8 @@
  * reseeds `log_seq_start` to one past the highest *surviving* log
  * object, which can land BELOW the old floor (the deliberate floor
  * exemption — see invariant 12 in `docs/spec/sync-protocol.md`). A
- * pre-restore cursor then passes `/v1/since`'s `cursorSeq <
- * log_seq_start` gate and resumes into the new generation, silently
+ * pre-restore cursor then passes any seq check `/v1/since` could make
+ * and resumes into the new generation, silently
  * skipping every restored row beneath it. The stream is gapped, not
  * broken, which is the worst failure mode for a sync cursor.
  *

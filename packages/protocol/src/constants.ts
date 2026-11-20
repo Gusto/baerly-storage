@@ -1389,3 +1389,41 @@ export const NO_GENERATION = "-";
  * while keeping a caller from inflating every log line it touches.
  */
 export const MAX_REQUEST_ID_LENGTH = 128;
+
+/**
+ * Generation half of a `/v1/since` cursor that names the position
+ * before seq 0: what an empty-cursor poll hands back while a collection
+ * has no committed change (or no `current.json` yet), so its first
+ * commit cannot fold away unseen. The generation the position belongs
+ * to rides in the LSN's session segment (see
+ * {@link SINCE_ANY_GENERATION}).
+ *
+ * `"0"` is safe as the marker because a real generation is a 12-char
+ * nonce (`mintGeneration`). It is also why a build that predates the
+ * marker answers such a cursor with `CursorExpired` (the generation
+ * does not match) instead of resuming at seq 1, which is what reading
+ * it as an ordinary cursor would do. See invariant 13 in
+ * `docs/spec/sync-protocol.md`.
+ */
+export const SINCE_ORIGIN_GENERATION = "0";
+
+/**
+ * Session segment of a before-seq-0 cursor minted with no generation
+ * to bind to, because no `current.json` existed. It resumes only
+ * against a manifest whose floor is still 0, and binds to that
+ * manifest's generation: `restore --force` reseeds the floor above
+ * every surviving log object, so at floor 0 no earlier generation's
+ * leftovers can sit below it, and above 0 the cursor expires. `"v"` is
+ * in the LSN alphabet (`[0-9a-v]`) but not hex, so it never equals a
+ * minted generation, and a real session is hex.
+ */
+export const SINCE_ANY_GENERATION = "v";
+
+/**
+ * Session segment of a before-seq-0 cursor minted against a manifest
+ * with no `generation` field: it stands for `NO_GENERATION` and so
+ * expires, like a bare-LSN cursor, once a restore mints a generation.
+ * Like {@link SINCE_ANY_GENERATION}, a non-hex letter of the LSN
+ * alphabet.
+ */
+export const SINCE_NO_GENERATION = "u";

@@ -20,9 +20,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 363893,
-      "gz": 116027,
-      "minGz": 31333,
+      "raw": 366945,
+      "gz": 116896,
+      "minGz": 31540,
       "ratchet": {
         "raw": 385792,
         "gz": 122880,
@@ -32,9 +32,9 @@
     },
     "client.js": {
       "tier": "shipped",
-      "raw": 41043,
-      "gz": 14397,
-      "minGz": 5200,
+      "raw": 41033,
+      "gz": 14432,
+      "minGz": 5182,
       "ratchet": {
         "raw": 43776,
         "gz": 15616,
@@ -44,11 +44,11 @@
     },
     "client-react.js": {
       "tier": "shipped",
-      "raw": 47758,
-      "gz": 15814,
-      "minGz": 5327,
+      "raw": 47701,
+      "gz": 15815,
+      "minGz": 5313,
       "ratchet": {
-        "raw": 52736,
+        "raw": 52480,
         "gz": 17408,
         "minGz": 5888
       },
@@ -56,11 +56,11 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 632120,
-      "gz": 190681,
-      "minGz": 62946,
+      "raw": 637650,
+      "gz": 192324,
+      "minGz": 63359,
       "ratchet": {
-        "raw": 634624,
+        "raw": 701440,
         "gz": 193024,
         "minGz": 63744
       },
@@ -68,9 +68,9 @@
     },
     "s3.js": {
       "tier": "shipped",
-      "raw": 113923,
-      "gz": 36575,
-      "minGz": 12748,
+      "raw": 114874,
+      "gz": 37016,
+      "minGz": 12857,
       "ratchet": {
         "raw": 125440,
         "gz": 37376,
@@ -80,9 +80,9 @@
     },
     "gcs.js": {
       "tier": "shipped",
-      "raw": 106978,
-      "gz": 34924,
-      "minGz": 11096,
+      "raw": 107333,
+      "gz": 35145,
+      "minGz": 11167,
       "ratchet": {
         "raw": 108800,
         "gz": 36096,
@@ -92,12 +92,12 @@
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 555241,
-      "gz": 166651,
-      "minGz": 54147,
+      "raw": 559920,
+      "gz": 168210,
+      "minGz": 54511,
       "ratchet": {
         "raw": 610816,
-        "gz": 167680,
+        "gz": 185088,
         "minGz": 59904
       },
       "note": "server-side. Also inside the cloudflare.js closure, so growth here shows up on that entry too."
@@ -105,8 +105,8 @@
     "auth.js": {
       "tier": "shipped",
       "raw": 52942,
-      "gz": 16131,
-      "minGz": 8641,
+      "gz": 16231,
+      "minGz": 8680,
       "ratchet": {
         "raw": 55808,
         "gz": 17152,
@@ -116,9 +116,9 @@
     },
     "maintenance.js": {
       "tier": "shipped",
-      "raw": 168747,
-      "gz": 55219,
-      "minGz": 13560,
+      "raw": 169916,
+      "gz": 55691,
+      "minGz": 13681,
       "ratchet": {
         "raw": 180480,
         "gz": 59136,
@@ -129,8 +129,8 @@
     "observability.js": {
       "tier": "shipped",
       "raw": 155040,
-      "gz": 41933,
-      "minGz": 17843,
+      "gz": 41980,
+      "minGz": 17890,
       "ratchet": {
         "raw": 169472,
         "gz": 45824,
@@ -141,7 +141,7 @@
     "app-config.js": {
       "tier": "shipped",
       "raw": 147,
-      "gz": 138,
+      "gz": 137,
       "minGz": 70,
       "ratchet": {
         "raw": 256,
@@ -156,7 +156,7 @@
     },
     "dev.js": {
       "tier": "tooling",
-      "raw": 90700,
+      "raw": 91869,
       "ratchet": {
         "raw": 97792
       },
@@ -164,17 +164,17 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 828651,
+      "raw": 834506,
       "ratchet": {
-        "raw": 832512
+        "raw": 918016
       },
       "note": "server-only aggregator. Raw-only dep-creep tripwire; live-external-import creep is caught separately by the bare-specifier allowlist test."
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 837612,
+      "raw": 843467,
       "ratchet": {
-        "raw": 842496
+        "raw": 928000
       },
       "note": "dev-only aggregator. Raw-only dep-creep tripwire; see node.js."
     }
