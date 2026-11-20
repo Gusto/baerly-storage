@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { analyze, formatReport, type NodeBaseline, pct, pctR7 } from "./analyze.ts";
-import { analyzeOptionsOf, evaluatePrereg, formatPrereg, parsePrereg } from "./prereg.ts";
+import {
+  analyzeOptionsOf,
+  evaluatePrereg,
+  formatPrereg,
+  parseAnalyzeArgs,
+  parsePrereg,
+} from "./prereg.ts";
 import { CELLS } from "./src/cells.ts";
 
 const DECISION = CELLS.filter(
@@ -323,5 +329,29 @@ describe("evaluatePrereg", () => {
   test("without prereg the report is unchanged by incomplete tracking", () => {
     const a = analyze(goodEvents(), BASE);
     expect(a.method).toBe("nearest-rank");
+  });
+});
+
+describe("parseAnalyzeArgs", () => {
+  test("accepts --prereg <file> and --prereg=<file> anywhere", () => {
+    const want = { eventsPath: "e.jsonl", basePath: "b.json", preregPath: "p.json" };
+    expect(parseAnalyzeArgs(["e.jsonl", "b.json", "--prereg", "p.json"])).toEqual(want);
+    expect(parseAnalyzeArgs(["e.jsonl", "b.json", "--prereg=p.json"])).toEqual(want);
+    expect(parseAnalyzeArgs(["--prereg=p.json", "e.jsonl", "b.json"])).toEqual(want);
+    expect(parseAnalyzeArgs(["e.jsonl"])).toEqual({ eventsPath: "e.jsonl" });
+  });
+  test("refuses unknown flags, a missing or repeated --prereg, and extra arguments", () => {
+    for (const [argv, error] of [
+      [["e.jsonl", "--perreg=p.json"], "unknown flag --perreg=p.json"],
+      [["e.jsonl", "-p"], "unknown flag -p"],
+      [["e.jsonl", "--prereg"], "--prereg needs a file argument"],
+      [["e.jsonl", "--prereg="], "--prereg needs a file argument"],
+      [["e.jsonl", "--prereg", "--x"], "--prereg needs a file argument"],
+      [["e.jsonl", "--prereg=a", "--prereg", "b"], "--prereg given more than once"],
+      [["e.jsonl", "b.json", "c"], "unexpected argument c"],
+      [["--prereg=p.json"], "missing <events>"],
+    ] as const) {
+      expect(parseAnalyzeArgs(argv)).toEqual({ error });
+    }
   });
 });
