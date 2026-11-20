@@ -32,6 +32,7 @@
  */
 import { isDeepStrictEqual } from "node:util";
 import { BaerlyError, decodeJsonBytes, type DocumentData, type LogEntry } from "@baerly/protocol";
+import { treeNodeKeyPrefix } from "../../packages/server/src/tree/key.ts";
 import {
   crashOf,
   denseTail,
@@ -929,12 +930,8 @@ export interface TreeMutationSchedule {
   readonly schedule: readonly TreeTransition[];
 }
 
-/**
- * The prefix tree nodes are expected under. Nothing writes nodes yet, so
- * this is an assumption about the tree fold's key layout; replace it with
- * the layout's own node prefix once a fold writes nodes.
- */
-const NODE_PREFIX = `${TREE_MODEL_PREFIX}/_v99/n/`;
+/** The prefix tree nodes are stored under. */
+const NODE_PREFIX = treeNodeKeyPrefix(TREE_MODEL_PREFIX);
 
 const commit = (op: "I" | "U", docId: string, value: number): TreeTransition => ({
   kind: "commit",

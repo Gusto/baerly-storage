@@ -47,7 +47,11 @@ export const collectionOfPrefix = (prefix: string): string => {
   return collection;
 };
 
-const nodeKeyHead = (prefix: string): string => `${prefix}/${TREE_NS}/n/`;
+/**
+ * The key prefix every node of the collection at `prefix` sits under:
+ * `<P>/_v99/n/`. A node key is this followed by `<attempt>/<sha256>`.
+ */
+export const treeNodeKeyPrefix = (prefix: string): string => `${prefix}/${TREE_NS}/n/`;
 
 /**
  * The key of the node with this attempt and content hash under `prefix`.
@@ -67,7 +71,7 @@ export const treeNodeKey = (prefix: string, attempt: string, sha256: string): st
   if (!isTreeSha256(sha256)) {
     throw new BaerlyError("Internal", `tree node key: malformed sha256 ${JSON.stringify(sha256)}`);
   }
-  const key = `${nodeKeyHead(prefix)}${attempt}/${sha256}`;
+  const key = `${treeNodeKeyPrefix(prefix)}${attempt}/${sha256}`;
   assertKeyWithinLimit(key);
   return key;
 };
@@ -78,7 +82,7 @@ export const treeNodeKey = (prefix: string, attempt: string, sha256: string): st
  * parses.
  */
 export const parseTreeNodeKey = (prefix: string, key: string): TreeNodeKeyParts | null => {
-  const head = nodeKeyHead(prefix);
+  const head = treeNodeKeyPrefix(prefix);
   if (!key.startsWith(head)) {
     return null;
   }
