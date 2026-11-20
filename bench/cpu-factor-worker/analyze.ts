@@ -51,7 +51,17 @@ export interface NodeBaseline {
 type Json = Record<string, any>;
 
 /** Split a stream of concatenated JSON values (any whitespace between). */
-export const parseStream = (text: string): Json[] => {
+export const parseStream = (text: string, options: { strict?: boolean } = {}): Json[] => {
+  if (options.strict && text.trimStart().startsWith("[")) {
+    const events: unknown = JSON.parse(text);
+    if (
+      !Array.isArray(events) ||
+      events.some((e) => e === null || typeof e !== "object" || Array.isArray(e))
+    ) {
+      throw new SyntaxError("capture must contain event objects");
+    }
+    return events as Json[];
+  }
   const out: Json[] = [];
   let depth = 0;
   let start = -1;
@@ -59,6 +69,9 @@ export const parseStream = (text: string): Json[] => {
   let escaped = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
+    if (options.strict && depth === 0 && !inString && ch !== "{" && !/\s/.test(ch!)) {
+      throw new SyntaxError(`unexpected capture data at offset ${i}`);
+    }
     if (inString) {
       if (escaped) {
         escaped = false;
@@ -81,15 +94,27 @@ export const parseStream = (text: string): Json[] => {
       if (depth === 0 && start >= 0) {
         try {
           out.push(JSON.parse(text.slice(start, i + 1)) as Json);
-        } catch {
+        } catch (error) {
+          if (options.strict) {
+            throw error;
+          }
           // a non-JSON line that happened to contain braces; skip it
         }
         start = -1;
       }
     }
   }
+  if (options.strict && (depth !== 0 || inString)) {
+    throw new SyntaxError("truncated capture event");
+  }
   return out;
 };
+
+const statusOf = (e: Json): unknown =>
+  e?.["event"]?.["response"]?.["status"] ??
+  e?.["response"]?.["status"] ??
+  e?.["$workers"]?.["event"]?.["response"]?.["status"] ??
+  e?.["status"];
 
 const urlOf = (e: Json): unknown =>
   e?.["event"]?.["request"]?.["url"] ??
@@ -160,6 +185,8 @@ export interface CellRow {
   readonly killed: number;
   readonly other: number;
   readonly cold: number;
+  /** Ok events missing a matching execution log or carrying an unsuccessful HTTP status. */
+  readonly unverifiedOk: number;
   /** Every non-warmup event attributed to this cell, whatever its outcome. */
   readonly invocations: number;
   /**
@@ -272,6 +299,7 @@ interface Slot {
   killed: number;
   other: number;
   cold: number;
+  unverifiedOk: number;
   invocations: number;
   warmups: number;
   warmupKilled: number;
@@ -310,6 +338,7 @@ export const analyze = (
         killed: 0,
         other: 0,
         cold: 0,
+        unverifiedOk: 0,
         invocations: 0,
         warmups: 0,
         warmupKilled: 0,
@@ -390,6 +419,13 @@ export const analyze = (
       slot.other++;
       continue;
     }
+    const status = statusOf(e);
+    if (
+      line?.["cell"] !== cell ||
+      (status !== undefined && (typeof status !== "number" || status < 200 || status >= 300))
+    ) {
+      slot.unverifiedOk++;
+    }
     if (line?.["cold"] === true) {
       slot.cold++;
       if (!includeCold) {
@@ -428,6 +464,7 @@ export const analyze = (
       killed: s.killed,
       other: s.other,
       cold: s.cold,
+      unverifiedOk: s.unverifiedOk,
       invocations: s.invocations,
       warmups: s.warmups,
       warmupKilled: s.warmupKilled,

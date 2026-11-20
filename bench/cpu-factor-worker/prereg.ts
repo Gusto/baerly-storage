@@ -346,6 +346,11 @@ export const evaluatePrereg = (a: Analysis, p: Prereg): PreregVerdict => {
       reasons.push(`${incomplete} event(s) missing url, outcome or cpuTime`);
       failures.push(`${name}: ${incomplete} event(s) missing url, outcome or cpuTime`);
     }
+    if (row.unverifiedOk > 0) {
+      const reason = `${row.unverifiedOk} ok event(s) lack matching successful execution evidence (CPUFACTOR cell and any recorded HTTP status)`;
+      reasons.push(reason);
+      failures.push(`${name}: ${reason}`);
+    }
     if (row.killed > 0) {
       reasons.push(`${row.killed} killed`);
     }
@@ -378,7 +383,7 @@ export const formatPrereg = (a: Analysis, p: Prereg, v: PreregVerdict): string =
       ? 'Cold invocations ("cold":true): INCLUDED in n ok and p99, as declared.'
       : 'Cold invocations ("cold":true): EXCLUDED from n ok and p99, as declared, so a slow cold start cannot fail a cell by p99; a killed cold invocation still counts as a kill. Events without the CPUFACTOR log line cannot be tagged cold and count as warm.',
     `Declared: sample floor ${p.sampleFloor} ok; p99 threshold ${p.p99ThresholdMs} ms; ${p.capture.requestsPerCell} requests + ${p.capture.warmupsPerCell} warmups per cell; concurrency ${p.capture.concurrency} (not observable in the capture, taken as declared)`,
-    "Rule per decision cell: no incomplete events, killed = 0, other = 0, n ok >= floor, p99 <= threshold. Overall: any decision cell passes and no run-level mismatch.",
+    "Rule per decision cell: matching successful execution evidence on every ok event, no incomplete events, killed = 0, other = 0, n ok >= floor, p99 <= threshold. Overall: any decision cell passes and no run-level mismatch, so a failing or killed decision cell is overridden by any other decision cell that passes.",
     "Warmups (&warmup=1) are excluded from every check by preregistration; their kills and other outcomes are listed, never counted.",
     "cell | n ok | killed | other | cold | missing outcome | incomplete | warmups killed / other | p99 ms | result",
   ];
@@ -400,6 +405,13 @@ export const formatPrereg = (a: Analysis, p: Prereg, v: PreregVerdict): string =
   if (warmKills.length > 0) {
     out.push(
       `Note: ${warmKills.length} decision cell(s) had killed warmups (${warmKills.map((c) => c.cell).join(", ")}); excluded by preregistration, so they do not affect the verdict.`,
+    );
+  }
+  const failed = v.cells.filter((c) => !c.pass);
+  if (failed.length > 0 && failed.length < v.cells.length) {
+    const killed = failed.filter((c) => (c.row?.killed ?? 0) > 0).map((c) => c.cell);
+    out.push(
+      `Note: ${failed.length} of ${v.cells.length} decision cells failed${killed.length > 0 ? `, ${killed.length} with kills (${killed.join(", ")})` : ""}. Under the any-cell rule a passing decision cell overrides them; this verdict does not apply a rule where any kill fails the run.`,
     );
   }
   if (v.failures.length > 0) {
