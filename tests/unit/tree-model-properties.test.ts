@@ -111,6 +111,41 @@ describe("transition executor", () => {
     expect(run.finalRead).toEqual({ kind: "read", rows: new Map() });
   });
 
+  test.each(["cold", "warm"] as const)(
+    "snapshots %s reads when the reader reuses its map and documents",
+    async (mode) => {
+      const cached = (): TreeSystem => {
+        const real = logPathSystem();
+        const cache = new Map<string, DocumentData>();
+        const read = async (world: TreeWorld) => {
+          const rows = await real.readCold(world);
+          for (const [id, row] of rows) {
+            const previous = cache.get(id) ?? {};
+            Object.assign(previous, row);
+            cache.set(id, previous);
+          }
+          return cache;
+        };
+        return {
+          ...real,
+          readCold: mode === "cold" ? read : real.readCold,
+          openWarmReader: (world) => ({ read: () => read(world) }),
+        };
+      };
+      const run = await runTreeSchedule(cached, [
+        { kind: "commit", op: "I", docId: "a", value: 1 },
+        { kind: "read", mode },
+        { kind: "commit", op: "U", docId: "a", value: 2 },
+        { kind: "read", mode },
+      ]);
+      expect(failuresOf(run)).toEqual([]);
+      expect(run.steps[1]!.outcome).toMatchObject({
+        kind: "read",
+        rows: new Map([["a", { _id: "a", value: 1, rev: "step-0" }]]),
+      });
+    },
+  );
+
   test("a before crash kills the process: no later op lands and the next step gets a new system", async () => {
     let built = 0;
     const real = logPathSystem();
@@ -273,7 +308,7 @@ describe("log-path properties", () => {
  * Enough to run the lost-CAS schedules before the tree fold exists.
  */
 const headOnlyFoldSystem =
-  (opts: { readonly ignoreCas: boolean }): TreeSystemFactory =>
+  (opts: { readonly ignoreCas: boolean; readonly failAfterCas?: boolean }): TreeSystemFactory =>
   () => {
     const base = logPathSystem();
     type Head = Record<string, unknown> & {
@@ -321,7 +356,11 @@ const headOnlyFoldSystem =
                 ...head,
                 proto_tree: { root, gc_fence_epoch: head.proto_tree?.gc_fence_epoch ?? 0 },
               };
-              return (await casHead(world, next, etag))
+              const published = await casHead(world, next, etag);
+              if (opts.failAfterCas) {
+                throw new BaerlyError("NetworkError", "publication response lost");
+              }
+              return published
                 ? { kind: "published", foldedSeq: tail, root }
                 : { kind: "cas-lost" };
             },
@@ -360,6 +399,40 @@ describe("lost-cas schedules on a head-only fold and GC", () => {
       false,
       true,
     ]);
+  });
+
+  test.each([false, true])(
+    "checks the durable head after a failed publish (ignore CAS: %s)",
+    async (ignoreCas) => {
+      const run = await runTreeSchedule(headOnlyFoldSystem({ ignoreCas, failAfterCas: true }), [
+        { kind: "commit", op: "I", docId: "a", value: 1 },
+        { kind: "fold-prepare" },
+        { kind: "gc" },
+        { kind: "fold-publish", of: 1 },
+      ]);
+      expect(run.steps[3]!.outcome).toEqual({ kind: "failed", code: "NetworkError" });
+      const check = checkTreeProperties(run, { structure: headOnlyStructure }).find(
+        ({ name }) => name === "lost-cas-preserves-winner",
+      )!;
+      expect(check.status).toBe(ignoreCas ? "violated" : "holds");
+      expect(check.failures).toHaveLength(ignoreCas ? 1 : 0);
+    },
+  );
+
+  test("a publish skipped after process death does not exercise the race check", async () => {
+    const run = await runTreeSchedule(headOnlyFoldSystem({ ignoreCas: false }), [
+      { kind: "commit", op: "I", docId: "a", value: 1 },
+      { kind: "fold-prepare" },
+      { kind: "gc" },
+      { kind: "gc", crash: { boundary: "before", nth: 1 } },
+      { kind: "fold-publish", of: 1 },
+    ]);
+    expect(run.steps[4]!.outcome.kind).toBe("skipped");
+    const check = checkTreeProperties(run, { structure: headOnlyStructure }).find(
+      ({ name }) => name === "lost-cas-preserves-winner",
+    )!;
+    expect(check.status).toBe("not-exercised");
+    expect(check.failures).toEqual([]);
   });
 
   for (const [index, schedule] of schedules.entries()) {
