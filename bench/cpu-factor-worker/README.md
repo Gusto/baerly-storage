@@ -48,7 +48,7 @@ Run the baseline on a quiet machine. It records the load average before and afte
    ```sh
    capture=tail.json # use observability.json for the dashboard export
    jq -c '{
-     outcome: (.outcome // ."$workers".outcome // "ok"),
+     outcome: (.outcome // ."$workers".outcome // null),
      cpuTime: (.cpuTime // .cpuTimeMs // ."$workers".cpuTimeMs // ."$metadata".cpuTimeMs),
      url: (.event.request.url // .request.url // ."$workers".event.request.url // .url),
      cell,
