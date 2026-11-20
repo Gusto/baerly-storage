@@ -96,8 +96,9 @@
  *
  * {@link foldLogicalMutant} runs the same fold with one single-defect
  * variant from {@link LOGICAL_FOLD_MUTANTS}: the seven fast-check variants,
- * with "skip first/last mutation" split into two. It exists so the test
- * suite can prove each property goes red; nothing else should call it.
+ * with "skip first/last mutation" split into two, plus one per property that
+ * no listed variant reaches (`absent-delete-creates-row`). It exists so the
+ * test suite can prove each property goes red; nothing else should call it.
  */
 
 import {
@@ -137,6 +138,7 @@ export const LOGICAL_FOLD_MUTANTS = [
   "skip-last-mutation",
   "first-write-wins",
   "delete-as-noop",
+  "absent-delete-creates-row",
   "merge-instead-of-replace",
   "wrong-folded-seq",
   "aliased-bodies",
@@ -281,7 +283,9 @@ const foldWith = (input: LogicalFoldInput, mutant: LogicalFoldMutant | undefined
     const origin = `seq ${seq}`;
     const op: string = entry.op;
     if (op === "D") {
-      if (mutant !== "delete-as-noop") {
+      if (mutant === "absent-delete-creates-row" && !live.has(id)) {
+        live.set(id, { body: { _id: id }, origin });
+      } else if (mutant !== "delete-as-noop") {
         live.delete(id);
       }
       continue;
