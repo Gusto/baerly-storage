@@ -8,6 +8,9 @@
  * chosen when the format is adopted.
  */
 
+import { MAX_KEY_BYTES } from "@baerly/protocol";
+import { MAX_SEGMENT_BYTES } from "../path-segment.ts";
+
 /** Namespace segment under the collection prefix that holds every tree object. */
 export const TREE_NS = "_v99";
 
@@ -69,3 +72,30 @@ export const LEAF_MAX_BODY_BYTES = 2_097_152;
  * subtree therefore holds at least this many document bytes per row.
  */
 export const MIN_DOCUMENT_BYTES = 11;
+
+/**
+ * Longest node key a decode error message repeats in full. A key a
+ * bucket can hold is at most `MAX_KEY_BYTES` (1,024) UTF-8 bytes, so at
+ * most 1,024 UTF-16 code units: every storable key is echoed whole, and
+ * only an oversize key from a caller is cut. Like the two bounds below,
+ * this shapes messages only and changes no stored byte.
+ */
+export const TREE_MESSAGE_KEY_CHARS = MAX_KEY_BYTES;
+
+/**
+ * Longest stored string an error message repeats. Every valid `_id` and
+ * collection name is at most `MAX_SEGMENT_BYTES` (256) UTF-8 bytes, so
+ * at most 256 UTF-16 code units, and attempts, hashes and the format tag
+ * are shorter: a valid value is always echoed whole, and an oversize one
+ * from a corrupt body is cut instead of copied into the message.
+ */
+export const TREE_MESSAGE_VALUE_CHARS = MAX_SEGMENT_BYTES;
+
+/**
+ * Longest detail text after the check name in a tree node error. A
+ * detail holds at most a few values of {@link TREE_MESSAGE_VALUE_CHARS}
+ * (up to six characters each once JSON-escaped) plus prose, which fits
+ * well inside this; the cap bounds what a validator's own message or a
+ * long field list can add.
+ */
+export const TREE_MESSAGE_DETAIL_CHARS = 4096;
