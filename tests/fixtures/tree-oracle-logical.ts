@@ -60,15 +60,22 @@
  * complete post-image). Per `_id`, the entry with the highest seq in range
  * wins.
  *
- * Only surviving rows are validated, after the fold, so a later entry can
- * repair an earlier corrupt one. A
- * survivor's `_id` must be a well-formed Unicode string equal to its body's
- * own `_id`, and its body must be a non-array object holding only strings,
- * finite numbers, booleans, arrays and objects (no `null`). A violation
- * throws `BaerlyError{code:"InvalidResponse"}` naming the seq (or `base`) and
- * the JSON-escaped `_id`. An `I`/`U` without `after`, an unknown `op`, or a
- * non-string `doc_id` throws the same code. Misuse of the oracle itself (a
- * gap, a duplicate seq, `targetSeq < baseSeq`) throws a plain `Error`.
+ * Only the surviving mutation per `_id` is validated, after the fold, so a
+ * later entry can repair an earlier corrupt one and a stored violation never
+ * wedges the fold. An `I`/`U` without
+ * `after` and an entry with an unknown `op` are corrupt candidates: they
+ * replace the row like any write, and throw only if nothing later in range
+ * supersedes them. A survivor's `_id` must be a well-formed Unicode string
+ * equal to its body's own `_id`, and its body must be a non-array object
+ * holding only strings, finite numbers, booleans, arrays and objects (no
+ * `null`). A violation throws `BaerlyError{code:"InvalidResponse"}` naming
+ * the seq (or `base`) and the JSON-escaped `_id`.
+ *
+ * An entry with no string `doc_id` names no row, so no later entry can
+ * supersede it. The oracle skips it, as both production folds do: refusing
+ * it would wedge the fold permanently, which is worse than ignoring a
+ * mutation that addresses nothing. Misuse of the oracle itself (a gap, a
+ * duplicate seq, `targetSeq < baseSeq`) throws a plain `Error`.
  *
  * Output rows are fresh deep copies with properties in canonical order (array
  * indices ascending, then other names in UTF-16 code-unit order), and the
@@ -202,11 +209,10 @@ export const compareUtf8 = (left: string, right: string): number => {
 
 const utf8 = new TextEncoder();
 
-interface LiveRow {
-  readonly body: DocumentData;
-  /** Where the surviving body came from, for error messages. */
-  readonly origin: string;
-}
+/** A row's current candidate: a body, or a corrupt write that throws if it survives. */
+type LiveRow =
+  | { readonly body: DocumentData; readonly origin: string }
+  | { readonly corrupt: string; readonly origin: string };
 
 const foldWith = (input: LogicalFoldInput, mutant: LogicalFoldMutant | undefined): LogicalView => {
   const { collection, base, baseSeq, entries, targetSeq } = input;
@@ -255,44 +261,45 @@ const foldWith = (input: LogicalFoldInput, mutant: LogicalFoldMutant | undefined
     }
     const id: unknown = entry.doc_id;
     if (typeof id !== "string") {
-      throw domainError(seq, id, "has no string doc_id");
+      continue;
     }
-    switch (entry.op) {
-      case "I":
-      case "U": {
-        if (entry.after === undefined) {
-          throw domainError(seq, id, `is an ${entry.op} entry with no after post-image`);
-        }
-        if (mutant === "first-write-wins" && writtenThisFold.has(id)) {
-          break;
-        }
-        writtenThisFold.add(id);
-        const prior = live.get(id);
-        const body =
-          mutant === "merge-instead-of-replace" && prior !== undefined
-            ? { ...prior.body, ...entry.after }
-            : entry.after;
-        live.set(id, { body, origin: `seq ${seq}` });
-        break;
+    const origin = `seq ${seq}`;
+    const op: string = entry.op;
+    if (op === "D") {
+      if (mutant !== "delete-as-noop") {
+        live.delete(id);
       }
-      case "D": {
-        if (mutant !== "delete-as-noop") {
-          live.delete(id);
-        }
-        break;
-      }
-      default: {
-        throw domainError(seq, id, `has unknown op ${JSON.stringify(entry.op)}`);
-      }
+      continue;
+    }
+    if (mutant === "first-write-wins" && writtenThisFold.has(id)) {
+      continue;
+    }
+    writtenThisFold.add(id);
+    if (op !== "I" && op !== "U") {
+      live.set(id, { corrupt: `has unknown op ${JSON.stringify(op)}`, origin });
+    } else if (entry.after === undefined) {
+      live.set(id, { corrupt: `is an ${op} entry with no after post-image`, origin });
+    } else {
+      const prior = live.get(id);
+      const body =
+        mutant === "merge-instead-of-replace" && prior !== undefined && "body" in prior
+          ? { ...prior.body, ...entry.after }
+          : entry.after;
+      live.set(id, { body, origin });
     }
   }
 
+  const survivors = new Map<string, DocumentData>();
   for (const [id, row] of live) {
-    assertSurvivor(id, row);
+    if ("corrupt" in row) {
+      throw domainError(row.origin, id, row.corrupt);
+    }
+    assertSurvivor(id, row.body, row.origin);
+    survivors.set(id, row.body);
   }
   const rows = new Map<string, DocumentData>();
-  for (const id of [...live.keys()].toSorted(compareUtf8)) {
-    const { body } = live.get(id)!;
+  for (const id of [...survivors.keys()].toSorted(compareUtf8)) {
+    const body = survivors.get(id)!;
     rows.set(id, mutant === "aliased-bodies" ? body : copyDocument(body));
   }
   return {
@@ -324,7 +331,7 @@ const domainError = (origin: number | string, id: unknown, problem: string): Bae
     `logical oracle: ${typeof origin === "number" ? `seq ${origin}` : origin} _id ${JSON.stringify(id)} ${problem}`,
   );
 
-const assertSurvivor = (id: string, { body, origin }: LiveRow): void => {
+const assertSurvivor = (id: string, body: DocumentData, origin: string): void => {
   if (!id.isWellFormed()) {
     throw domainError(origin, id, "is not a Unicode scalar string");
   }
