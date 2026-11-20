@@ -63,7 +63,7 @@ Two shapes, both legal; chained `.where(...).where(...)` AND-merges.
 .where(q => q.in("status", ["open", "pending"]))
 ```
 
-The `PredicateBuilder` vocabulary is exactly: `eq` `gt` `gte` `lt` `lte` `in`. Anything else (`or`, `not`, `ne`, `regex`, `exists`) does not exist and won't typecheck. Pair with `.order({ field: "asc" | "desc" })` and `.limit(n)`.
+The `PredicateBuilder` vocabulary is exactly: `eq` `gt` `gte` `lt` `lte` `in`. Anything else (`or`, `not`, `ne`, `regex`, `exists`) does not exist and won't typecheck. Pair with `.order({ field: "asc" | "desc" })` and `.limit(n)`. `order` is a total order: `null` or missing, then numbers, strings, booleans, objects, arrays; `desc` reverses all of it; rows with equal keys order by `_id`.
 
 ## Errors
 

@@ -318,6 +318,20 @@ describe("createBaerlyClient", () => {
     await client.collection("tickets").order({ created_at: "desc" }).all();
   });
 
+  test("an empty order spec is forwarded to preserve the _id tiebreak", async () => {
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/c/tickets", (req) => {
+      const url = new URL(req.url);
+      expect(url.searchParams.get("order")).toBe("{}");
+      expect(url.searchParams.get("limit")).toBe("1");
+      return jsonResponse(okEnvelope([{ _id: "a" }]));
+    });
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    await expect(client.collection("tickets").order({}).limit(1).all()).resolves.toEqual([
+      { _id: "a" },
+    ]);
+  });
+
   // Mirrors what a real `fetch` does with an aborted signal: reject
   // immediately if already aborted, otherwise reject when it fires.
   const hangUntilAbort = (req: Request): Promise<Response> =>

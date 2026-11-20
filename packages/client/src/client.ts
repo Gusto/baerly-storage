@@ -468,7 +468,7 @@ const makeClientQuery = <T extends DocumentData>(
     if (state.wire.clauses.length > 0) {
       params.set("where", JSON.stringify(state.wire));
     }
-    if (state.order !== undefined && Object.keys(state.order).length > 0) {
+    if (state.order !== undefined) {
       params.set("order", JSON.stringify(state.order));
     }
     if (state.limit !== undefined) {
