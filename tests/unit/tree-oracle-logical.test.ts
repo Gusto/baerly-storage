@@ -9,11 +9,13 @@
 
 import { fc, test as fcTest } from "@fast-check/vitest";
 import {
+  assertDocumentSize,
   BaerlyError,
   type DocumentData,
   encodeJsonBytes,
   type LogEntry,
   logObjectKey,
+  MAX_DOCUMENT_BYTES as PRODUCTION_MAX_DOCUMENT_BYTES,
   MemoryStorage,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
@@ -22,15 +24,22 @@ import {
   type InternalCompactOptions,
 } from "../../packages/server/src/compactor.ts";
 import { foldLogEntriesOnto } from "../../packages/server/src/log-walk.ts";
-import { compareDocIds } from "../../packages/server/src/snapshot-doc-id.ts";
+import { assertSnapshotDocId, compareDocIds } from "../../packages/server/src/snapshot-doc-id.ts";
 import { loadSnapshotAsMap } from "../../packages/server/src/snapshot.ts";
 import { provisionCollection } from "../fixtures/log-state.ts";
-import { docIdNearPairArb, validDocIdArb } from "../fixtures/scalar-doc-id-arbitraries.ts";
+import {
+  DOC_ID_MAX_UTF8_BYTES as ARBITRARY_DOC_ID_MAX_UTF8_BYTES,
+  docIdNearPairArb,
+  invalidDocIdArb,
+  validDocIdArb,
+} from "../fixtures/scalar-doc-id-arbitraries.ts";
 import {
   compareUtf8,
+  DOC_ID_MAX_UTF8_BYTES,
   foldLogical,
   foldLogicalMutant,
   LOGICAL_FOLD_MUTANTS,
+  MAX_DOCUMENT_BYTES,
   type LogicalFoldInput,
   type LogicalFoldMutant,
   type LogicalRange,
@@ -641,6 +650,81 @@ describe("logical fold domain", () => {
     );
   });
 
+  test.each([
+    ["empty", ""],
+    ["slash", "a/b"],
+    ["dot", "."],
+    ["dot-dot", ".."],
+    ["C0 control", "a\u0001"],
+    ["DEL", "a\u007f"],
+    ["C1 control", "a\u0085"],
+    ["leading underscore", "_a"],
+    ["unpaired surrogate", "a\uDC00"],
+    ["257 UTF-8 bytes", "a".repeat(DOC_ID_MAX_UTF8_BYTES + 1)],
+    ["257 UTF-8 bytes, astral last", `${"a".repeat(DOC_ID_MAX_UTF8_BYTES - 3)}\u{1F600}`],
+  ])("a surviving _id that breaks the ID domain (%s) is InvalidResponse", (_rule, id) => {
+    expect(codeOf(() => foldEntries([entry(0, "I", id, { _id: id })]))).toBe("InvalidResponse");
+  });
+
+  test("a 256-byte _id and inner dots or underscores are in the ID domain", () => {
+    for (const id of ["a".repeat(DOC_ID_MAX_UTF8_BYTES), "a.b", "a_", "...", "\u00a0"]) {
+      expect(codeOf(() => foldEntries([entry(0, "I", id, { _id: id })]))).toBeUndefined();
+    }
+  });
+
+  test.each([
+    ["undefined", { _id: "a", v: undefined }],
+    ["a function", { _id: "a", v: () => 1 }],
+    ["a bigint", { _id: "a", v: 1n }],
+    ["a symbol", { _id: "a", v: Symbol("s") }],
+    ["a non-finite number", { _id: "a", v: Number.NaN }],
+    ["a non-plain object", { _id: "a", v: new Date(0) }],
+    // oxlint-disable-next-line no-sparse-arrays -- the hole is the case
+    ["an array hole", { _id: "a", v: [1, , 2] }],
+  ])("a surviving body holding %s is InvalidResponse", (_what, body) => {
+    expect(codeOf(() => foldEntries([entry(0, "I", "a", body)]))).toBe("InvalidResponse");
+  });
+
+  test("an accessor property is refused without being called", () => {
+    let calls = 0;
+    const top = {
+      _id: "a",
+      get v() {
+        calls++;
+        return 1;
+      },
+    };
+    const nested = {
+      _id: "a",
+      n: {
+        get v() {
+          calls++;
+          return 1;
+        },
+      },
+    };
+    expect(codeOf(() => foldEntries([entry(0, "I", "a", top)]))).toBe("InvalidResponse");
+    expect(codeOf(() => foldEntries([entry(0, "I", "a", nested)]))).toBe("InvalidResponse");
+    expect(calls).toBe(0);
+  });
+
+  test("a body of exactly MAX_DOCUMENT_BYTES canonical bytes fits; one more is InvalidResponse", () => {
+    const overhead = JSON.stringify({ _id: "a", s: "" }).length;
+    const body = (bytes: number): DocumentData => ({ s: "x".repeat(bytes - overhead), _id: "a" });
+    expect(
+      codeOf(() => foldEntries([entry(0, "I", "a", body(MAX_DOCUMENT_BYTES))])),
+    ).toBeUndefined();
+    expect(codeOf(() => foldEntries([entry(0, "I", "a", body(MAX_DOCUMENT_BYTES + 1))]))).toBe(
+      "InvalidResponse",
+    );
+    // A superseded oversized write does not wedge the fold.
+    const repaired = foldEntries([
+      entry(0, "I", "a", body(MAX_DOCUMENT_BYTES + 1)),
+      entry(1, "U", "a", { _id: "a" }),
+    ]);
+    expect([...repaired.rows]).toEqual([["a", { _id: "a" }]]);
+  });
+
   test("a surviving corrupt write is InvalidResponse, and it replaces the prior row", () => {
     expect(codeOf(() => foldEntries([entry(0, "U", "a")]))).toBe("InvalidResponse");
     expect(codeOf(() => foldEntries([entry(0, "I", "a", { _id: "a" }), entry(1, "U", "a")]))).toBe(
@@ -786,6 +870,41 @@ describe("logical fold agrees with production", () => {
       }
     },
   );
+
+  test("the restated ceilings equal production's", () => {
+    expect(MAX_DOCUMENT_BYTES).toBe(PRODUCTION_MAX_DOCUMENT_BYTES);
+    expect(DOC_ID_MAX_UTF8_BYTES).toBe(ARBITRARY_DOC_ID_MAX_UTF8_BYTES);
+  });
+
+  fcTest.prop({ invalid: invalidDocIdArb })(
+    "an _id outside the domain is refused by the oracle and by assertSnapshotDocId",
+    ({ invalid }) => {
+      const body = { _id: invalid.id };
+      expect(codeOf(() => foldEntries([entry(0, "I", invalid.id, body)]))).toBe("InvalidResponse");
+      expect(codeOf(() => assertSnapshotDocId(invalid.id))).toBe("InvalidConfig");
+    },
+  );
+
+  fcTest.prop({ id: validDocIdArb })(
+    "an _id inside the domain is accepted by the oracle and by assertSnapshotDocId",
+    ({ id }) => {
+      expect(codeOf(() => foldEntries([entry(0, "I", id, { _id: id })]))).toBeUndefined();
+      expect(codeOf(() => assertSnapshotDocId(id))).toBeUndefined();
+    },
+  );
+
+  test("the document byte cap matches assertDocumentSize at the boundary", () => {
+    const overhead = JSON.stringify({ _id: "a", s: "" }).length;
+    for (const [bytes, oracleCode, productionCode] of [
+      [MAX_DOCUMENT_BYTES, undefined, undefined],
+      [MAX_DOCUMENT_BYTES + 1, "InvalidResponse", "InvalidConfig"],
+    ] as const) {
+      // A two-byte character straddles the boundary, so bytes, not code units, decide.
+      const body = { _id: "a", s: `${"x".repeat(bytes - overhead - 2)}é` };
+      expect(codeOf(() => foldEntries([entry(0, "I", "a", body)]))).toBe(oracleCode);
+      expect(codeOf(() => assertDocumentSize(body, "test"))).toBe(productionCode);
+    }
+  });
 
   test("an NFD alias of the collection is refused by every fold, and only in range", async () => {
     const ops: Op[] = [
