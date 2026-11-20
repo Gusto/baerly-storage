@@ -1,9 +1,11 @@
 /**
  * Static storage-call model for a content-addressed tree layout: the
  * worst-case storage calls of one maintenance tick, a point read and a
- * full scan, against the Workers Free + R2 binding request ledger.
+ * full scan, against the Workers Paid request ledger (the tree's design
+ * target) and the Workers Free + R2 binding ledger (the floor: writes
+ * capped at depth 0, reads of any depth).
  *
- * Pure and I/O-free. It answers "does this tree shape fit the floor's
+ * Pure and I/O-free. It answers "does this tree shape fit the host's
  * request budget", not "is it fast": CPU is a separate question.
  *
  * The layout modelled is one prolly tree per collection (content-defined,
@@ -20,19 +22,23 @@
  * only the one snapshot GET/PUT with path and leaf calls, so at depth 0 the
  * model reproduces `request-counts.json` exactly (`model.test.ts`).
  *
- * Every assumption this model does not fix is a named field of
- * {@link DesignAssumptions}, never a hidden constant.
+ * Every layout parameter is a field of {@link TreeParams} (defaults: the
+ * prototype's starting values) and every assumption this model does not
+ * fix is a field of {@link DesignAssumptions}, never a hidden constant.
  */
 
 import {
   CF_FREE_INTERNAL_REQUEST_LIMIT,
+  CF_PAID_REQUEST_LIMIT,
   COMMIT_RESOLUTION_RESERVE,
   GC_PENDING_CAS_MAX_ATTEMPTS,
   GC_MARK_LIST_PAGE_KEYS,
   LOG_RETENTION_MAX_DELETES_PER_TICK,
   MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
   MAINTENANCE_MAX_FOLD_ROWS,
+  MAINTENANCE_PROFILE_CF_PAID,
   STORAGE_RETRY_MAX_ATTEMPTS,
+  WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   WRITE_TICK_GC_MAX_SWEEPS,
 } from "@baerly/protocol";
@@ -194,7 +200,7 @@ export const pathUnionInternalNodes = (
   return n;
 };
 
-// ── Floor collection ─────────────────────────────────────────────────────
+// ── Collections and tree parameters ──────────────────────────────────────
 
 /** A collection's logical size. */
 export interface CollectionSize {
@@ -212,46 +218,103 @@ export const FLOOR_COLLECTION: CollectionSize = {
 };
 
 /**
- * UNSPECIFIED BY THIS MODEL: leaf sizing. Leaves have content-defined
- * boundaries and nodes are wide, but this model fixes no leaf target or
- * minimum fill.
+ * The design target's largest collection: fold ceilings `C` / `E` of the
+ * `cf-paid` profile, 8 MiB / 32,768 rows (Paid is the tree's design
+ * target).
  */
-export interface LeafSizing {
+export const PAID_COLLECTION: CollectionSize = {
+  bytes: MAINTENANCE_PROFILE_CF_PAID.maxFoldBytes,
+  rows: MAINTENANCE_PROFILE_CF_PAID.maxFoldRows,
+};
+
+/**
+ * The tree's layout parameters. The defaults are the prototype's starting
+ * values (`PROTOTYPE_TREE_DEFAULTS`), not settled design, and the CLI
+ * names them in its output.
+ */
+export interface TreeParams {
   /** CDC target leaf size in bytes. */
   readonly leafTargetBytes: number;
   /**
-   * Worst-case fill of a leaf as a fraction of the target (a CDC chunker's
+   * Worst-case fill of a leaf as a fraction of the target (the chunker's
    * minimum cut over its target). The worst case for request counts is the
    * least-filled tree: most leaves.
    */
   readonly leafMinFill: number;
   /**
-   * Most children an internal node can name (its byte target over a child
+   * Worst-case (least) children per internal node, the internal fanout
+   * target: the depth a collection reaches is the least `d` with
+   * `minFanout ** d >= leaves` ({@link canonicalDepth}).
+   */
+  readonly minFanout: number;
+  /**
+   * Most children an internal node can name (its hard max over a child
    * descriptor's size). `Infinity` means unconstrained, so any depth can
    * hold the collection.
    */
   readonly maxFanout: number;
+  /**
+   * Depth-0 rule `T`: a collection at or under `T` in both document bytes
+   * and rows (inclusive; 512 KiB / 2,048 rows by default) is one leaf,
+   * today's snapshot; above it the CDC rule applies.
+   */
+  readonly depth0: CollectionSize;
 }
 
 /**
+ * Prototype starting values: 16 KiB leaf target at 0.5 minimum fill,
+ * fanout >= 32 (the least at which Paid C/E is depth <= 2: 8 MiB / 8 KiB =
+ * 1,024 leaves = 32 ** 2), no fanout hard max, and `T` = today's floor C/E.
+ */
+export const PROTOTYPE_TREE_DEFAULTS: TreeParams = {
+  leafTargetBytes: 16 * 1024,
+  leafMinFill: 0.5,
+  minFanout: 32,
+  maxFanout: Infinity,
+  depth0: FLOOR_COLLECTION,
+};
+
+/** The leaf targets swept before one is chosen. */
+export const LEAF_TARGET_SWEEP: readonly number[] = [16 * 1024, 64 * 1024];
+
+/** Leaves of `size` in its least-filled tree: at most one per row. */
+export const leafCount = (params: TreeParams, size: CollectionSize): number =>
+  Math.min(size.rows, Math.ceil(size.bytes / (params.leafTargetBytes * params.leafMinFill)));
+
+/**
+ * The depth the canonical tree of `size` has under `params`: 0 within the
+ * depth-0 rule's `T` (or when the content fits one leaf), else the least
+ * depth whose worst-case fanout holds every leaf.
+ */
+export const canonicalDepth = (params: TreeParams, size: CollectionSize): number => {
+  const leaves = leafCount(params, size);
+  if ((size.bytes <= params.depth0.bytes && size.rows <= params.depth0.rows) || leaves < 2) {
+    return 0;
+  }
+  let depth = 1;
+  while (params.minFanout ** depth < leaves) {
+    depth++;
+  }
+  return depth;
+};
+
+/**
  * The worst-case shape of `size` as a depth-`depth` tree: as many leaves as
- * minimum fill allows (at most one per row), and the least fanout that
- * still reaches that depth. `null` when the collection cannot take that
- * depth: one leaf at depth >= 1, or more leaves than `maxFanout ** depth`.
- * Depth 0 is always one leaf, today's snapshot.
+ * minimum fill allows, and the least fanout that still reaches that depth.
+ * `null` when the collection cannot take that depth: one leaf at depth >= 1,
+ * or more leaves than `maxFanout ** depth`. Depth 0 is always one leaf,
+ * today's snapshot. The shape ignores `minFanout`, so a depth deeper than
+ * {@link canonicalDepth} still has a (more pessimistic) row.
  */
 export const collectionShape = (
   depth: number,
-  sizing: LeafSizing,
-  size: CollectionSize = FLOOR_COLLECTION,
+  params: TreeParams,
+  size: CollectionSize,
 ): TreeShape | null => {
   if (depth === 0) {
     return { depth: 0, fanout: 1, leaves: 1 };
   }
-  const leaves = Math.min(
-    size.rows,
-    Math.ceil(size.bytes / (sizing.leafTargetBytes * sizing.leafMinFill)),
-  );
+  const leaves = leafCount(params, size);
   if (leaves < 2) {
     return null;
   }
@@ -261,7 +324,7 @@ export const collectionShape = (
   }
   // A depth-d tree with fanout F needs more than F^(d-1) leaves, or it is
   // really a shallower tree.
-  if (fanout > sizing.maxFanout || fanout ** (depth - 1) >= leaves) {
+  if (fanout > params.maxFanout || fanout ** (depth - 1) >= leaves) {
     return null;
   }
   return { depth, fanout, leaves };
@@ -581,22 +644,88 @@ export const writeRouteCalls = (input: WriteRouteInput): Calls =>
 export const commitHoldRequests = (): number =>
   STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE;
 
-// ── Ledger ───────────────────────────────────────────────────────────────
+// ── Ledgers and hosts ────────────────────────────────────────────────────
 
 /**
- * The Workers Free + R2 binding ledger: 900 internal requests, the
- * documented 1,000 internal subrequests less the 10% margin
- * (`CF_FREE_INTERNAL_REQUEST_LIMIT`). R2 binding calls charge no
- * `external` request and the Worker makes no Cache API call, so every
- * charge here is internal. Free + S3 over `fetch` is not a supported host
- * and is not modelled.
+ * A per-invocation request ledger, margin already taken. Storage reaches
+ * the bucket through the R2 binding, so every charge is on one pool:
+ * Free's `internal` pool, or Paid's single limit (which covers binding and
+ * `fetch` calls alike). Free + S3 over `fetch` is not a supported host and
+ * is not modelled.
  */
 export interface Ledger {
   readonly internal: number;
 }
 
+/**
+ * The Workers Free + R2 binding ledger: 900 internal requests, the
+ * documented 1,000 internal subrequests less the 10% margin
+ * (`CF_FREE_INTERNAL_REQUEST_LIMIT`). R2 binding calls charge no
+ * `external` request and the Worker makes no Cache API call.
+ */
 export const FREE_LEDGER: Ledger = {
   internal: CF_FREE_INTERNAL_REQUEST_LIMIT,
+};
+
+/**
+ * The Workers Paid ledger: 9,000 requests, Paid's default 10,000
+ * subrequests less the 10% margin (`CF_PAID_REQUEST_LIMIT`, the limit the
+ * `cf-paid` profile enforces).
+ */
+export const PAID_LEDGER: Ledger = {
+  internal: CF_PAID_REQUEST_LIMIT,
+};
+
+/**
+ * A host: its ledger, its largest collection (fold ceilings `C` / `E`),
+ * and the in-band write tick's per-pass caps under its maintenance
+ * profile (`runBoundedMaintenance`).
+ */
+export interface HostProfile {
+  readonly name: string;
+  readonly ledger: Ledger;
+  readonly collection: CollectionSize;
+  /** Log entries one fold pass takes (`maxFoldEntriesPerPass`). */
+  readonly entriesPerPass: number;
+  /** GC deletes per tick (`gcMaxSweeps`). */
+  readonly gcSweeps: number;
+  /** Log objects one retirement pass deletes (`LOG_RETENTION_MAX_DELETES_PER_TICK`). */
+  readonly retirementDeletes: number;
+  /** Keys per LIST page. S3 and R2 return up to `GC_MARK_LIST_PAGE_KEYS` (1,000). */
+  readonly listPageKeys: number;
+  /**
+   * Default unfolded tail a read replays: the larger of the in-band fold
+   * floor (`WRITE_TICK_MIN_ENTRIES_TO_COMPACT`) and one pass, so the read
+   * that shares an invocation with a full pass sees that pass's entries.
+   */
+  readonly tailEntries: number;
+}
+
+/** Workers Free + R2 binding under `cf-free`: the floor, writes capped at depth 0. */
+export const FREE_R2_HOST: HostProfile = {
+  name: "Free + R2",
+  ledger: FREE_LEDGER,
+  collection: FLOOR_COLLECTION,
+  entriesPerPass: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+  gcSweeps: WRITE_TICK_GC_MAX_SWEEPS,
+  retirementDeletes: LOG_RETENTION_MAX_DELETES_PER_TICK,
+  listPageKeys: GC_MARK_LIST_PAGE_KEYS,
+  tailEntries: Math.max(WRITE_TICK_MIN_ENTRIES_TO_COMPACT, WRITE_TICK_FOLD_ENTRIES_PER_PASS),
+};
+
+/** Workers Paid under `cf-paid`: the tree's design target. */
+export const PAID_HOST: HostProfile = {
+  name: "Paid",
+  ledger: PAID_LEDGER,
+  collection: PAID_COLLECTION,
+  entriesPerPass: MAINTENANCE_PROFILE_CF_PAID.maxFoldEntriesPerPass,
+  gcSweeps: MAINTENANCE_PROFILE_CF_PAID.gcMaxSweeps,
+  retirementDeletes: LOG_RETENTION_MAX_DELETES_PER_TICK,
+  listPageKeys: GC_MARK_LIST_PAGE_KEYS,
+  tailEntries: Math.max(
+    WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+    MAINTENANCE_PROFILE_CF_PAID.maxFoldEntriesPerPass,
+  ),
 };
 
 /** A charge on the ledger's pools. External is always 0 on the R2 binding. */
@@ -625,35 +754,32 @@ const verdict = (charge: PoolCharge, budget: PoolCharge): Verdict => ({
  * A read against the ledger. A read holds no commit reserve (it commits
  * nothing), so its budget is the whole ledger, margin already taken.
  */
-export const readVerdict = (
-  calls: Calls,
-  policy: RetryPolicy,
-  ledger: Ledger = FREE_LEDGER,
-): Verdict => verdict(poolCharge(chargedRequests(calls, policy)), poolCharge(ledger.internal));
+export const readVerdict = (calls: Calls, policy: RetryPolicy, ledger: Ledger): Verdict =>
+  verdict(poolCharge(chargedRequests(calls, policy)), poolCharge(ledger.internal));
 
 /**
- * A tick against the ledger. On Workers the tick runs in the write's
- * `ctx.waitUntil`, in the same invocation, so its budget is the ledger
- * less the write route and the commit hold (the reserve stays intact).
+ * What a tick may spend: on Workers the tick runs in the write's
+ * `ctx.waitUntil`, in the same invocation, so its budget is the ledger less
+ * the write route and the commit hold (the reserve stays intact).
  */
+export const tickBudget = (write: Calls, policy: RetryPolicy, ledger: Ledger): number =>
+  ledger.internal - chargedRequests(write, policy) - commitHoldRequests();
+
+/** A tick against what the ledger leaves it ({@link tickBudget}). */
 export const tickVerdict = (
   tick: Calls,
   write: Calls,
   policy: RetryPolicy,
-  ledger: Ledger = FREE_LEDGER,
-): Verdict => {
-  const writeCharge = chargedRequests(write, policy) + commitHoldRequests();
-  return verdict(
-    poolCharge(chargedRequests(tick, policy)),
-    poolCharge(ledger.internal - writeCharge),
-  );
-};
+  ledger: Ledger,
+): Verdict =>
+  verdict(poolCharge(chargedRequests(tick, policy)), poolCharge(tickBudget(write, policy, ledger)));
 
-// ── Floor sweep ──────────────────────────────────────────────────────────
+// ── Host sweep ───────────────────────────────────────────────────────────
 
 /** One scenario: the parameters the sweep holds fixed. */
 export interface Scenario {
-  readonly sizing: LeafSizing;
+  readonly host: HostProfile;
+  readonly params: TreeParams;
   readonly sharing: PathSharing;
   readonly tailEntries: number;
   readonly tailHintLag: number;
@@ -663,66 +789,75 @@ export interface Scenario {
   readonly assumptions: DesignAssumptions;
 }
 
-/** `cf-free` defaults for a scenario's fold pass and GC slice. */
-export const FLOOR_PROFILE = {
-  entriesPerPass: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
-  gcSweeps: WRITE_TICK_GC_MAX_SWEEPS,
-  retirementDeletes: LOG_RETENTION_MAX_DELETES_PER_TICK,
-  listPageKeys: GC_MARK_LIST_PAGE_KEYS,
-} as const;
-
-/**
- * The fold tick changing `k` leaves of the floor collection at `shape`.
- * The pass folds `max(k, entriesPerPass)` entries: `k` above the profile's
- * pass means a larger pass, which is how the sweep finds where it stops
- * fitting.
- */
-export const floorFoldTickVerdict = (shape: TreeShape, k: number, s: Scenario): Verdict => {
-  const tick = foldTickCalls({
-    shape,
-    changedLeaves: k,
-    sharing: s.sharing,
-    entriesFolded: Math.max(k, FLOOR_PROFILE.entriesPerPass),
-    emptyBase: false,
-    concurrentCommits: s.concurrentCommits,
-    headCasLost: true,
-    assumptions: s.assumptions,
-  });
-  return tickVerdict(tick, floorWriteRoute(shape, s), s.policy);
-};
-
-const floorRead = (shape: TreeShape, s: Scenario): ReadInput => ({
+const hostRead = (shape: TreeShape, s: Scenario): ReadInput => ({
   shape,
   tailEntries: s.tailEntries,
   emptyBase: false,
 });
 
-export const floorWriteRoute = (shape: TreeShape, s: Scenario): Calls =>
+/** The write route (before its commit hold) on a collection of `shape`. */
+export const hostWriteRoute = (shape: TreeShape, s: Scenario): Calls =>
   writeRouteCalls({
-    read: floorRead(shape, s),
+    read: hostRead(shape, s),
     writeStateRead: s.writeStateRead,
     tailHintLag: s.tailHintLag,
   });
 
-export const floorGcTickVerdict = (shape: TreeShape, s: Scenario): Verdict =>
+/**
+ * The fold tick changing `k` leaves of a collection at `shape`, in the
+ * invocation of a write on the same collection. The pass folds
+ * `max(k, entriesPerPass)` entries: `k` above the profile's pass means a
+ * larger pass, which is how the sweep finds where it stops fitting.
+ */
+export const hostFoldTickVerdict = (shape: TreeShape, k: number, s: Scenario): Verdict => {
+  const tick = foldTickCalls({
+    shape,
+    changedLeaves: k,
+    sharing: s.sharing,
+    entriesFolded: Math.max(k, s.host.entriesPerPass),
+    emptyBase: false,
+    concurrentCommits: s.concurrentCommits,
+    headCasLost: true,
+    assumptions: s.assumptions,
+  });
+  return tickVerdict(tick, hostWriteRoute(shape, s), s.policy, s.host.ledger);
+};
+
+/**
+ * The worst fold tick the host's profile can dispatch: one full pass whose
+ * every entry lands in a different leaf, `min(entriesPerPass, leaves)`.
+ */
+export const worstFoldTickVerdict = (shape: TreeShape, s: Scenario): Verdict =>
+  hostFoldTickVerdict(shape, Math.min(s.host.entriesPerPass, shape.leaves), s);
+
+export const hostGcTickVerdict = (shape: TreeShape, s: Scenario): Verdict =>
   tickVerdict(
     gcTickCalls({
       shape,
-      sweeps: FLOOR_PROFILE.gcSweeps,
-      retirementDeletes: FLOOR_PROFILE.retirementDeletes,
-      listPageKeys: FLOOR_PROFILE.listPageKeys,
+      sweeps: s.host.gcSweeps,
+      retirementDeletes: s.host.retirementDeletes,
+      listPageKeys: s.host.listPageKeys,
       state: GC_WORST_STATE,
       assumptions: s.assumptions,
     }),
-    floorWriteRoute(shape, s),
+    hostWriteRoute(shape, s),
     s.policy,
+    s.host.ledger,
   );
 
-export const floorPointReadVerdict = (shape: TreeShape, s: Scenario): Verdict =>
-  readVerdict(pointReadCalls(floorRead(shape, s)), s.policy);
+/** A point read of a collection at `shape`, on `ledger` (default: the scenario host's). */
+export const hostPointReadVerdict = (
+  shape: TreeShape,
+  s: Scenario,
+  ledger: Ledger = s.host.ledger,
+): Verdict => readVerdict(pointReadCalls(hostRead(shape, s)), s.policy, ledger);
 
-export const floorScanVerdict = (shape: TreeShape, s: Scenario): Verdict =>
-  readVerdict(scanCalls(floorRead(shape, s)), s.policy);
+/** A full scan of a collection at `shape`, on `ledger` (default: the scenario host's). */
+export const hostScanVerdict = (
+  shape: TreeShape,
+  s: Scenario,
+  ledger: Ledger = s.host.ledger,
+): Verdict => readVerdict(scanCalls(hostRead(shape, s)), s.policy, ledger);
 
 /**
  * The most changed leaves one fold tick can take at `shape` and stay in
@@ -732,7 +867,7 @@ export const floorScanVerdict = (shape: TreeShape, s: Scenario): Verdict =>
 export const maxFittingChangedLeaves = (shape: TreeShape, s: Scenario): number => {
   let best = 0;
   for (let k = 1; k <= shape.leaves; k++) {
-    if (!floorFoldTickVerdict(shape, k, s).fits) {
+    if (!hostFoldTickVerdict(shape, k, s).fits) {
       break;
     }
     best = k;
@@ -742,36 +877,59 @@ export const maxFittingChangedLeaves = (shape: TreeShape, s: Scenario): number =
 
 export interface DepthSummary {
   readonly depth: number;
-  /** `null` when the floor collection cannot take this depth under the sizing. */
+  /** `null` when the host's collection cannot take this depth under the params. */
   readonly shape: TreeShape | null;
+  /** This is the depth the canonical tree of the host's collection has ({@link canonicalDepth}). */
+  readonly canonical: boolean;
   readonly pointRead: Verdict | null;
   readonly scan: Verdict | null;
   readonly gcTick: Verdict | null;
+  /** One changed leaf. */
+  readonly foldTick1: Verdict | null;
+  /** {@link worstFoldTickVerdict}. */
+  readonly worstFoldTick: Verdict | null;
   /** Max changed leaves per fold tick that fit (0 = none fit). */
   readonly maxK: number;
   /**
-   * A required tick (one changed leaf, or the GC tick) or read does not fit
-   * at this depth.
+   * Over budget at this depth: the worst fold tick, the GC tick or a read
+   * does not fit.
    */
   readonly overBudget: boolean;
 }
 
 export const summarizeDepth = (depth: number, s: Scenario): DepthSummary => {
-  const shape = collectionShape(depth, s.sizing);
+  const canonical = canonicalDepth(s.params, s.host.collection) === depth;
+  const shape = collectionShape(depth, s.params, s.host.collection);
   if (shape === null) {
-    return { depth, shape, pointRead: null, scan: null, gcTick: null, maxK: 0, overBudget: false };
+    return {
+      depth,
+      shape,
+      canonical,
+      pointRead: null,
+      scan: null,
+      gcTick: null,
+      foldTick1: null,
+      worstFoldTick: null,
+      maxK: 0,
+      overBudget: false,
+    };
   }
-  const pointRead = floorPointReadVerdict(shape, s);
-  const scan = floorScanVerdict(shape, s);
-  const gcTick = floorGcTickVerdict(shape, s);
+  const pointRead = hostPointReadVerdict(shape, s);
+  const scan = hostScanVerdict(shape, s);
+  const gcTick = hostGcTickVerdict(shape, s);
+  const foldTick1 = hostFoldTickVerdict(shape, 1, s);
+  const worstFoldTick = worstFoldTickVerdict(shape, s);
   const maxK = maxFittingChangedLeaves(shape, s);
   return {
     depth,
     shape,
+    canonical,
     pointRead,
     scan,
     gcTick,
+    foldTick1,
+    worstFoldTick,
     maxK,
-    overBudget: !pointRead.fits || !scan.fits || !gcTick.fits || maxK === 0,
+    overBudget: !pointRead.fits || !scan.fits || !gcTick.fits || !worstFoldTick.fits,
   };
 };
