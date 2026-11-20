@@ -96,6 +96,14 @@ const urlOf = (e: Json): unknown =>
   e?.["request"]?.["url"] ??
   e?.["$workers"]?.["event"]?.["request"]?.["url"] ??
   e?.["url"];
+/** Query parameters of a request URL; undefined when the URL does not parse. */
+const searchParamsOf = (url: string): URLSearchParams | undefined => {
+  try {
+    return new URL(url).searchParams;
+  } catch {
+    return undefined;
+  }
+};
 const cpuOf = (e: Json): unknown =>
   e?.["cpuTime"] ??
   e?.["cpuTimeMs"] ??
@@ -154,7 +162,10 @@ export interface CellRow {
   readonly cold: number;
   /** Every non-warmup event attributed to this cell, whatever its outcome. */
   readonly invocations: number;
-  /** Events tagged `&warmup=1` for this cell (excluded from every statistic). */
+  /**
+   * URL-attributed events tagged `&warmup=1` for this cell (excluded from every
+   * statistic). An event with an explicit `cell` field is never a warmup.
+   */
   readonly warmups: number;
   readonly fits: boolean;
   readonly d: { readonly p50: number; readonly p90: number; readonly p99: number };
@@ -203,7 +214,7 @@ export interface Analysis {
   readonly missingOutcome: number;
   /** Percentile method behind every p50/p90/p99 in this analysis. */
   readonly method: PercentileMethod;
-  /** Non-warmup events missing a URL, an outcome or a CPU time. */
+  /** Non-warmup events missing a parseable URL, an outcome or a CPU time. */
   readonly incomplete: IncompleteEvent[];
   readonly rows: CellRow[];
   readonly noop: { readonly deployed: number; readonly node: number };
@@ -272,25 +283,24 @@ export const analyze = (
   let missingCpu = 0;
   let missingOutcome = 0;
   for (const [index, e] of events.entries()) {
+    // An explicit `cell` field wins and its URL is never consulted for the
+    // cell or the warmup tag; only URL-attributed events can be warmups.
     let cell: string | null | undefined = e?.["cell"];
     const url = urlOf(e);
-    let warmup = false;
-    if (typeof url === "string") {
-      const u = new URL(url);
-      warmup = u.searchParams.get("warmup") === "1";
-      if (cell === undefined) {
-        cell = u.searchParams.get("cell");
+    const params = typeof url === "string" ? searchParamsOf(url) : undefined;
+    if (cell === undefined && typeof url === "string") {
+      if (params?.get("warmup") === "1") {
+        const warm = byCell.get(params.get("cell") ?? "");
+        if (warm !== undefined) {
+          warm.warmups++;
+        }
+        continue;
       }
+      cell = params?.get("cell") ?? null;
     }
     const slot = cell === null || cell === undefined ? undefined : byCell.get(cell);
-    if (warmup) {
-      if (slot !== undefined) {
-        slot.warmups++;
-      }
-      continue;
-    }
     const missing: IncompleteEvent["missing"] = [];
-    if (typeof url !== "string") {
+    if (params === undefined) {
       missing.push("url");
     }
     if (outcomeOf(e) === MISSING_OUTCOME) {
