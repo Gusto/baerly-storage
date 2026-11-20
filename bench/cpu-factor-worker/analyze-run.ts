@@ -9,7 +9,7 @@ import {
   evaluatePrereg,
   formatPrereg,
   parseAnalyzeArgs,
-  parsePrereg,
+  parsePreregText,
   type Prereg,
 } from "./prereg.ts";
 
@@ -23,7 +23,7 @@ const { eventsPath, basePath = join(here, "out/node-baseline.json"), preregPath 
 let prereg: Prereg | undefined;
 if (preregPath !== undefined) {
   try {
-    prereg = parsePrereg(JSON.parse(readFileSync(preregPath, "utf8")));
+    prereg = parsePreregText(readFileSync(preregPath, "utf8"));
   } catch (error) {
     console.error(
       `PREREG VERDICT: FAIL (invalid preregistration file): ${(error as Error).message}`,
