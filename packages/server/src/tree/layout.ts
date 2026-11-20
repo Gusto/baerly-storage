@@ -13,60 +13,69 @@
  * collection, `Db` and app options never accept it.
  */
 
-import {
-  MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
-  MAINTENANCE_MAX_FOLD_ROWS,
-  MAX_DOCUMENT_BYTES,
-} from "@baerly/protocol";
-
-/**
- * Bytes a leaf may carry beyond one maximal row: the leaf header plus
- * one entry's framing and `_id` key (at most `MAX_KEY_BYTES`, 1,024).
- * Local to this module because a `@baerly/protocol` constant would
- * change protocol chunk sizes and the published bundles. It is not
- * part of any published format.
- */
-const LEAF_ENVELOPE_HEADROOM_BYTES = 4096;
-
-/** Leaf target size: 16 KiB (see {@link TreeLayout.leafTargetBytes}). */
+/** Leaf target size: 16 KiB. */
 const LEAF_TARGET_BYTES = 16 * 1024;
+
+/** No content cut while a leaf holds at most this many document bytes. */
+const LEAF_MIN_BYTES = 8 * 1024;
 
 /**
  * Size and shape constants of the prototype prolly tree. Frozen: a
  * collection's canonical tree is a function of its row set and these
- * values only.
+ * values only. All byte counts are canonical document bytes unless a
+ * field says otherwise. The literals are local to this module; they are
+ * not part of any published format.
  */
 export interface TreeLayout {
-  /** Byte size at which the leaf boundary threshold reaches 1. */
+  /** Mean leaf document bytes. */
   readonly leafTargetBytes: number;
-  /** Least leaf fill the op model assumes: 0.5 of the target. */
+  /** No content cut while a leaf's document bytes are at most this. */
   readonly leafMinBytes: number;
   /**
-   * Forced cut after the entry that crosses it. At least one
-   * `MAX_DOCUMENT_BYTES` row plus envelope, so one maximal row always
-   * fits one leaf.
+   * Forced cut after the entry that makes the leaf reach this many
+   * document bytes. The one-maximal-row requirement bounds
+   * {@link TreeLayout.leafMaxBodyBytes}, not this field.
    */
   readonly leafMaxBytes: number;
-  /** Target entries per internal node (at least 32). */
-  readonly internalFanoutTarget: number;
+  /** Decoder bound on a stored leaf body, in node bytes (envelope included). */
+  readonly leafMaxBodyBytes: number;
   /**
-   * Depth-0 limit `T`, bytes: a collection within `T` is one leaf. Starts
-   * equal to today's snapshot ceiling `C` (Free profile) so Free's write
-   * envelope is unchanged.
+   * A document of at least this many bytes gets a cut before and after
+   * it, so it sits alone in its leaf.
    */
-  readonly depth0MaxBytes: number;
-  /** Depth-0 limit `T`, rows. Starts equal to today's Free ceiling `E`. */
-  readonly depth0MaxRows: number;
+  readonly leafIsolationDocumentBytes: number;
+  /** No hash cut before a branch node has this many entries. */
+  readonly branchFanoutMin: number;
+  /** Mean hash-cut interval, in entries, once the minimum is met. */
+  readonly branchFanoutTarget: number;
+  /** Forced cut at this many entries. */
+  readonly branchFanoutMax: number;
+  /**
+   * Single-leaf rule, bytes: a row set whose canonical document bytes are
+   * at most this (inclusive) and whose rows are within
+   * {@link TreeLayout.singleLeafMaxRows} is one root leaf with no
+   * content-defined cuts. A shape constant, not a capacity limit: it is the
+   * smallest value that keeps today's Free envelope at one node, and it
+   * does not track the Free fold ceiling if that ceiling later changes.
+   * Counted in document bytes, not node bytes.
+   */
+  readonly singleLeafMaxBytes: number;
+  /** Single-leaf rule, rows (inclusive). Same status as {@link TreeLayout.singleLeafMaxBytes}. */
+  readonly singleLeafMaxRows: number;
 }
 
 /** The production layout. */
 export const TREE_LAYOUT: TreeLayout = Object.freeze({
   leafTargetBytes: LEAF_TARGET_BYTES,
-  leafMinBytes: LEAF_TARGET_BYTES / 2,
-  leafMaxBytes: MAX_DOCUMENT_BYTES + LEAF_ENVELOPE_HEADROOM_BYTES,
-  internalFanoutTarget: 32,
-  depth0MaxBytes: MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
-  depth0MaxRows: MAINTENANCE_MAX_FOLD_ROWS,
+  leafMinBytes: LEAF_MIN_BYTES,
+  leafMaxBytes: 2 * LEAF_TARGET_BYTES - LEAF_MIN_BYTES,
+  leafMaxBodyBytes: 2 * 1024 * 1024,
+  leafIsolationDocumentBytes: 24 * 1024,
+  branchFanoutMin: 4,
+  branchFanoutTarget: 32,
+  branchFanoutMax: 128,
+  singleLeafMaxBytes: 512 * 1024,
+  singleLeafMaxRows: 2048,
 });
 
 /**
