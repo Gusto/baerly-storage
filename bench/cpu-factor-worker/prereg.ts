@@ -373,7 +373,7 @@ export const formatPrereg = (a: Analysis, p: Prereg, v: PreregVerdict): string =
   const out: string[] = [
     "",
     "PREREGISTERED VERDICT",
-    `Percentile method: ${p.percentileMethod === "r7" ? "R-7 (linear interpolation, Hyndman-Fan type 7)" : "nearest-rank"}`,
+    `Percentile method (deployed CPU): ${p.percentileMethod === "r7" ? "R-7 (linear interpolation, Hyndman-Fan type 7)" : "nearest-rank"}; the Node baseline's percentiles are nearest-rank whatever is declared`,
     p.coldInvocations === "include"
       ? 'Cold invocations ("cold":true): INCLUDED in n ok and p99, as declared.'
       : 'Cold invocations ("cold":true): EXCLUDED from n ok and p99, as declared, so a slow cold start cannot fail a cell by p99; a killed cold invocation still counts as a kill. Events without the CPUFACTOR log line cannot be tagged cold and count as warm.',

@@ -225,7 +225,10 @@ export interface Analysis {
   readonly missingCpu: number;
   /** Matched events with no outcome field; counted under `other`, never as ok. */
   readonly missingOutcome: number;
-  /** Percentile method behind every p50/p90/p99 in this analysis. */
+  /**
+   * Percentile method behind every deployed p50/p90/p99 in this analysis.
+   * Node baseline percentiles come precomputed (nearest-rank) from the baseline file.
+   */
   readonly method: PercentileMethod;
   /** Whether `"cold":true` ok invocations are samples (only a preregistration sets this). */
   readonly coldIncluded: boolean;
