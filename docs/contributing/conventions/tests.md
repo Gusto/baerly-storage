@@ -108,7 +108,7 @@ Run it:
 
 A change to what lands in the bucket, or to how a step resumes after a crash, needs these checks, each backed by a helper on main:
 
-- **Inject faults per op.** [`tests/fixtures/aborting-storage.ts`](../../../tests/fixtures/aborting-storage.ts) aborts the K-th op or tears a `put` (a truncated body at a valid key), optionally narrowed to a key prefix and op kinds.
+- **Inject faults per op.** [`tests/fixtures/aborting-storage.ts`](../../../tests/fixtures/aborting-storage.ts) aborts the K-th op, tears a `put` (a truncated body at a valid key), or applies the K-th op and then throws a retryable `NetworkError` (`armPostApplyAt`: the write landed, the response was lost), optionally narrowed to a key prefix and op kinds. [`tests/fixtures/counting-storage.ts`](../../../tests/fixtures/counting-storage.ts) counts ops, bytes and per-key-class (e.g. tree-node) traffic.
 - **Assert a two-branch contract.** After the fault, either the step completed or the reader sees the pre-fault row set ([`tests/integration/maintenance-crash-fuzz.test.ts`](../../../tests/integration/maintenance-crash-fuzz.test.ts)).
 - **Judge the physical image.** [`tests/fixtures/physical-oracle.ts`](../../../tests/fixtures/physical-oracle.ts) compares the key set and per-object SHA-256, permits only enumerated residue, and checks a surfaced error's `code` against the step's allow-list. Teach it a new layout before a test produces one.
 - **Prove the oracle goes red.** [`tests/unit/physical-oracle.test.ts`](../../../tests/unit/physical-oracle.test.ts) feeds it deliberately broken steps and requires a violation for each.
