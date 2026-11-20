@@ -1,0 +1,150 @@
+name: crash-fuzzer
+
+# The maintenance crash fuzzer (tests/integration/maintenance-crash-fuzz.test.ts)
+# at full volume, one job per test so each property gets its own runner and
+# its own evidence artifact. A green run on a PR's head SHA is the merge
+# evidence for a change to the commit path, compaction, GC or retirement;
+# see docs/contributing/development.md ("Crash fuzzer in CI").
+#
+# Run on demand via workflow_dispatch only.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or SHA to fuzz (default is the branch the workflow runs from).
+        required: false
+        default: ""
+        type: string
+      seed:
+        description: fast-check seed for every job (default is a fresh random seed, recorded in each artifact).
+        required: false
+        default: ""
+        type: string
+      num-runs:
+        description: FC_NUM_RUNS for every property.
+        required: false
+        default: "10000"
+        type: string
+
+# No cancel-in-progress: a fuzz run is evidence, and a cancelled run reads as
+# a failure. Runs against the same ref queue instead of killing each other.
+concurrency:
+  group: crash-fuzzer-${{ inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read # read-only: checkout and artifact upload only
+
+env:
+  FUZZ_FILE: tests/integration/maintenance-crash-fuzz.test.ts
+
+jobs:
+  # Resolves the ref to one SHA and one seed for every job, and enumerates
+  # the file's tests by collecting them (not from a hand-kept list), so a
+  # test added to the file gets a job automatically.
+  shards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      seed: ${{ steps.resolve.outputs.seed }}
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          # No step pushes; don't leave the token in .git/config while
+          # install scripts run.
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve commit and seed
+        id: resolve
+        env:
+          SEED_INPUT: ${{ inputs.seed }}
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          seed="$(node -e '
+            const input = process.argv[1] ?? "";
+            if (input === "") {
+              console.log(require("node:crypto").randomInt(-(2 ** 31), 2 ** 31));
+            } else if (/^-?\d+$/.test(input) && Number.isSafeInteger(Number(input))) {
+              console.log(Number(input));
+            } else {
+              console.error(`seed must be an integer, got ${JSON.stringify(input)}`);
+              process.exit(1);
+            }
+          ' "$SEED_INPUT")"
+          echo "seed=$seed" >> "$GITHUB_OUTPUT"
+
+      # `--no-staticParse` collects by running the file, so names built at
+      # runtime (`[memory]` / `[local-fs]` variants) resolve; the static
+      # parser reports them unexpanded.
+      - name: List tests
+        id: list
+        run: |
+          pnpm exec vitest list --project=default "$FUZZ_FILE" --no-staticParse --json="$RUNNER_TEMP/tests.json"
+          echo "matrix=$(node scripts/crash-fuzz-shards.ts matrix "$RUNNER_TEMP/tests.json")" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    needs: shards
+    name: ${{ matrix.shard.name }}
+    runs-on: ubuntu-latest
+    # A property stops itself at fast-check's deadline (PROP_INTERRUPT_MS,
+    # 9.5 min) and vitest's at 10 min; the rest is install and upload.
+    # GitHub-hosted jobs cap at 6 h, so this is the binding limit.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.shards.outputs.matrix) }}
+    steps:
+      # The resolved SHA, not the ref: every job fuzzes the same commit even
+      # if the branch moves mid-run.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.shards.outputs.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # An explicit --reporter so the log carries per-test output whatever
+      # vitest.config.ts selects; the JSON report feeds the evidence step.
+      # `shell: bash` adds pipefail, so `tee` can't mask vitest's exit code.
+      - name: Fuzz
+        shell: bash
+        env:
+          FC_NUM_RUNS: ${{ inputs.num-runs || '10000' }}
+          FC_SEED: ${{ needs.shards.outputs.seed }}
+          TEST_PATTERN: ${{ matrix.shard.pattern }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/crash-fuzz"
+          pnpm exec vitest run --project=default "$FUZZ_FILE" -t "$TEST_PATTERN" \
+            --reporter=verbose --reporter=json --outputFile.json="$RUNNER_TEMP/crash-fuzz/report.json" \
+            2>&1 | tee "$RUNNER_TEMP/crash-fuzz/vitest.log"
+
+      # Fails the job unless exactly one test ran, so a pattern that matched
+      # nothing can't pass green. `always()` (not `!cancelled()`) so a job
+      # that hits `timeout-minutes` still uploads its log.
+      - name: Record evidence
+        if: always()
+        env:
+          CRASH_FUZZ_SHA: ${{ needs.shards.outputs.sha }}
+          CRASH_FUZZ_TEST: ${{ matrix.shard.name }}
+          CRASH_FUZZ_PATTERN: ${{ matrix.shard.pattern }}
+          FC_NUM_RUNS: ${{ inputs.num-runs || '10000' }}
+          FC_SEED: ${{ needs.shards.outputs.seed }}
+        run: node scripts/crash-fuzz-shards.ts summarize "$RUNNER_TEMP/crash-fuzz/report.json" "$RUNNER_TEMP/crash-fuzz/evidence.json"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          # Test names contain characters artifact names refuse; the name
+          # is inside evidence.json.
+          name: crash-fuzz-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/crash-fuzz/
+          if-no-files-found: error
+          retention-days: 30
