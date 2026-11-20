@@ -680,7 +680,7 @@ export const runBoundedMaintenance = async (
     /** From `BAERLY_MAINTENANCE_DISABLE`: disable fold/GC phases, not tail_hint refresh. */
     disabled?: boolean;
     /**
-     * Forced tick (main-10 G6): the writing verb found the collection at
+     * Forced tick: the writing verb found the collection at
      * its growth-refusal point, so Gate 1's ratio trigger and entry floor
      * are bypassed and any pending tail folds. Every other step is
      * unchanged: the pre-fold ceiling check, the hard-GC guard, and the

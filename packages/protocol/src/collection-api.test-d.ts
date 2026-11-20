@@ -24,7 +24,7 @@ import type { PredicateArg, PredicateBuilder } from "./query/builder.ts";
 import type { DocumentData } from "./json.ts";
 
 // `Ticket` is a `type` intersection with `DocumentData` so it satisfies the
-// current `T extends DocumentData` constraint on `Predicate<T>`.  Task 2 will
+// current `T extends DocumentData` constraint on `Predicate<T>`.  A later change will
 // remove that constraint; at that point the intersection becomes a no-op and
 // the positive cases still compile, while the negative cases still fail.
 type Ticket = DocumentData & {

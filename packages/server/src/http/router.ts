@@ -662,7 +662,7 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
   return { status: 500, envelope: errorEnvelope("Internal", "internal error") };
 }
 
-// Early capacity warning (main-10 G7): a write the capacity check admitted
+// Early capacity warning: a write the capacity check admitted
 // near the host's refusal point stamped its text on the request's
 // canonical-line fields; surface it as a response header on the success
 // path. A refusal already carries its own envelope.

@@ -83,7 +83,7 @@ describe("defaultInstaller", () => {
   test("returns the child's non-zero exit code verbatim", async () => {
     // Overwrite the npm shim from beforeAll with a failing variant.
     // `Pm` is a closed union (`"npm" | "pnpm" | "yarn"`), so we can't
-    // introduce a fresh binary name without widening the type — task 2
+    // introduce a fresh binary name without widening the type — another test
     // exercises mock injection where dispatch is verified directly.
     const npmBin = join(binDir, "npm");
     await writeFile(npmBin, `#!/bin/sh\nexit 7\n`, "utf8");

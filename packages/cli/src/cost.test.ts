@@ -4,8 +4,7 @@
  * Provisions a fresh `LocalFsStorage` collection with N rows, runs
  * `runCost` programmatically, and asserts the projected trajectory
  * matches the requested provider's shape. Mirrors the trajectory
- * tests that used to live on `baerly inspect` before §G3 moved cost
- * projection behind its own verb.
+ * tests that used to live on `baerly inspect` before cost projection moved behind its own verb.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";

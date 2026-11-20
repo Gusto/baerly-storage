@@ -241,7 +241,7 @@ describe("request non-GET is never retried", () => {
   });
 });
 
-describe("request minted-insert transport retry (E3)", () => {
+describe("request minted-insert transport retry", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });

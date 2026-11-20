@@ -1,13 +1,13 @@
 /**
- * Staged read admission (main-2): a read whose work falls outside the
+ * Staged read admission: a read whose work falls outside the
  * serving host's read envelope is refused whole with `CapacityExceeded`,
  * never truncated, and a read inside it is served exactly as on any other
- * host (P1). Reads stay pure: a refusal writes nothing and dispatches no
+ * host. Reads stay pure: a refusal writes nothing and dispatches no
  * maintenance, so a read never carries `MaintenancePending`.
  *
  * Every read, index-covered or not, is a full fold: it takes membership
  * from the snapshot plus the log tail, never from an index LIST, so its
- * work is bounded by the full-fold bounds below (I1: materialized =
+ * work is bounded by the full-fold bounds below (materialized =
  * snapshot rows + tail entries). There is no index-specific bound.
  *
  * Two stages, both over the current layout (one snapshot plus the live

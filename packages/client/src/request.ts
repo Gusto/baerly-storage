@@ -46,8 +46,8 @@ export interface RequestOptions {
   /** `false` makes the request single-attempt, for callers that own their own retry loop. */
   readonly retry?: false;
   /**
-   * Marks a `POST` insert whose `_id` the SDK minted and sent as `mintedId`
-   * (E2). Only such a request may be resent after a transport failure: if the
+   * Marks a `POST` insert whose `_id` the SDK minted and sent as `mintedId`.
+   * Only such a request may be resent after a transport failure: if the
    * first attempt had committed, the server replays its `201 { _id }`.
    */
   readonly mintedInsert?: true;
@@ -219,9 +219,9 @@ const decodeFailure = async (
  * - **Transport, `GET` and minted inserts** (`REQUEST_RETRY_MAX_ATTEMPTS`):
  *   a thrown `fetch` or an envelope-less 5xx, 408 or 429. A minted insert
  *   (`mintedInsert`) is resent with the same serialized body, so a commit
- *   the failure hid replays as `201 { _id }` (E2) instead of adding a row.
+ *   the failure hid replays as `201 { _id }` instead of adding a row.
  *   Every other non-`GET` (caller-`_id` insert, update, replace, delete) is
- *   sent once for these (E3). An enveloped `NetworkError` is never
+ *   sent once for these. An enveloped `NetworkError` is never
  *   retried: the server adapter already retried it. No other enveloped
  *   code is retried, bar `MaintenancePending` below.
  * - **`MaintenancePending`, every verb**

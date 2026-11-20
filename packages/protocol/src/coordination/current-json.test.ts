@@ -1309,7 +1309,7 @@ describe("assertCurrentJson — log_delete_floor guard", () => {
     expect(got!.json.log_delete_floor).toBe(100);
   });
 
-  // The R1 ruling, pinned: a floor ABOVE `log_seq_start` reads back clean.
+  // Pinned: a floor ABOVE `log_seq_start` reads back clean.
   // Fail-safe direction is stall, not lockout — and this is what makes the
   // clamp in the `Db` read seam reachable and testable.
   plainTest("accepts log_delete_floor above log_seq_start (transition-scoped bound)", async () => {

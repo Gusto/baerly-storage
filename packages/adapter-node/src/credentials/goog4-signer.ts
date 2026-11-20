@@ -229,7 +229,7 @@ export function goog4Signer(opts: Goog4SignerOptions): (req: Request) => Promise
     // SignedHeaders MUST be computed dynamically from the request — this is the
     // load-bearing correctness point. GCS rejects (403 SignatureDoesNotMatch)
     // any x-goog-* header on the wire that is absent from SignedHeaders, and the
-    // transport (Task 1.1) sets x-goog-if-generation-match BEFORE calling sign().
+    // transport sets x-goog-if-generation-match BEFORE calling sign().
     // A fixed list would leave the precondition header unsigned → every
     // conditional write (the whole commit path) fails, while a bodyless GET
     // still passes — so this bug hides from any smoke test that does not

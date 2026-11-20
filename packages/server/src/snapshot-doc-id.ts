@@ -13,7 +13,7 @@ const SNAPSHOT_DOC_ID_RESOLUTION =
  *
  * The accepted set is the document-ID domain for snapshot formats, and
  * `MAX_SEGMENT_BYTES` (`path-segment.ts`) is one of its inputs:
- * the format contract fixes the byte ceiling at 256, so changing that
+ * the snapshot format fixes the byte ceiling at 256, so changing that
  * constant is a format change, not a policy tweak.
  *
  * @throws BaerlyError code="InvalidConfig" — the id breaks the key-segment

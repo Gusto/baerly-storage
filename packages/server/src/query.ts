@@ -389,7 +389,7 @@ interface FoldedState {
 /**
  * Throw the refusal `decision` carries: `MaintenancePending` when the
  * pending tail would make room once it folds, after dispatching one forced
- * fold pass (G6, fold-then-refuse) through the request's maintenance
+ * fold pass (fold-then-refuse) through the request's maintenance
  * dispatch, so on Cloudflare it runs in `ctx.waitUntil` like any write
  * tick; otherwise `CapacityExceeded`. Under `BAERLY_MAINTENANCE_DISABLE`
  * nothing can fold, so the refusal stays `CapacityExceeded`.
@@ -434,14 +434,14 @@ interface Admission {
    */
   skipped(): void;
   /**
-   * Run the batch's forced write tick (G6) when its last planned write was
+   * Run the batch's forced write tick when its last planned write was
    * skipped: that write's commit would have carried the tick, so the rows
    * that did commit under pressure would otherwise leave the fold undone.
    * The verb calls it once after its commit loop.
    */
   settle(): Promise<void>;
   /**
-   * Stamp the early capacity warning (G7) on the canonical line, from the
+   * Stamp the early capacity warning on the canonical line, from the
    * latest decision: the pre-commit one, or the last commit-time re-check.
    * The verb calls it once its commits have landed, so a write that
    * throws carries no warning.
@@ -526,7 +526,7 @@ const EMPTY_HEAD = { snapshot_rows: 0, snapshot_bytes: 0, log_seq_start: 0 } as 
  *   row's window of the same batch) is re-decided from the newest version,
  *   or skipped; see {@link VerbWrite}. A rebased post-image is the verdict's `body`,
  *   so the writer commits it.
- * - **Capacity (main-10 G5-race).** An empty window with no rebase means
+ * - **Capacity (commit-time re-check).** An empty window with no rebase means
  *   nothing intervened, so the decision stands as made and nothing is
  *   recomputed. Otherwise the decision re-runs over the read's tail plus
  *   the window, for the planned writes not yet committed (this one with
@@ -579,7 +579,7 @@ const admitWrites = async (
   let pending = 0;
   // The window of the latest `check` call: on commit, `[fromSeq, seq)`.
   let lastWindow: readonly LogEntry[] = [];
-  // The latest decision's G6 pressure, and the batch's last own commit.
+  // The latest decision's forced-tick pressure, and the batch's last own commit.
   let pressure = forceMaintenance;
   let lastCommitted: LogEntry | undefined;
   let lastSkipped = false;
@@ -624,7 +624,7 @@ const admitWrites = async (
     if (decision.refusal !== undefined) {
       return await throwRefusal(ctx, decision, tail);
     }
-    // Re-derive the forced tick (G6) from the state the commit lands on.
+    // Re-derive the forced tick from the state the commit lands on.
     // It rides the batch's last commit only, as the pre-commit flag does.
     warning = decision.warning;
     pressure = decision.pressure;
@@ -681,7 +681,7 @@ const admitWrites = async (
 /**
  * `write` with `before` re-read from the latest entry for its row in
  * `tail`, when there is one: an intervening commit may have changed the
- * row, so growth (G3) is judged against the row as it now stands. A row an
+ * row, so growth is judged against the row as it now stands. A row an
  * intervening `D` removed has no `before`, which counts as growth (fails
  * closed).
  */

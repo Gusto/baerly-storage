@@ -36,7 +36,7 @@ const compareCodePointArrays = (left: string, right: string): number => {
   return sign(leftPoints.length - rightPoints.length);
 };
 
-// The format contract hard-codes this ceiling; it is restated, not imported.
+// The snapshot format hard-codes this ceiling; it is restated, not imported.
 const CONTRACT_MAX_ID_BYTES = 256;
 // eslint-disable-next-line no-control-regex -- intentional control-char class
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
@@ -157,16 +157,16 @@ describe("assertSnapshotDocId", () => {
     expect(rejectionCode(id)).toBeUndefined();
   });
 
-  test("MAX_SEGMENT_BYTES is the format contract's 256-byte ID ceiling", () => {
-    // format-contract §"Document-ID domain and `utf8-scalar-v1` order" fixes
-    // IDs at "at most 256 UTF-8 bytes". Changing the constant changes the
+  test("MAX_SEGMENT_BYTES is the snapshot format's 256-byte ID ceiling", () => {
+    // The document-ID domain of `utf8-scalar-v1` order caps IDs at
+    // 256 UTF-8 bytes. Changing the constant changes the
     // durable ID domain: that is a format change, not a policy tweak.
     expect(MAX_SEGMENT_BYTES).toBe(256);
   });
 });
 
 describe("compareDocIds", () => {
-  // The format contract's ordering vector, in `utf8-scalar-v1` order.
+  // The snapshot format's ordering vector, in `utf8-scalar-v1` order.
   const orderingTable = [
     ["A", "41"],
     ["a", "61"],
@@ -178,7 +178,7 @@ describe("compareDocIds", () => {
     ["\u{1f600}", "f09f9880"],
   ] as const;
 
-  test("pins the format contract's ordering table and UTF-8 hex", () => {
+  test("pins the snapshot format's ordering table and UTF-8 hex", () => {
     const ids = orderingTable.map(([id]) => id);
     for (const [id, hex] of orderingTable) {
       expect(Buffer.from(id, "utf8").toString("hex")).toBe(hex);
