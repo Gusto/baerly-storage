@@ -18,6 +18,7 @@ import { BaerlyError } from "@baerly/protocol";
 import type { ChunkKey } from "./chunk.ts";
 import type { TreeChildEntry } from "./node-codec.ts";
 import type { LiveTreeRef, TreePublicationWrite } from "./publish.ts";
+import type { TreeRange, TreeTail, TreeTailRead } from "./read.ts";
 
 /** Leaf target size: 16 KiB. */
 const LEAF_TARGET_BYTES = 16 * 1024;
@@ -223,10 +224,10 @@ export const TREE_LAYOUT_RULES: readonly TreeLayoutRule[] = Object.freeze([
  * Tree code reads each step from a {@link TreeConfig}, so a mutant passed
  * to {@link createTreeConfig} reaches every caller of that config.
  *
- * The optional members are the canonical builder's, fold planner's and
- * publisher's steps. When one is absent, the module that runs it uses
- * its own built-in step, which keeps this module free of a runtime
- * import of those modules.
+ * The optional members are the canonical builder's, fold planner's,
+ * publisher's and reader's steps. When one is absent, the module that
+ * runs it uses its own built-in step, which keeps this module free of a
+ * runtime import of those modules.
  */
 export interface TreeSteps {
   /** The rules a layout must satisfy. */
@@ -298,6 +299,21 @@ export interface TreeSteps {
    * for byte.
    */
   readonly adoptionBytesMatch?: (stored: Uint8Array, created: Uint8Array) => boolean;
+  /**
+   * The reader's tail step: walk and probe the unfolded log tail of the
+   * head it is given, and fold it into a per-`_id` overlay.
+   */
+  readonly readTail?: (read: TreeTailRead) => Promise<TreeTail>;
+  /** The entries of a branch a read descends into for `range`. */
+  readonly selectChildren?: (
+    children: readonly TreeChildEntry[],
+    range: TreeRange,
+  ) => readonly TreeChildEntry[];
+  /**
+   * Whether a complete scan whose base needs `charged` storage calls,
+   * every attempt counted, is admitted when the request has `left`.
+   */
+  readonly admitsScan?: (charged: number, left: number) => boolean;
 }
 
 /** Whether two byte arrays hold the same bytes. */

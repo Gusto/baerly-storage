@@ -8,12 +8,14 @@
  * Add a mutant here, and a member to `TreeSteps` for the step it
  * replaces, rather than editing tree code to inject a defect.
  */
+import { encodeJsonBytes } from "@baerly/protocol";
 import { branchHashCuts, chunkHash } from "../../packages/server/src/tree/chunk.ts";
 import {
   TREE_LAYOUT_RULES,
   type TreeConstructorOptions,
 } from "../../packages/server/src/tree/layout.ts";
 import { sortMutationsById } from "../../packages/server/src/tree/plan.ts";
+import { readTreeTail } from "../../packages/server/src/tree/read.ts";
 
 export interface TreeMutant {
   /** Stable name for test titles. */
@@ -236,4 +238,70 @@ export const PUBLISH_MUTANTS: readonly TreeMutant[] = [
   PUBLISH_HEAD_BEFORE_NODES,
   PUBLISH_REUSES_UNPROVEN_REF,
   PUBLISH_ADOPTS_WITHOUT_COMPARE,
+];
+
+// ---------------------------------------------------------------------
+// Reader
+// ---------------------------------------------------------------------
+
+/**
+ * A reader that refreshes the head's `tail_hint` to the tail it probed,
+ * as a write tick does: a read that writes.
+ */
+export const READ_REFRESHES_TAIL_HINT: TreeMutant = {
+  name: "read-refreshes-tail-hint",
+  defect: "a read writes the head (a tail-hint refresh)",
+  options: {
+    steps: {
+      readTail: async (read) => {
+        const tail = await readTreeTail(read);
+        const { head } = read;
+        await read.storage.put(
+          head.key,
+          encodeJsonBytes({ ...head.json, tail_hint: Math.max(head.json.tail_hint, tail.tail) }),
+          { ifMatch: head.etag },
+        );
+        return tail;
+      },
+    },
+  },
+};
+
+/** A reader whose tail overlay drops deletes, so a base row shows through a tail `D`. */
+export const READ_IGNORES_TAIL_DELETES: TreeMutant = {
+  name: "read-ignores-tail-deletes",
+  defect: "the tail overlay drops deletes",
+  options: {
+    steps: {
+      readTail: async (read) => {
+        const tail = await readTreeTail(read);
+        return {
+          tail: tail.tail,
+          overlay: new Map([...tail.overlay].filter(([, doc]) => doc !== null)),
+        };
+      },
+    },
+  },
+};
+
+/** A reader that descends every child of every branch, so a point read loads every leaf. */
+export const READ_DESCENDS_EVERY_CHILD: TreeMutant = {
+  name: "read-descends-every-child",
+  defect: "routing selects every child entry, not the ones whose range intersects the read",
+  options: { steps: { selectChildren: (children) => children } },
+};
+
+/** A reader with no scan admission check: an over-ledger scan runs until the ledger refuses a GET. */
+export const SCAN_SKIPS_ADMISSION: TreeMutant = {
+  name: "scan-skips-admission",
+  defect: "a complete scan is admitted whatever its bound and the ledger left",
+  options: { steps: { admitsScan: () => true } },
+};
+
+/** The reader mutants the read acceptance suite must catch. */
+export const READ_MUTANTS: readonly TreeMutant[] = [
+  READ_REFRESHES_TAIL_HINT,
+  READ_IGNORES_TAIL_DELETES,
+  READ_DESCENDS_EVERY_CHILD,
+  SCAN_SKIPS_ADMISSION,
 ];
