@@ -47,7 +47,8 @@
  *
  * Runs under default `FC_NUM_RUNS=100` on `pnpm test`. The cranked
  * variant `pnpm test:fuzz-maintenance` (`FC_NUM_RUNS=10000`) is the
- * intended thorough sweep.
+ * intended thorough sweep. Every test stays selectable on its own with
+ * `-t`.
  *
  * Test-only. The control-flow-level kill points complement
  * `tests/integration/randomized.test.ts`'s transport-level
@@ -112,6 +113,56 @@ beforeEach(() => {
  * modern laptop.
  */
 const PROP_TIMEOUT_MS = 600_000;
+
+/**
+ * fast-check's own deadline for a whole property, set inside
+ * {@link PROP_TIMEOUT_MS} so fast-check stops first and reports the seed. A
+ * vitest timeout reports no seed, and the abandoned iterations keep running.
+ */
+const PROP_INTERRUPT_MS = PROP_TIMEOUT_MS - 30_000;
+
+/**
+ * Per-case deadline. A case takes milliseconds; one still pending after
+ * this is a hang, reported as a failing case with its seed and path.
+ */
+const CASE_TIMEOUT_MS = 60_000;
+
+/**
+ * `FC_SEED` (and optionally `FC_PATH`, copied from a failure report) replay
+ * a failing run: `FC_SEED=<seed> FC_PATH=<path> pnpm test:agent
+ * tests/integration/maintenance-crash-fuzz.test.ts -t '<pattern>'`, where
+ * `<pattern>` is a regex selecting one test. Both unset keeps fast-check's
+ * per-run random seed.
+ */
+const replayParams = (): { seed?: number; path?: string } => {
+  const seed = process.env["FC_SEED"];
+  const path = process.env["FC_PATH"];
+  if (seed === undefined || seed === "") {
+    if (path !== undefined && path !== "") {
+      throw new Error("FC_PATH needs the FC_SEED it was reported with");
+    }
+    return {};
+  }
+  const parsed = Number(seed);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`FC_SEED must be an integer, got ${JSON.stringify(seed)}`);
+  }
+  return path === undefined || path === "" ? { seed: parsed } : { seed: parsed, path };
+};
+
+/**
+ * Run parameters shared by every property in this file. A deadline hit is
+ * a failure (`markInterruptAsFailure`), never a quiet partial pass.
+ */
+const FC_PARAMS: Pick<
+  fc.Parameters,
+  "interruptAfterTimeLimit" | "markInterruptAsFailure" | "timeout" | "seed" | "path"
+> = {
+  interruptAfterTimeLimit: PROP_INTERRUPT_MS,
+  markInterruptAsFailure: true,
+  timeout: CASE_TIMEOUT_MS,
+  ...replayParams(),
+};
 
 const TABLE_PREFIX = "app/a/tenant/t/manifests/c";
 const CURRENT_JSON_KEY = `${TABLE_PREFIX}/current.json`;
@@ -404,12 +455,15 @@ describe("Writer empty-tail abort at the committing log PUT", () => {
 
 describe("Writer crash never leaves readable phantom row", () => {
   expectPostApplyFired("writer");
-  propTest.prop({
-    opPick: opPickArb,
-    fault: faultKindArb,
-    numInsertsBefore: fc.integer({ min: 0, max: 30 }),
-    docId: shortWritableDocIdArb(8),
-  })(
+  propTest.prop(
+    {
+      opPick: opPickArb,
+      fault: faultKindArb,
+      numInsertsBefore: fc.integer({ min: 0, max: 30 }),
+      docId: shortWritableDocIdArb(8),
+    },
+    FC_PARAMS,
+  )(
     "Db.commit() with a mid-op fault: insert is fully absent OR fully landed",
     async ({ opPick, fault, numInsertsBefore, docId }) => {
       const inner = new MemoryStorage();
@@ -495,11 +549,14 @@ describe("Writer crash never leaves readable phantom row", () => {
 
 describe("Compactor crash never leaves readable corrupt snapshot", () => {
   expectPostApplyFired("compact");
-  propTest.prop({
-    opPick: opPickArb,
-    fault: faultKindArb,
-    numInserts: fc.integer({ min: 20, max: 60 }),
-  })(
+  propTest.prop(
+    {
+      opPick: opPickArb,
+      fault: faultKindArb,
+      numInserts: fc.integer({ min: 20, max: 60 }),
+    },
+    FC_PARAMS,
+  )(
     "compact() with a mid-op fault: reader returns the same set pre- and post-crash",
     async ({ opPick, fault, numInserts }) => {
       const inner = new MemoryStorage();
@@ -541,11 +598,14 @@ describe("Compactor crash never leaves readable corrupt snapshot", () => {
 
 describe("GC crash never deletes a still-referenced key", () => {
   expectPostApplyFired("gc");
-  propTest.prop({
-    opPick: opPickArb,
-    fault: faultKindArb,
-    numInserts: fc.integer({ min: 20, max: 60 }),
-  })(
+  propTest.prop(
+    {
+      opPick: opPickArb,
+      fault: faultKindArb,
+      numInserts: fc.integer({ min: 20, max: 60 }),
+    },
+    FC_PARAMS,
+  )(
     "runGc() with a mid-op fault: reader still returns all live rows",
     async ({ opPick, fault, numInserts }) => {
       const inner = new MemoryStorage();
@@ -591,12 +651,15 @@ describe("GC crash never deletes a still-referenced key", () => {
 
 describe("GC pass bounded by its grace", () => {
   const B = GC_SWEEP_DELETE_BATCH_KEYS;
-  propTest.prop({
-    numOrphans: fc.integer({ min: 1, max: 2 * B + 20 }),
-    // 0 = when the fresh `current.json` read resolves; k = when the k-th
-    // DELETE resolves. Multiples of B land exactly between batches.
-    crossAt: fc.oneof(fc.integer({ min: 0, max: 2 * B + 20 }), fc.constantFrom(B, 2 * B)),
-  })(
+  propTest.prop(
+    {
+      numOrphans: fc.integer({ min: 1, max: 2 * B + 20 }),
+      // 0 = when the fresh `current.json` read resolves; k = when the k-th
+      // DELETE resolves. Multiples of B land exactly between batches.
+      crossAt: fc.oneof(fc.integer({ min: 0, max: 2 * B + 20 }), fc.constantFrom(B, 2 * B)),
+    },
+    FC_PARAMS,
+  )(
     "no DELETE is issued once the pass outlives GC_PASS_GRACE_FRACTION of the grace",
     async ({ numOrphans, crossAt: rawCrossAt }) => {
       const crossAt = Math.min(rawCrossAt, numOrphans);
@@ -681,11 +744,14 @@ describe("GC pass bounded by its grace", () => {
 
 describe("Retirement crash never deletes a live log", () => {
   expectPostApplyFired("retire");
-  propTest.prop({
-    opPick: opPickArb,
-    fault: faultKindArb,
-    numInserts: fc.integer({ min: 20, max: 60 }),
-  })(
+  propTest.prop(
+    {
+      opPick: opPickArb,
+      fault: faultKindArb,
+      numInserts: fc.integer({ min: 20, max: 60 }),
+    },
+    FC_PARAMS,
+  )(
     "retireLogRange() with a mid-op fault: reader still returns all live rows",
     async ({ opPick, fault, numInserts }) => {
       const inner = new MemoryStorage();
@@ -740,11 +806,14 @@ describe("Retirement crash never deletes a live log", () => {
 
 describe("Write-tick fold crash preserves the reader view after GC", () => {
   expectPostApplyFired("fold-then-gc");
-  propTest.prop({
-    opPick: opPickArb,
-    fault: faultKindArb,
-    numInserts: fc.integer({ min: 20, max: 60 }),
-  })(
+  propTest.prop(
+    {
+      opPick: opPickArb,
+      fault: faultKindArb,
+      numInserts: fc.integer({ min: 20, max: 60 }),
+    },
+    FC_PARAMS,
+  )(
     "fault the K-th op across the fold, then runGc: live rows survive",
     async ({ opPick, fault, numInserts }) => {
       const inner = new MemoryStorage();
@@ -803,9 +872,12 @@ describe("Write-tick fold crash preserves the reader view after GC", () => {
 });
 
 describe("Lost-fold orphan snapshot reclaimed under contention", () => {
-  propTest.prop({
-    numInserts: fc.integer({ min: 20, max: 50 }),
-  })(
+  propTest.prop(
+    {
+      numInserts: fc.integer({ min: 20, max: 50 }),
+    },
+    FC_PARAMS,
+  )(
     "a fold that loses its CAS to a concurrent write leaves an orphan snapshot that runGc reclaims past grace",
     async ({ numInserts }) => {
       const inner = new MemoryStorage();
@@ -1015,7 +1087,7 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
             await expectMaintenanceConverges(inner, [...ids].toSorted());
           },
         ),
-        { numRuns: 200 },
+        { ...FC_PARAMS, numRuns: 200 },
       );
     },
   );
@@ -1308,11 +1380,14 @@ describe("single-write commit — win-or-lose-cleanly", () => {
      * writer honors first-empty-slot via the forward-probe; the storage
      * layer can't enforce this, so assert it directly.
      */
-    propTest.prop({
-      seeds: fc.integer({ min: 2, max: 12 }),
-      abortAfter: fc.integer({ min: 1, max: 10 }),
-      fault: faultKindArb,
-    })(
+    propTest.prop(
+      {
+        seeds: fc.integer({ min: 2, max: 12 }),
+        abortAfter: fc.integer({ min: 1, max: 10 }),
+        fault: faultKindArb,
+      },
+      FC_PARAMS,
+    )(
       `[${variant.label}] density invariant: no interior log holes under crash injection`,
       async ({ seeds, abortAfter, fault }) => {
         const { storage, cleanup } = await variant.build();
