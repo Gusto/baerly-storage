@@ -6,6 +6,7 @@
 // are no defaults: a missing or null field is an error. Any mismatch between
 // the capture and the declaration is a FAIL with the reason, never a pass.
 import {
+  type AnalyzeOptions,
   type Analysis,
   type CellRow,
   PERCENTILE_METHODS,
@@ -18,6 +19,11 @@ export interface Prereg {
   readonly sampleFloor: number;
   readonly p99ThresholdMs: number;
   readonly percentileMethod: PercentileMethod;
+  /**
+   * Whether ok invocations that log `"cold":true` (first request in an
+   * isolate) count toward n ok and p99. Cold kills count as kills either way.
+   */
+  readonly coldInvocations: ColdPolicy;
   readonly capture: {
     /** Non-warmup requests per decision cell (`run-cells.sh` N). */
     readonly requestsPerCell: number;
@@ -28,11 +34,15 @@ export interface Prereg {
   };
 }
 
+export type ColdPolicy = "exclude" | "include";
+const COLD_POLICIES: readonly ColdPolicy[] = ["exclude", "include"];
+
 const TOP_KEYS = new Set([
   "decisionCells",
   "sampleFloor",
   "p99ThresholdMs",
   "percentileMethod",
+  "coldInvocations",
   "capture",
 ]);
 const CAPTURE_KEYS = new Set(["requestsPerCell", "warmupsPerCell", "concurrency"]);
@@ -73,6 +83,12 @@ export const parsePrereg = (raw: unknown): Prereg => {
   if (!PERCENTILE_METHODS.includes(method as PercentileMethod)) {
     errs.push(
       `percentileMethod must be one of ${PERCENTILE_METHODS.join(", ")} (got ${JSON.stringify(method)})`,
+    );
+  }
+  const cold = raw["coldInvocations"];
+  if (!COLD_POLICIES.includes(cold as ColdPolicy)) {
+    errs.push(
+      `coldInvocations must be one of ${COLD_POLICIES.join(", ")} (got ${JSON.stringify(cold)})`,
     );
   }
   const cells = raw["decisionCells"];
@@ -156,12 +172,23 @@ const requestIdMismatches = (name: string, row: CellRow, n: number): string[] =>
   return out;
 };
 
-/** Apply the declared rule to an analysis made with `prereg.percentileMethod`. */
+/** Analyzer options a preregistration fixes. */
+export const analyzeOptionsOf = (p: Prereg): AnalyzeOptions => ({
+  method: p.percentileMethod,
+  includeCold: p.coldInvocations === "include",
+});
+
+/** Apply the declared rule to an analysis made with `analyzeOptionsOf(prereg)`. */
 export const evaluatePrereg = (a: Analysis, p: Prereg): PreregVerdict => {
   const failures: string[] = [];
   if (a.method !== p.percentileMethod) {
     failures.push(
       `analysis used percentile method ${a.method}, prereg declares ${p.percentileMethod}`,
+    );
+  }
+  if (a.coldIncluded !== (p.coldInvocations === "include")) {
+    failures.push(
+      `analysis ${a.coldIncluded ? "included" : "excluded"} cold invocations, prereg declares ${p.coldInvocations}`,
     );
   }
   const unattributed = a.incomplete.filter((i) => i.cell === null);
@@ -227,15 +254,18 @@ export const formatPrereg = (a: Analysis, p: Prereg, v: PreregVerdict): string =
     "",
     "PREREGISTERED VERDICT",
     `Percentile method: ${p.percentileMethod === "r7" ? "R-7 (linear interpolation, Hyndman-Fan type 7)" : "nearest-rank"}`,
+    p.coldInvocations === "include"
+      ? 'Cold invocations ("cold":true): INCLUDED in n ok and p99, as declared.'
+      : 'Cold invocations ("cold":true): EXCLUDED from n ok and p99, as declared, so a slow cold start cannot fail a cell by p99; a killed cold invocation still counts as a kill. Events without the CPUFACTOR log line cannot be tagged cold and count as warm.',
     `Declared: sample floor ${p.sampleFloor} ok; p99 threshold ${p.p99ThresholdMs} ms; ${p.capture.requestsPerCell} requests + ${p.capture.warmupsPerCell} warmups per cell; concurrency ${p.capture.concurrency} (not observable in the capture, taken as declared)`,
     "Rule per decision cell: no incomplete events, killed = 0, other = 0, n ok >= floor, p99 <= threshold. Overall: any decision cell passes and no run-level mismatch.",
     "Warmups (&warmup=1) are excluded from every check by preregistration; their kills and other outcomes are listed, never counted.",
-    "cell | n ok | killed | other | missing outcome | incomplete | warmups killed / other | p99 ms | result",
+    "cell | n ok | killed | other | cold | missing outcome | incomplete | warmups killed / other | p99 ms | result",
   ];
   for (const c of v.cells) {
     const r = c.row;
     out.push(
-      `${c.cell} | ${r?.n ?? 0} | ${r?.killed ?? 0} | ${r?.other ?? 0} | ${a.incomplete.filter((i) => i.cell === c.cell && i.missing.includes("outcome")).length} | ${c.incomplete} | ${r?.warmupKilled ?? 0} / ${r?.warmupOther ?? 0} | ${f2(r?.d.p99 ?? Number.NaN)} | ${c.pass ? "PASS" : `FAIL (${c.reasons.join("; ")})`}`,
+      `${c.cell} | ${r?.n ?? 0} | ${r?.killed ?? 0} | ${r?.other ?? 0} | ${r?.cold ?? 0} | ${a.incomplete.filter((i) => i.cell === c.cell && i.missing.includes("outcome")).length} | ${c.incomplete} | ${r?.warmupKilled ?? 0} / ${r?.warmupOther ?? 0} | ${f2(r?.d.p99 ?? Number.NaN)} | ${c.pass ? "PASS" : `FAIL (${c.reasons.join("; ")})`}`,
     );
   }
   out.push(

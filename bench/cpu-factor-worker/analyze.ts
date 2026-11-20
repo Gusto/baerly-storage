@@ -227,6 +227,8 @@ export interface Analysis {
   readonly missingOutcome: number;
   /** Percentile method behind every p50/p90/p99 in this analysis. */
   readonly method: PercentileMethod;
+  /** Whether `"cold":true` ok invocations are samples (only a preregistration sets this). */
+  readonly coldIncluded: boolean;
   /** Non-warmup events missing a parseable URL, an outcome or a CPU time. */
   readonly incomplete: IncompleteEvent[];
   readonly rows: CellRow[];
@@ -279,6 +281,12 @@ interface Slot {
 export interface AnalyzeOptions {
   /** Defaults to nearest-rank; a preregistration selects one explicitly. */
   readonly method?: PercentileMethod;
+  /**
+   * Count invocations that log `"cold":true` as samples. Defaults to false
+   * (warm-isolate); a preregistration declares it explicitly. Cold kills are
+   * kills either way.
+   */
+  readonly includeCold?: boolean;
 }
 
 export const analyze = (
@@ -287,6 +295,7 @@ export const analyze = (
   options: AnalyzeOptions = {},
 ): Analysis => {
   const method = options.method ?? "nearest-rank";
+  const includeCold = options.includeCold ?? false;
   const q = (xs: readonly number[], p: number) => percentile(xs, p, method);
   const median = (xs: readonly number[]) => q(xs, 50);
   const incomplete: IncompleteEvent[] = [];
@@ -380,7 +389,9 @@ export const analyze = (
     }
     if (line?.["cold"] === true) {
       slot.cold++;
-      continue;
+      if (!includeCold) {
+        continue;
+      }
     }
     const cpu = cpuOf(e);
     if (typeof cpu !== "number") {
@@ -564,6 +575,7 @@ export const analyze = (
     missingCpu,
     missingOutcome,
     method,
+    coldIncluded: includeCold,
     incomplete,
     rows,
     noop: { deployed: noopDep, node: noopNode },
@@ -613,6 +625,11 @@ export const formatReport = (a: Analysis): string => {
   out.push(
     `Node baseline: ${a.baselineHost}, ${a.baselineSamples} samples per cell`,
     `Events parsed: ${a.events}; unmatched: ${a.unmatched}; missing cpuTime: ${a.missingCpu}; missing outcome: ${a.missingOutcome}`,
+    ...(a.coldIncluded
+      ? [
+          'COLD-INCLUSIVE: the preregistration counts "cold":true invocations as samples, so the warm-isolate wording below does not apply.',
+        ]
+      : []),
     "",
     "Cell CPU below is warm-isolate (cold invocations dropped), not a cold-start cost.",
     "cell | n ok | killed | other | deployed p50 / p90 / p99 ms | node p50 / p99 ms | factor p50 | factor p99 | factor p50 net of noop",
