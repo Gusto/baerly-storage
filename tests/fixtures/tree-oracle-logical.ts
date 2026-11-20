@@ -65,11 +65,20 @@
  * wedges the fold. An `I`/`U` without
  * `after` and an entry with an unknown `op` are corrupt candidates: they
  * replace the row like any write, and throw only if nothing later in range
- * supersedes them. A survivor's `_id` must be a well-formed Unicode string
- * equal to its body's own `_id`, and its body must be a non-array object
- * holding only strings, finite numbers, booleans, arrays and objects (no
- * `null`). A violation throws `BaerlyError{code:"InvalidResponse"}` naming
- * the seq (or `base`) and the JSON-escaped `_id`.
+ * supersedes them. A violation by a survivor throws
+ * `BaerlyError{code:"InvalidResponse"}` naming the seq (or `base`) and the
+ * JSON-escaped `_id`. The rules are restated here rather than imported, so the oracle stays
+ * independent of the kernel validators (`assertSnapshotDocId` in
+ * `packages/server/src/snapshot-doc-id.ts`, `assertDocumentSize`):
+ *
+ * - The `_id` is a Unicode scalar string (no unpaired surrogate), non-empty,
+ *   at most {@link DOC_ID_MAX_UTF8_BYTES} UTF-8 bytes, with no `/`, not `.`
+ *   or `..`, no C0, DEL or C1 control character, and no leading `_`.
+ * - The body is a plain non-array object whose own `_id` equals the row's.
+ * - Every value is a string, finite number, boolean, array or plain object:
+ *   no `null`, `undefined`, function, symbol, bigint, accessor property or
+ *   array hole.
+ * - The body's canonical bytes are at most {@link MAX_DOCUMENT_BYTES}.
  *
  * An entry with no string `doc_id` names no row, so no later entry can
  * supersede it. The oracle skips it, as both production folds do: refusing
@@ -209,6 +218,12 @@ export const compareUtf8 = (left: string, right: string): number => {
 
 const utf8 = new TextEncoder();
 
+/** Per-`_id` UTF-8 byte ceiling (restates the kernel's 256-byte `_id` ceiling). */
+export const DOC_ID_MAX_UTF8_BYTES = 256;
+
+/** Canonical-byte ceiling for one row: 1 MiB (`MAX_DOCUMENT_BYTES` in `packages/protocol/src/constants.ts`). */
+export const MAX_DOCUMENT_BYTES = 1_048_576;
+
 /** A row's current candidate: a body, or a corrupt write that throws if it survives. */
 type LiveRow =
   | { readonly body: DocumentData; readonly origin: string }
@@ -331,9 +346,38 @@ const domainError = (origin: number | string, id: unknown, problem: string): Bae
     `logical oracle: ${typeof origin === "number" ? `seq ${origin}` : origin} _id ${JSON.stringify(id)} ${problem}`,
   );
 
-const assertSurvivor = (id: string, body: DocumentData, origin: string): void => {
+const docIdProblem = (id: string): string | undefined => {
   if (!id.isWellFormed()) {
-    throw domainError(origin, id, "is not a Unicode scalar string");
+    return "is not a Unicode scalar string";
+  }
+  if (id.length === 0) {
+    return "is empty";
+  }
+  if (id === "." || id === "..") {
+    return 'is "." or ".."';
+  }
+  if (id.startsWith("_")) {
+    return 'begins with "_"';
+  }
+  for (const char of id) {
+    const point = char.codePointAt(0)!;
+    if (char === "/") {
+      return 'contains "/"';
+    }
+    if (point <= 0x1f || (point >= 0x7f && point <= 0x9f)) {
+      return "contains a control character";
+    }
+  }
+  if (utf8.encode(id).length > DOC_ID_MAX_UTF8_BYTES) {
+    return `is over ${DOC_ID_MAX_UTF8_BYTES} UTF-8 bytes`;
+  }
+  return undefined;
+};
+
+const assertSurvivor = (id: string, body: DocumentData, origin: string): void => {
+  const idProblem = docIdProblem(id);
+  if (idProblem !== undefined) {
+    throw domainError(origin, id, idProblem);
   }
   if (!isPlainObject(body)) {
     throw domainError(origin, id, "has a body that is not a JSON object");
@@ -342,6 +386,10 @@ const assertSurvivor = (id: string, body: DocumentData, origin: string): void =>
     throw domainError(origin, id, `has a body whose _id is ${JSON.stringify(body["_id"])}`);
   }
   assertDocumentValue(body, origin, id);
+  const bytes = utf8.encode(JSON.stringify(copyDocument(body))).length;
+  if (bytes > MAX_DOCUMENT_BYTES) {
+    throw domainError(origin, id, `has ${bytes} canonical bytes, over ${MAX_DOCUMENT_BYTES}`);
+  }
 };
 
 const assertDocumentValue = (value: unknown, origin: string, id: string): void => {
@@ -355,18 +403,35 @@ const assertDocumentValue = (value: unknown, origin: string, id: string): void =
     return;
   }
   if (Array.isArray(value)) {
-    for (const item of value) {
-      assertDocumentValue(item, origin, id);
+    for (let index = 0; index < value.length; index++) {
+      assertOwnDataProperty(value, String(index), origin, id);
     }
     return;
   }
   if (isPlainObject(value)) {
     for (const key of Object.keys(value)) {
-      assertDocumentValue(value[key], origin, id);
+      assertOwnDataProperty(value, key, origin, id);
     }
     return;
   }
   throw domainError(origin, id, `holds a ${value === null ? "null" : typeof value} value`);
+};
+
+/** Check a property's value without running a getter: accessors and holes are refused. */
+const assertOwnDataProperty = (
+  container: object,
+  key: string,
+  origin: string,
+  id: string,
+): void => {
+  const descriptor = Object.getOwnPropertyDescriptor(container, key);
+  if (descriptor === undefined) {
+    throw domainError(origin, id, `holds an array hole at index ${key}`);
+  }
+  if (!("value" in descriptor)) {
+    throw domainError(origin, id, `holds an accessor property ${JSON.stringify(key)}`);
+  }
+  assertDocumentValue(descriptor.value, origin, id);
 };
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
