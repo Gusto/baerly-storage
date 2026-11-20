@@ -1,0 +1,24 @@
+{
+  "decisionCells": [
+    "tree-k1-b4-d2-distinct",
+    "tree-k2-b4-d2-distinct",
+    "tree-k4-b4-d2-distinct",
+    "tree-k8-b4-d2-distinct",
+    "tree-k1-b16-d2-distinct",
+    "tree-k2-b16-d2-distinct",
+    "tree-k4-b16-d2-distinct",
+    "tree-k8-b16-d2-distinct",
+    "tree-k1-b64-d2-distinct",
+    "tree-k2-b64-d2-distinct",
+    "tree-k4-b64-d2-distinct",
+    "tree-k8-b64-d2-distinct"
+  ],
+  "sampleFloor": null,
+  "p99ThresholdMs": null,
+  "percentileMethod": "nearest-rank",
+  "capture": {
+    "requestsPerCell": 200,
+    "warmupsPerCell": 5,
+    "concurrency": 2
+  }
+}
