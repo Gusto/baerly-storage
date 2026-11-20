@@ -1,8 +1,8 @@
 /**
- * Phase 9 gate: write → export → SQLite → restore → byte-equal dump.
+ * Round-trip gate: write → export → SQLite → restore → byte-equal dump.
  *
  * This is the load-bearing correctness check for the entire export
- * deliverable. The four invariants under test (per ticket 73 §1):
+ * deliverable. The four invariants under test:
  *
  *   1. Type inference is invertible — every JS value lands in the SQL
  *      column the plan picked and comes back as the same shape.
@@ -212,8 +212,7 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
           // column in this fixture. Generalising to inferring
           // "boolean-via-INTEGER" from the plan alone is a
           // follow-up — the sidecar would need to track the
-          // original JS kind, which today it does not (per ticket
-          // 73 §3.3 the column-level metadata stops at sqlType +
+          // original JS kind, which today it does not (the column-level metadata stops at sqlType +
           // jsonEncoded + nullable). We coerce by field name; if
           // future fixtures add another boolean-via-INTEGER column
           // they need a sidecar bump.

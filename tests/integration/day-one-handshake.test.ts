@@ -95,7 +95,7 @@ describe.runIf(gate("day-one-node", RUN_NODE))("day-one handshake — node targe
 
       // 1. SCAFFOLD: `npm create baerly@latest -- my-app --target=node`.
       //    Driven non-interactively. The scaffold's auto-prompt logic
-      //    (ticket 38) must accept all defaults under
+      //    must accept all defaults under
       //    `BAERLY_NONINTERACTIVE=1`.
       const appDir = join(workdir, "my-app");
       await execa(
@@ -226,7 +226,7 @@ describe.runIf(
       await execa("pnpm", ["install"], { cwd: appDir });
       stamp("install-complete");
 
-      // DEPLOY: `baerly deploy --target=cloudflare`. Ticket 39's
+      // DEPLOY: `baerly deploy --target=cloudflare`. The
       // command creates missing R2 buckets, runs `wrangler deploy`,
       // and reads CLOUDFLARE_API_TOKEN +
       // CLOUDFLARE_ACCOUNT_ID. The `SHARED_SECRET` is set inline
@@ -324,7 +324,7 @@ async function spawnServer(appDir: string, port: number): Promise<ServerHandle> 
 }
 
 async function assertNoManualEnvEdit(appDir: string): Promise<void> {
-  // Ticket 38's scaffold writes a single .env at the package root
+  // The scaffold writes a single .env at the package root
   // with all required values pre-filled. The gate asserts:
   //   1. The file exists at one of the candidate paths.
   //   2. Its mtime is within the gate budget of the test start
@@ -360,7 +360,7 @@ async function assertNoManualEnvEdit(appDir: string): Promise<void> {
 }
 
 async function readDeployUrl(appDir: string): Promise<string> {
-  // Ticket 39's `baerly deploy --target=cloudflare` writes the
+  // `baerly deploy --target=cloudflare` writes the
   // deployed URL to .baerly/deploy.json:
   //   { "target": "cloudflare", "url": "https://my-app.example.workers.dev" }
   const p = join(appDir, ".baerly", "deploy.json");

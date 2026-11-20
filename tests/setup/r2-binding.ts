@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/vitest-plugin/types" />
 
 /* eslint-disable no-underscore-dangle -- `__BAERLY_R2_BINDING__` is
-   the ticket-06 contract: the miniflare vitest pool sets the global,
+   the contract between this setup file and the conformance test: the miniflare vitest pool sets the global,
    `packages/adapter-cloudflare/src/r2-binding-storage.conformance.test.ts`
    reads it. Underscores delimit the protocol-internal name. */
 

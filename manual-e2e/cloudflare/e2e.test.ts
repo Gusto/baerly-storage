@@ -146,8 +146,7 @@ describe.runIf(gate("deploy-cloudflare", CF_URL !== undefined && SECRET !== unde
     test("10 long-polls within 26s wall-clock", async () => {
       // 10 concurrent long-polls + 10 writes. Each poll must return
       // < 26 s wall-clock (1 s buffer over the server-side 25 s
-      // budget) and observe at least one event. See ticket 26 for
-      // the long-poll contract.
+      // budget) and observe at least one event.
       const table = `${RUN_PREFIX}-longpoll`;
       cleanupTables.push(table);
 

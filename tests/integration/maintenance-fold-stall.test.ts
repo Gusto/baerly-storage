@@ -1,5 +1,5 @@
 /**
- * main-10 Task 1: reproduce today's SILENT fold stall and its recovery
+ * Reproduces the SILENT fold stall and its recovery
  * cases on `memory` + `local-fs`.
  *
  * Every test here pins CURRENT behavior. The runner's gate
@@ -10,10 +10,10 @@
  * would add a row past E. Update and delete tails therefore fold right up
  * to E, and a delete tail drains in place at E. The stall is an entry that
  * adds a row at E (or stored bytes > C): the fold is a prefix, so deletes
- * and shrinks queued behind that entry cannot drain. Main-10 Task 2
- * (growth-only refusal, executable recovery) flips the "stays stalled" /
- * "silent" assertions below; the host-change recoveries are the routes that
- * already work and must keep working.
+ * and shrinks queued behind that entry cannot drain. Growth-only refusal
+ * (see maintenance-growth-refusal.test.ts) is the other half; the
+ * host-change recoveries are the routes that already work and must keep
+ * working.
  *
  * Fixtures are tiny: a custom `MaintenanceProfile` with E=20 rows, a
  * 5-entry pass and a large C, so no test writes more than a few dozen rows.
@@ -54,7 +54,7 @@ import {
 
 const VARIANTS = makeVariants("baerly-fold-stall-");
 
-describe("main-10: fold stall (current behavior)", () => {
+describe("fold stall (pre-refusal behavior)", () => {
   for (const variant of VARIANTS) {
     describe(variant.label, () => {
       let cleanups: Array<() => Promise<void>> = [];
@@ -87,7 +87,7 @@ describe("main-10: fold stall (current behavior)", () => {
       const stallAtRows = () => foldedRows(E);
 
       // ── 1. Stall ───────────────────────────────────────────────────
-      describe("stall (Task 2 flips: growing writes get CapacityExceeded instead of succeeding)", () => {
+      describe("stall (growing writes succeed here; growth refusal replaces that with CapacityExceeded)", () => {
         test("rows arm: folds stop, log_seq_start freezes, the tail grows, writes keep succeeding, and only one fold_deferred is emitted", async () => {
           const storage = await stallAtRows();
           const signals: Signals = { records: [] };
@@ -182,8 +182,8 @@ describe("main-10: fold stall (current behavior)", () => {
         });
       });
 
-      // ── 2. Row-exact fold (G4) ─────────────────────────────────────
-      describe("row-exact fold G4: compact() folds the longest prefix within E", () => {
+      // ── 2. Row-exact fold ─────────────────────────────────────
+      describe("row-exact fold: compact() folds the longest prefix within E", () => {
         test("at 16 rows an update-only full pass folds in one tick, with rows unchanged", async () => {
           const storage = await foldedRows(16);
           await commit(

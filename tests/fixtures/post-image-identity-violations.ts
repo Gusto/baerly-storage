@@ -1,7 +1,7 @@
 /**
  * Insert/update post-images whose `_id` does not name the `doc_id` they are
- * filed under, one per identity failure the format contract rules out
- * (§"Chunk wire": `after._id === doc_id`). Every `docId` is inside the
+ * filed under, one per identity failure the snapshot rows rule out
+ * (`after._id === doc_id`). Every `docId` is inside the
  * `utf8-scalar-v1` domain, so a consumer that rejects these is rejecting the
  * identity, not the ID.
  *

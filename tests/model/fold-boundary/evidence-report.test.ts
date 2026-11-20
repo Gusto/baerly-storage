@@ -577,8 +577,8 @@ ${Object.entries(payload.sourceSha256)
  * are not duplicate behavior verification. The `P` properties are universally
  * quantified — `P8a` asserts `total === N + 5` for every `N`, `P1b` asserts that
  * live boundaries track observation. Neither pins the numbers this report
- * *publishes*. Those numbers are interpolated verbatim into the claim prose (Q1
- * cites the floor-7 targets, Q8 cites the tight-tail totals), so if `K_SWEEP` or
+ * *publishes*. Those numbers are interpolated verbatim into the claim prose (the
+ * floor-7 targets and the tight-tail totals), so if `K_SWEEP` or
  * `SYNTHETIC_LOG_LENGTH` changed, every `P` property would still pass while the
  * emitted evidence silently said something different. `R1a`–`R1f` are golden-value
  * pins on the artifact; the `P` series is the behavior gate.

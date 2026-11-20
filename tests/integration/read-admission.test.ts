@@ -2,7 +2,7 @@
    field on document shapes; the fixtures seed doc bodies with it. */
 
 /**
- * Regression fixtures for staged read admission (main-2): a host refuses a
+ * Regression fixtures for staged read admission: a host refuses a
  * read whose actual staged work falls outside its resource envelope, refuses
  * it whole with the capacity code, and serves every in-envelope read with
  * the same answer on every host (P1).
@@ -58,7 +58,7 @@ type Item = DocumentData;
 // ── Test envelope ───────────────────────────────────────────────────────
 
 /**
- * A host's read envelope, one field per bound main-2 Task 3 names. Local to
+ * A host's read envelope, one field per bound the host declares. Local to
  * this file: these numbers only size the fixtures around them.
  * `maxStorageCalls` becomes the request ledger's limit; the rest become the
  * kernel's `ReadEnvelope`.
@@ -147,7 +147,7 @@ const readUnder = async <T>(
   }
 };
 
-/** The capacity code (main-7). */
+/** The capacity code. */
 const isCapacityRefusal = (err: unknown): boolean =>
   (err as { code?: unknown }).code === "CapacityExceeded";
 
@@ -478,7 +478,7 @@ interface Scenario {
   readonly envelope: TestEnvelope;
   /** The neighbouring bound the fixture stays inside on SMALL_ENVELOPE (tiny vs oversized). */
   readonly contrast?: Bound;
-  /** The head alone carries enough to refuse (main-2 Task 2): no snapshot GET allowed. */
+  /** The head alone carries enough to refuse: no snapshot GET allowed. */
   readonly headOnly?: boolean;
   readonly extraPrecondition?: (m: Measured, envelope: TestEnvelope) => void;
   readonly build: (fresh: Fresh) => Promise<Prepared>;
@@ -857,7 +857,7 @@ for (const variant of VARIANTS) {
     //
     // An index-covered read takes membership from the fold, not from a
     // marker LIST, so stale markers cost it nothing: there is no
-    // index-specific work bound (I1 is the full-fold bounds).
+    // index-specific work bound (the full-fold bounds apply).
 
     test("stale index markers: index reads neither return stale rows nor over-count", async () => {
       const { storage, liveX, xMarkers } = await seedStaleMarkers(fresh);

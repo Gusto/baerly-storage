@@ -28,8 +28,7 @@
  *
  * The cost-model gate (case 2) uses a hand-rolled counting `Storage`
  * proxy rather than `InMemoryMetricsRecorder` — the Class-A taxonomy is
- * a property of the storage API (PUT vs GET), not of any metric name
- * (ticket 19 §"Coordinates with ticket 17").
+ * a property of the storage API (PUT vs GET), not of any metric name.
  */
 
 import { afterEach, describe, expect, test } from "vitest";

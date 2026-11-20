@@ -16,7 +16,7 @@ import { fc } from "@fast-check/vitest";
  * shrinking stays inside the domain.
  */
 
-/** The format contract's per-ID byte ceiling, restated here independently. */
+/** The snapshot format's per-ID byte ceiling, restated here independently. */
 export const DOC_ID_MAX_UTF8_BYTES = 256;
 
 const codePointRange = (min: number, max: number): fc.Arbitrary<number> => fc.integer({ min, max });

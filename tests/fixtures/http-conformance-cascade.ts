@@ -51,10 +51,10 @@ export interface HttpConformanceOptions {
   /**
    * When false, the CAS-via-If-Match block on PATCH is skipped.
    *
-   * Default: **false**. Ticket 25's router does not yet plumb
+   * Default: **false**. The router does not yet plumb
    * `If-Match` through to the underlying `Storage.put` CAS, so the
    * round-trip from response `ETag` → request `If-Match` is not
-   * exercised over HTTP. When ticket 25 grows the plumbing, flip this
+   * exercised over HTTP. Once the router grows the plumbing, flip this
    * default to `true` and remove the per-variant override.
    */
   readonly supportsCAS?: boolean;
@@ -626,7 +626,7 @@ export const runHttpConformanceCascade = (opts: {
     // through to `Storage.put({ ifMatch })`; see
     // `packages/server/src/http/router.ts:162-185`. PATCH against a
     // known id always lands. We keep the describe block compiled so
-    // a future ticket that wires the header in can flip the default
+    // a change that wires the header in can flip the default
     // and the assertions surface for free.
     describe.skipIf(!supportsCAS)("CAS — If-Match (PATCH)", () => {
       test("PATCH with current ETag succeeds and rotates ETag", async () => {
@@ -674,8 +674,8 @@ export const runHttpConformanceCascade = (opts: {
             "if-none-match": '"definitely-stale"',
           }),
         );
-        // Per coord note 6: Node variants never 304 because the router
-        // doesn't emit ETag. Workerd may 304 once ticket 27's cache
+        // Node variants never 304 because the router
+        // doesn't emit ETag. Workerd may 304 once its cache
         // layer warms an entry — but only if the cached response
         // carried an etag in the first place, which it doesn't. Accept
         // either outcome; the load-bearing invariant is "no 5xx".
@@ -689,10 +689,9 @@ export const runHttpConformanceCascade = (opts: {
 
     // ── Block 4: CAS via If-None-Match:"*" on POST ──────────────────
     //
-    // Out of scope: ticket 25's POST surface does NOT accept
+    // Out of scope: the POST surface does NOT accept
     // caller-supplied `_id`, so there's no "create-if-absent" CAS
-    // analogue to test. See ticket 28 §7 ("Out of scope") for the
-    // resurrection path.
+    // analogue to test.
 
     // ── Block 5: DELETE ─────────────────────────────────────────────
     describe("DELETE", () => {
@@ -1374,7 +1373,7 @@ export const runHttpConformanceCascade = (opts: {
       );
     });
 
-    // ── Block 11: read response `_meta` (ticket 33) ─────────────────
+    // ── Block 11: read response `_meta` ─────────────────
     //
     // The router emits `_meta.{manifest_pointer, fresh}` on
     // every successful read response (single-doc + list). Wire-level
