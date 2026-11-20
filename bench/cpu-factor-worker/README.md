@@ -51,6 +51,7 @@ Run the baseline on a quiet machine. It records the load average before and afte
      outcome: (.outcome // ."$workers".outcome // null),
      cpuTime: (.cpuTime // .cpuTimeMs // ."$workers".cpuTimeMs // ."$metadata".cpuTimeMs),
      url: (.event.request.url // .request.url // ."$workers".event.request.url // .url),
+     status: (.event.response.status // .response.status // ."$workers".event.response.status // .status),
      cell,
      logs: [.logs[]? | {message}]
    } | with_entries(select(.value != null))' "$capture" > cpu-factor-events.jsonl
@@ -84,8 +85,11 @@ Run this deployment in the same window as any other S1 evidence, so both see the
 - `coldInvocations`: `exclude` or `include`. Whether ok invocations that log `"cold":true` (the first request in an isolate) count toward n ok and p99. Without `--prereg` they are always excluded. With `exclude`, a slow cold start cannot fail a cell by p99; the verdict says so and lists each decision cell's cold count. A killed cold invocation counts as a kill under either setting. Events without the `CPUFACTOR` log line cannot be tagged cold and count as warm. With `include`, the report is labelled COLD-INCLUSIVE.
 - `capture`: `requestsPerCell` and `warmupsPerCell` (what `run-cells.sh` sends; checked against the events per decision cell) and `concurrency` (`xargs -P`; events do not record it, so it is printed as declared). Other keys are refused.
 
-A decision cell passes iff it has no event missing a URL, outcome or CPU time, zero kills, zero `other` outcomes, at least `sampleFloor` ok samples and p99 at or below the threshold. The verdict passes iff at least one decision cell passes and nothing mismatches. Each of these prints a reason and makes the run FAIL (exit 1):
+A decision cell requires a matching `CPUFACTOR` log line on every non-warmup `ok` invocation, including cold invocations excluded from CPU statistics. Any recorded HTTP response status must be 2xx. The normalizer preserves these execution logs and response statuses; an old Worker returning "unknown cell" cannot supply successful workload evidence. Missing or mismatched execution evidence fails the run.
 
+A decision cell passes iff it has no event missing a URL, outcome or CPU time, zero kills, zero `other` outcomes, at least `sampleFloor` ok samples and p99 at or below the threshold. The verdict passes iff at least one decision cell passes and nothing mismatches. The rule is any-cell: a decision cell that fails, including one with kills, does not fail the verdict when another decision cell passes. The verdict notes such cells, but no setting makes a single kill fail the run. Each of these prints a reason and makes the run FAIL (exit 1):
+
+- malformed or truncated JSON, or non-JSON capture data (concatenated event objects, JSONL and JSON arrays of event objects are accepted);
 - a decision cell absent from the capture;
 - request or warmup counts per decision cell that differ from `capture`;
 - a decision cell whose `&i=` request ids are not exactly `1..requestsPerCell`. Duplicate event lines are detected, never deduplicated: a repeated id fails the run, since a duplicate could otherwise cancel a lost event in the count. An event without an id fails it too;

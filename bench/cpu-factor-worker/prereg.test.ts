@@ -1,4 +1,7 @@
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { analyze, formatReport, type NodeBaseline, pct, pctR7 } from "./analyze.ts";
 import {
@@ -33,13 +36,14 @@ interface Ev {
   cpuTime: number;
   url: string;
   logs?: unknown[];
+  status?: number;
 }
 /** Request `i` of a cell, as `run-cells.sh` sends it. */
 const ev = (cell: string, i: number, cpu = 5, outcome = "ok"): Ev => ({
   outcome,
   cpuTime: cpu,
   url: url(cell, `&i=${i}`),
-  logs: [],
+  logs: [{ message: [`CPUFACTOR ${JSON.stringify({ cell, cold: false })}`] }],
 });
 
 /** A capture that satisfies PREREG on every decision cell. */
@@ -151,6 +155,54 @@ describe("evaluatePrereg", () => {
     expect(formatPrereg(a, p, v)).toContain("PREREG VERDICT: PASS");
   });
 
+  test("an old Worker returning HTTP 400 without running a decision cell cannot pass", () => {
+    for (const raw of [false, true]) {
+      const target = DECISION[0]!;
+      const events = goodEvents([target]).map((e) => {
+        if (e.url.includes("warmup")) {
+          return e;
+        }
+        return raw
+          ? {
+              outcome: e.outcome,
+              cpuTime: e.cpuTime,
+              logs: [],
+              event: { request: { url: e.url }, response: { status: 400 } },
+            }
+          : { outcome: e.outcome, cpuTime: e.cpuTime, url: e.url, status: 400, logs: [] };
+      });
+      const { v } = verdict(events, { ...PREREG, decisionCells: [target] });
+      expect(v.pass).toBe(false);
+      expect(v.failures.join()).toContain("execution");
+    }
+  });
+
+  test("raw platform events with matching execution logs and HTTP 200 pass", () => {
+    const events = goodEvents().map((e) => ({
+      outcome: e.outcome,
+      cpuTime: e.cpuTime,
+      logs: e.logs,
+      event: { request: { url: e.url }, response: { status: 200 } },
+    }));
+    expect(verdict(events).v.pass).toBe(true);
+  });
+
+  test("ok events require a matching execution log, including excluded cold events", () => {
+    const target = DECISION[0]!;
+    for (const logs of [[], [{ message: ['CPUFACTOR {"cell":"noop","cold":true}'] }]]) {
+      const events = goodEvents([target]);
+      events[at(events, target, 1)]!.logs = logs;
+      expect(verdict(events, { ...PREREG, decisionCells: [target] }).v.pass).toBe(false);
+    }
+  });
+
+  test("matching execution logs cannot override an unsuccessful HTTP status", () => {
+    const target = DECISION[0]!;
+    const events = goodEvents([target]);
+    events[at(events, target, 1)]!.status = 500;
+    expect(verdict(events, { ...PREREG, decisionCells: [target] }).v.pass).toBe(false);
+  });
+
   test("missing decision cell: passes the analyzer's own rule but FAILs under prereg", () => {
     const events = goodEvents(DECISION.slice(1));
     const { v, a, p } = verdict(events);
@@ -171,6 +223,9 @@ describe("evaluatePrereg", () => {
     expect(v.cells.slice(1).every((c) => c.pass)).toBe(true);
     // One passing cell is enough, so the others carry the verdict ...
     expect(v.pass).toBe(true);
+    expect(formatPrereg(verdict(events).a, parsePrereg(PREREG), v)).toContain(
+      `Note: 1 of 12 decision cells failed, 1 with kills (${DECISION[0]}). Under the any-cell rule a passing decision cell overrides them`,
+    );
     // ... but a prereg whose only decision cell took the kill FAILs.
     const only = verdict(events, { ...PREREG, decisionCells: [DECISION[0]!] });
     expect(only.v.pass).toBe(false);
@@ -400,4 +455,59 @@ describe("parseAnalyzeArgs", () => {
       expect(parseAnalyzeArgs(argv)).toEqual({ error });
     }
   });
+});
+
+// Exercise the CLI because preregistration must reject bytes that the exploratory parser skips.
+describe("preregistered capture CLI", () => {
+  test("rejects malformed or truncated trailing events only with preregistration", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cpu-factor-prereg-"));
+    try {
+      const eventsPath = join(dir, "events.jsonl");
+      const basePath = join(dir, "baseline.json");
+      const preregPath = join(dir, "prereg.json");
+      writeFileSync(basePath, JSON.stringify(BASE));
+      writeFileSync(preregPath, JSON.stringify(PREREG));
+      const clean = goodEvents()
+        .map((e) => JSON.stringify(e))
+        .join("\n");
+      const run = (prereg: boolean) =>
+        spawnSync(
+          process.execPath,
+          [
+            new URL("analyze-run.ts", import.meta.url).pathname,
+            eventsPath,
+            basePath,
+            ...(prereg ? ["--prereg", preregPath] : []),
+          ],
+          { encoding: "utf8" },
+        );
+      writeFileSync(eventsPath, clean);
+      expect(run(true).status).toBe(0);
+      writeFileSync(eventsPath, JSON.stringify(goodEvents(), null, 2));
+      expect(run(true).status).toBe(0);
+      writeFileSync(
+        eventsPath,
+        goodEvents()
+          .map((e) => JSON.stringify({ ...e, status: 400, logs: [] }))
+          .join("\n"),
+      );
+      expect(run(true).status).toBe(1);
+      for (const trailing of [
+        '{"outcome":"exceededCpu",',
+        '{"outcome":"exceededCpu",}',
+        "garbage",
+        "]",
+        '{"outcome":"unterminated',
+      ]) {
+        writeFileSync(eventsPath, `${clean}\n${trailing}`);
+        const strict = run(true);
+        expect(strict.status).toBe(1);
+        expect(strict.stderr).toContain("invalid capture");
+        expect(strict.stdout).not.toContain("PREREG VERDICT: PASS");
+        expect(run(false).status).toBe(0);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
