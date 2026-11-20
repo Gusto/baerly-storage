@@ -339,6 +339,26 @@ describe("canonical encoding and node body vectors", () => {
       () => ({ _id: "x", a: SubArray.from([1]) }),
       "exotic array",
     ],
+    [
+      "a named own array property",
+      () => ({ _id: "x", a: Object.assign([1], { extra: 2 }) }),
+      "extra own array property extra",
+    ],
+    [
+      "a symbol-keyed own array property",
+      () => ({ _id: "x", a: Object.assign([1], { [Symbol("s")]: 2 }) }),
+      "extra own array property Symbol(s)",
+    ],
+    [
+      "an own array property named 4294967295 (not an index)",
+      () => ({ _id: "x", a: Object.assign([1], { "4294967295": 2 }) }),
+      "extra own array property 4294967295",
+    ],
+    [
+      "an own array property named 4294967296",
+      () => ({ _id: "x", a: Object.assign([1], { "4294967296": 2 }) }),
+      "extra own array property 4294967296",
+    ],
   ] as const)("canon rejects, never drops, %s", (_, make, reason) => {
     const got = canonDocument(make());
     expect(got).toEqual({ invalid: expect.stringContaining(reason) });
