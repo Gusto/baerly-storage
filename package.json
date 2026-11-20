@@ -230,6 +230,9 @@
     "bench:cpu-factor:build": "node bench/cpu-factor-worker/build.ts",
     "bench:cpu-factor:node-baseline": "node bench/cpu-factor-worker/node-baseline.ts",
     "bench:cpu-factor:analyze": "node bench/cpu-factor-worker/analyze-run.ts",
+    "bench:paid-memory:fixtures": "node bench/paid-memory-worker/fixtures.ts",
+    "bench:paid-memory:build": "node bench/paid-memory-worker/build.ts",
+    "bench:paid-memory:drive": "node bench/paid-memory-worker/drive.ts",
     "eval": "node --import ./eval/resolve-package.mjs eval/cli.ts"
   },
   "dependencies": {

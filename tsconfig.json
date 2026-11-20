@@ -86,6 +86,7 @@
     "bench/cpu-factor-worker/src/probes.ts",
     "bench/cpu-factor-worker/src/worker.ts",
     "bench/cpu-factor-worker/src/fixtures.d.ts",
+    "bench/paid-memory-worker/src",
 
     "packages/adapter-cloudflare/src",
     "tests/fixtures/mock-execution-context.ts",
