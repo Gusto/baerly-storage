@@ -16,6 +16,8 @@
  */
 import { BaerlyError } from "@baerly/protocol";
 import type { ChunkKey } from "./chunk.ts";
+import type { TreeChildEntry } from "./node-codec.ts";
+import type { LiveTreeRef, TreePublicationWrite } from "./publish.ts";
 
 /** Leaf target size: 16 KiB. */
 const LEAF_TARGET_BYTES = 16 * 1024;
@@ -221,10 +223,10 @@ export const TREE_LAYOUT_RULES: readonly TreeLayoutRule[] = Object.freeze([
  * Tree code reads each step from a {@link TreeConfig}, so a mutant passed
  * to {@link createTreeConfig} reaches every caller of that config.
  *
- * The optional members are the canonical builder's and fold planner's
- * steps. When one is absent, the module that runs it uses its own
- * built-in step, which keeps this module free of a runtime import of
- * the builder.
+ * The optional members are the canonical builder's, fold planner's and
+ * publisher's steps. When one is absent, the module that runs it uses
+ * its own built-in step, which keeps this module free of a runtime
+ * import of those modules.
  */
 export interface TreeSteps {
   /** The rules a layout must satisfy. */
@@ -269,9 +271,37 @@ export interface TreeSteps {
    * Stopping with a non-empty chunker closes the partial chunk.
    */
   readonly resyncStops?: (chunkerEmpty: boolean) => boolean;
+  /** The attempt identity a publication mints: 128 fresh random bits as hex. */
+  readonly mintAttempt?: () => string;
+  /**
+   * The order a publication issues its writes in, given the writes in
+   * their required order: each level of fresh nodes from the leaves up,
+   * then the head CAS.
+   */
+  readonly publicationOrder?: (
+    writes: readonly TreePublicationWrite[],
+  ) => readonly TreePublicationWrite[];
+  /**
+   * Whether a publication may reuse the ref `entry` in a slot at
+   * `level`, given every ref proven live under the captured root (keyed
+   * `<attempt>/<sha256>`, with the level of the node each names): it
+   * must be one of them, at that level, with the same summary.
+   */
+  readonly reuseIsLive?: (
+    entry: TreeChildEntry,
+    level: number,
+    live: ReadonlyMap<string, LiveTreeRef>,
+  ) => boolean;
+  /**
+   * Whether a publication adopts the body it found at a node key whose
+   * create conflicted: only when it equals the body it created, byte
+   * for byte.
+   */
+  readonly adoptionBytesMatch?: (stored: Uint8Array, created: Uint8Array) => boolean;
 }
 
-const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
+/** Whether two byte arrays hold the same bytes. */
+export const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
   if (a.byteLength !== b.byteLength) {
     return false;
   }

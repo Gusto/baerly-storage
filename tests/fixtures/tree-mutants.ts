@@ -195,3 +195,45 @@ export const PLAN_MUTANTS: readonly TreeMutant[] = [
   PLANNER_SKIPS_ISOLATION_RESTART,
   PLANNER_ISOLATION_RESTART_EXCLUSIVE,
 ];
+
+// ---------------------------------------------------------------------
+// Publication
+// ---------------------------------------------------------------------
+
+/** A publisher that CASes the head before it creates the fresh nodes. */
+export const PUBLISH_HEAD_BEFORE_NODES: TreeMutant = {
+  name: "publish-head-before-nodes",
+  defect: "the publisher CASes the head before it creates the nodes the new root references",
+  options: {
+    steps: {
+      publicationOrder: (writes) => [
+        ...writes.filter((write) => write.kind === "head"),
+        ...writes.filter((write) => write.kind !== "head"),
+      ],
+    },
+  },
+};
+
+/**
+ * A publisher that reuses any ref the plan hands it, without proving it
+ * is reachable from the captured root.
+ */
+export const PUBLISH_REUSES_UNPROVEN_REF: TreeMutant = {
+  name: "publish-reuses-unproven-ref",
+  defect: "the publisher reuses a ref that is not live under the captured root",
+  options: { steps: { reuseIsLive: () => true } },
+};
+
+/** A publisher that adopts whatever body it finds at a conflicting create's key. */
+export const PUBLISH_ADOPTS_WITHOUT_COMPARE: TreeMutant = {
+  name: "publish-adopts-without-compare",
+  defect: "create-conflict adoption accepts a body without comparing it to the one created",
+  options: { steps: { adoptionBytesMatch: () => true } },
+};
+
+/** The publication mutants the publish suite must catch. */
+export const PUBLISH_MUTANTS: readonly TreeMutant[] = [
+  PUBLISH_HEAD_BEFORE_NODES,
+  PUBLISH_REUSES_UNPROVEN_REF,
+  PUBLISH_ADOPTS_WITHOUT_COMPARE,
+];
