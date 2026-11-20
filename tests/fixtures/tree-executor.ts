@@ -504,7 +504,9 @@ export const runTreeSchedule = async (
   try {
     finalRead = {
       kind: "read",
-      rows: await inMaintenanceDisabledContext(() => process.system.readCold(process.world)),
+      rows: snapshotRows(
+        await inMaintenanceDisabledContext(() => process.system.readCold(process.world)),
+      ),
     };
   } catch (error) {
     finalRead = { kind: "failed", code: errorCode(error) };
@@ -523,6 +525,9 @@ const inMaintenanceDisabledContext = <T>(fn: () => Promise<T>): Promise<T> =>
   Promise.resolve(
     runWithContext(createObservabilityContext({ maintenance: { disabled: true } }), fn),
   );
+
+/** Preserve observations even when a reader reuses its cache and document objects. */
+const snapshotRows = (rows: TreeRows): TreeRows => structuredClone(new Map(rows));
 
 const runStep = async (
   process: TreeProcess,
@@ -579,9 +584,9 @@ const runStep = async (
     case "read": {
       if (transition.mode === "warm") {
         process.warm ??= system.openWarmReader!(world);
-        return { kind: "read", mode: "warm", rows: await process.warm.read() };
+        return { kind: "read", mode: "warm", rows: snapshotRows(await process.warm.read()) };
       }
-      return { kind: "read", mode: "cold", rows: await system.readCold(world) };
+      return { kind: "read", mode: "cold", rows: snapshotRows(await system.readCold(world)) };
     }
   }
 };

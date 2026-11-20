@@ -461,9 +461,9 @@ const publicationMonotoneNoPartialRun = (
 
 /**
  * A fold publish whose captured head was replaced before it published,
- * by another fold, a GC tick or anything else, does not publish: it loses
- * its CAS (or finds nothing to fold) and leaves the head exactly as it
- * found it, so the replacement survives. The head's root then reaches no
+ * by another fold, a GC tick or anything else, does not publish and leaves
+ * the head exactly as it found it, even if it fails or crashes, so the
+ * replacement survives. The head's root then reaches no
  * missing node, and the closing read equals the oracle. Every such publish
  * is checked.
  *
@@ -483,7 +483,7 @@ const lostCasPreservesWinner = (run: TreeRun, oracles: TreeModelOracles): TreePr
       headBytes(imageBefore(run, step.index), run.prefix),
     );
   for (const step of run.steps) {
-    if (step.transition.kind !== "fold-publish" || step.outcome.kind !== "folded") {
+    if (step.transition.kind !== "fold-publish" || step.outcome.kind === "skipped") {
       continue;
     }
     const prepare = step.transition.of;
@@ -499,12 +499,16 @@ const lostCasPreservesWinner = (run: TreeRun, oracles: TreeModelOracles): TreePr
         tailBefore(run, prepareIndexOf(replacer)) !== tailBefore(run, prepare),
     );
     // A fold with nothing to fold writes no head, so it cannot show a CAS.
-    exercised ||= decisive && step.outcome.result.kind !== "nothing-to-fold";
+    exercised ||=
+      decisive &&
+      (step.outcome.kind === "folded"
+        ? step.outcome.result.kind !== "nothing-to-fold"
+        : step.reached > 0);
     const by = replacers.map(({ index }) => `step-${index}`).join(",");
     evidence.push(
       `race=step-${step.index}:prepared=step-${prepare}:replaced-by=${by}${decisive ? "" : ":same-tail"}`,
     );
-    if (step.outcome.result.kind === "published") {
+    if (step.outcome.kind === "folded" && step.outcome.result.kind === "published") {
       failures.push(`step-${step.index}:published over a head ${by} replaced`);
     }
     if (!isDeepStrictEqual(headBytes(step.image, run.prefix), current)) {
