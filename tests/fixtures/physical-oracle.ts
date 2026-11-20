@@ -254,15 +254,19 @@ export const isKnownAbortRelabel = (error: unknown): boolean =>
 
 /**
  * A violation string when `error` (what a crashed step threw) is outside
- * the step's allow-list, otherwise `undefined`. The injected `AbortError`
- * passes through unwrapped.
+ * the step's allow-list (plus `alsoAllow`), otherwise `undefined`. The
+ * injected `AbortError` passes through unwrapped.
  */
-export const surfacedErrorViolation = (step: OracleStep, error: unknown): string | undefined => {
+export const surfacedErrorViolation = (
+  step: OracleStep,
+  error: unknown,
+  alsoAllow: readonly string[] = [],
+): string | undefined => {
   if (isKnownAbortRelabel(error)) {
     return undefined;
   }
   if (error instanceof BaerlyError) {
-    return SURFACED_CODE_ALLOW_LIST[step].includes(error.code)
+    return SURFACED_CODE_ALLOW_LIST[step].includes(error.code) || alsoAllow.includes(error.code)
       ? undefined
       : `${step} surfaced a code outside the allow-list: ${error.code}: ${error.message}`;
   }
@@ -291,8 +295,14 @@ export const observeStep = async (args: {
   readonly collectionPrefix: string;
   readonly step: OracleStep;
   readonly run: () => Promise<unknown>;
+  /**
+   * Codes this run may surface on top of the step's allow-list, for a
+   * fault the run injected itself (a lost response surfaces as the
+   * `NetworkError` the transport reported).
+   */
+  readonly alsoAllow?: readonly string[];
 }): Promise<ObservedStep> => {
-  const { storage, collectionPrefix, step, run } = args;
+  const { storage, collectionPrefix, step, run, alsoAllow } = args;
   const before = await captureBucket(storage, `${collectionPrefix}/`);
   let completed = true;
   let error: unknown;
@@ -311,7 +321,7 @@ export const observeStep = async (args: {
     after,
     afterManifest: manifest?.json ?? { snapshot: null, log_seq_start: 0 },
   });
-  const errorViolation = completed ? undefined : surfacedErrorViolation(step, error);
+  const errorViolation = completed ? undefined : surfacedErrorViolation(step, error, alsoAllow);
   const violations =
     errorViolation === undefined ? verdict.violations : [...verdict.violations, errorViolation];
   return completed
