@@ -55,8 +55,7 @@ describe("LOG_KEY_PREFIX", () => {
 
 describe("logObjectKey", () => {
   // Byte-identical guarantee: this literal is the key shape that every
-  // caller (db / writer / gc / log-walk) must produce. Ticket 01 flips
-  // the meaning of the trailing integer; this pins the shape until then.
+  // caller (db / writer / gc / log-walk) must produce.
   test("composes <prefix>/log/<seq>.json", () => {
     expect(logObjectKey("apps/_/tenants/_/manifests/users", 7)).toBe(
       "apps/_/tenants/_/manifests/users/log/7.json",

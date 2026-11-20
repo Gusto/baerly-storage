@@ -516,7 +516,7 @@ describe("compact", () => {
     }
   });
 
-  // ── Task 3: snapshot byte/row accounting + two-way ceiling. ─────────
+  // ── snapshot byte/row accounting + two-way ceiling. ─────────
 
   test("writes snapshot_bytes and snapshot_rows (= base.size) on a successful fold", async () => {
     const s = new MemoryStorage();
@@ -881,7 +881,7 @@ describe("compact", () => {
     expect(res.entriesFolded).toBe(30);
   });
 
-  // ── Phase 3 Task 3.2: forward-probe the true tail as the fold ceiling
+  // ── Forward-probe the true tail as the fold ceiling
   // and stamp tail_hint = max(stored, discovered). The stored tail_hint
   // is a non-authoritative LOWER BOUND; the true committed tail may sit
   // above it. The compactor must discover it via a forward-probe and stamp

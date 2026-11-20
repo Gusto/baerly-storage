@@ -60,7 +60,7 @@ const patchIdArb: fc.Arbitrary<PatchId> = fc.oneof(
     .map((value) => ({ kind: "value", value }) as const),
 );
 
-/** Frozen reference: the identity rule as the owner ruling states it. */
+/** Frozen reference: the identity rule as the format states it. */
 const referenceAccepts = (rowId: string, patchId: PatchId): boolean => {
   if (patchId.kind === "value") {
     return patchId.value === rowId;

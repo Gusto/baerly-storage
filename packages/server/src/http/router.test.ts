@@ -686,9 +686,9 @@ describe("collection-segment validation closes the traversal bypass", () => {
   // handler decode to a `..`-bearing / control-bearing segment. These
   // are the real regression pins: confirm the HTTP layer doesn't mangle
   // the segment into something that bypasses `assertKeySegment`. Each
-  // is rejected InvalidConfig by Task 1's strengthened guard inside
+  // is rejected InvalidConfig by the strengthened `assertKeySegment` guard inside
   // `collectionReadContext`, and the route surfaces that rejection.
-  // (Already GREEN after Task 1; kept here as a regression pin.)
+  // (Kept as a regression pin.)
   test.each([
     ["http://localhost/v1/c/%2e%2e%2fx?where=%7B%22clauses%22%3A%5B%5D%7D", ".. → ../x"],
     ["http://localhost/v1/c/a%00b?where=%7B%22clauses%22%3A%5B%5D%7D", "NUL byte"],

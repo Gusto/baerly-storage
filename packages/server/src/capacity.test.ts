@@ -1,5 +1,5 @@
 /**
- * `capacityDecision` refusal rules (main-10 G3–G5) on hand-built state, and
+ * `capacityDecision` refusal rules (ADR 008) on hand-built state, and
  * a property test that measures the byte projection against real folds,
  * which is what bounds `CAPACITY_BYTES_MARGIN`. End-to-end behavior through
  * the public write verbs lives in
@@ -244,7 +244,7 @@ describe("capacityDecision refusals", () => {
   });
 });
 
-describe("capacityDecision near the ceiling (G6)", () => {
+describe("capacityDecision near the ceiling", () => {
   const insert: PlannedWrite = { op: "I", docId: "n", after: body("n") };
   const decision = (
     state: ReturnType<typeof stored>,
@@ -457,7 +457,7 @@ const opArb = fc.record({
   pad: fc.string({ unit: fc.constantFrom("x", "é", "\u{1F600}", '"', "\\"), maxLength: 40 }),
 });
 
-describe("capacityDecision early warning (G7)", () => {
+describe("capacityDecision early warning", () => {
   const warn = (
     state: ReturnType<typeof stored>,
     tail: LogEntry[],

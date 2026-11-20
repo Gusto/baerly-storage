@@ -1126,7 +1126,7 @@ export const NODE_MAINTENANCE_MAX_FOLD_BYTES: number = 32 * 1024 * 1024;
 export const NODE_MAINTENANCE_MAX_FOLD_ROWS: number = 65_536;
 
 /**
- * Byte slack the growth refusal keeps under `C` (main-10 G4). A growth write
+ * Byte slack the growth refusal keeps under `C`. A growth write
  * is refused when its projected snapshot bytes would exceed
  * `C - CAPACITY_BYTES_MARGIN`. The projection sizes the snapshot exactly as
  * the compactor encodes it (rows, separators, header) for a known fold end,
@@ -1142,7 +1142,7 @@ export const CAPACITY_BYTES_MARGIN: number = 64;
 
 /**
  * Fraction of a fold ceiling at which an admitted write starts carrying a
- * capacity warning (main-10 G7). The warning fires when the projected
+ * capacity warning. The warning fires when the projected
  * snapshot, at its peak over the pending tail and the writes just
  * admitted, holds at least this share of `E` rows or of the `C - margin`
  * bytes the growth refusal compares against. It is a policy choice, not a
@@ -1157,7 +1157,7 @@ export const CAPACITY_BYTES_MARGIN: number = 64;
 export const CAPACITY_WARN_FRACTION: number = 0.9;
 
 /**
- * `retryAfter` (seconds) on a `MaintenancePending` refusal (main-10 G6).
+ * `retryAfter` (seconds) on a `MaintenancePending` refusal.
  * The refused write dispatches one bounded fold before it refuses, and
  * that fold finishes within the same invocation: inline before the
  * response, or in the Cloudflare `ctx.waitUntil` continuation right after

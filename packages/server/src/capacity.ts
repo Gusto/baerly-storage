@@ -1,5 +1,5 @@
 /**
- * Growth refusal at the host's fold ceiling (main-10, rulings G3–G5, G7).
+ * Growth refusal at the host's fold ceiling (ADR 008).
  *
  * The in-band fold can only rebuild a snapshot within the serving host's
  * ceilings: `E` rows (`maxFoldRows`) and `C` bytes (`maxFoldBytes`, or
@@ -13,7 +13,7 @@
  * and before any commit, so a refused write commits nothing, and again
  * inside each commit, before its `log/<seq>` create, whenever another
  * write landed since that read, so concurrent growth writes that each
- * passed cannot together pass the ceiling (G5-race).
+ * passed cannot together pass the ceiling (the commit-time re-check).
  *
  * The decision is a pure function of the state that read already loaded
  * (`current.json`, the snapshot rows, the pending tail) plus the planned
@@ -21,10 +21,10 @@
  * state changes.
  *
  * An admitted write that leaves the collection within
- * `CAPACITY_WARN_FRACTION` of that point carries a warning (G7), computed
+ * `CAPACITY_WARN_FRACTION` of that point carries a warning, computed
  * from the same state, so it too needs no persisted flag.
  *
- * Near the ceiling the verbs also drive the fold (G6): an accepted write
+ * Near the ceiling the verbs also drive the fold: an accepted write
  * that leaves the collection at its growth-refusal point forces its
  * write tick, and a refused growth write whose room the pending tail
  * would free dispatches one forced fold and refuses with
@@ -94,7 +94,7 @@ const refuse = (message: string): BaerlyError =>
   });
 
 /**
- * Growth (G3): an insert, or an update whose post-image encodes larger
+ * Growth: an insert, or an update whose post-image encodes larger
  * than the row's current body. An update with no known `before` counts as
  * growth, which fails closed.
  */
@@ -113,7 +113,7 @@ const isGrowth = (write: PlannedWrite): boolean => {
 
 /**
  * Backpressure for a refused growth write whose room the pending tail
- * frees once it folds (G6). Like `CapacityExceeded`, it names the state
+ * frees once it folds. Like `CapacityExceeded`, it names the state
  * and the app-side remedy only.
  */
 export const maintenancePending = (collection: string): BaerlyError =>
@@ -129,7 +129,7 @@ export const maintenancePending = (collection: string): BaerlyError =>
   );
 
 /**
- * An admitted write is approaching the growth-refusal point (G7). `used`
+ * An admitted write is approaching the growth-refusal point. `used`
  * and `limit` are in the named dimension: rows against `E`, or projected
  * bytes against `C - CAPACITY_BYTES_MARGIN`.
  */
@@ -194,11 +194,11 @@ export type CapacityDecision =
       readonly refusal: undefined;
       /**
        * Set when the admitted writes leave the collection within
-       * `CAPACITY_WARN_FRACTION` of its refusal point (G7).
+       * `CAPACITY_WARN_FRACTION` of its refusal point.
        */
       readonly warning?: CapacityWarning;
       /**
-       * The verb forces its write tick (G6): the collection sits at its
+       * The verb forces its write tick: the collection sits at its
        * growth-refusal point once these writes commit, and folding the
        * pending tail frees room or the tail holds a full fold pass.
        */
@@ -219,18 +219,18 @@ export type CapacityDecision =
 /**
  * Decide whether `writes` must be refused on the host with `ceilings`.
  *
- * - **No progress** (G5): the stored snapshot is over `E` rows or `C`
+ * - **No progress**: the stored snapshot is over `E` rows or `C`
  *   bytes, or the pending tail holds an entry the fold stops at (one that
  *   adds a row while the projected snapshot holds `E` rows), or
  *   `maxFoldEntriesPerPass` consecutive pending seqs whose folded snapshot
  *   each rebuilds past `C`, a run no fold pass can cross. Every write is
  *   refused, since anything appended behind that point never folds on this
  *   host. A write that would itself complete such a run is refused too.
- * - **Growth** (an insert or a byte-growing update, G3): refused when the
+ * - **Growth** (an insert or a byte-growing update): refused when the
  *   projected snapshot, at its peak over every prefix of the pending tail
  *   followed by the planned writes up to this one, would reach `E` rows or
- *   exceed `C - CAPACITY_BYTES_MARGIN` bytes (G4). The peak counts because
- *   a fold can land at any prefix. `foldFreesRoom` (G6) is set when the
+ *   exceed `C - CAPACITY_BYTES_MARGIN` bytes. The peak counts because
+ *   a fold can land at any prefix. `foldFreesRoom` is set when the
  *   same writes would be admitted onto the snapshot the whole pending tail
  *   folds to, and the whole tail folds within `C`, so folds alone admit
  *   the writes.
@@ -240,7 +240,7 @@ export type CapacityDecision =
  *
  * A batch is decided whole, before its first row commits. The verbs
  * re-run the decision at each commit over the entries that landed since
- * (G5-race, `admitWrites` in `./query.ts`), for the writes not yet
+ * (the commit-time re-check, `admitWrites` in `./query.ts`), for the writes not yet
  * committed.
  *
  * @param head `current.json` as the pre-commit read saw it.
@@ -287,7 +287,7 @@ export const capacityDecision = (args: {
   // rebuilds past `C`) is never a fold end. A run of `pass` consecutive
   // over seqs is therefore a wall: no pass from the last fitting seq before
   // it reaches past it, and the log is immutable, so it and everything
-  // behind it never fold here (G5). A shorter run is crossed by the pass
+  // behind it never fold here. A shorter run is crossed by the pass
   // that starts before it, and a run at the end of the tail can still be
   // ended by later entries.
   const pass = ceilings.maxFoldEntriesPerPass;
@@ -316,7 +316,7 @@ export const capacityDecision = (args: {
   const tailLands = overRun === 0;
 
   /**
-   * Whether an accepted batch forces its write tick (G6), given `p` with
+   * Whether an accepted batch forces its write tick, given `p` with
    * the tail and the writes applied. Only at the refusal point (one more
    * inserted row, or one more byte of growth, would be refused), and then
    * only when that fold is worth its full snapshot rebuild:

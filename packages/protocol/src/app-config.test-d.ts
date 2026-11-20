@@ -1,8 +1,7 @@
 /**
  * Type-level assertions for `BaerlyAppConfig.auth`.
  *
- * Locks the contract that ticket 01 of the graduated-auth redesign
- * establishes: `auth` is required, narrowed to the literal union
+ * Locks the contract that `auth` is required, narrowed to the literal union
  * `"none" | "shared-secret"`, and rejects anything else.
  *
  * Validated by `tsc --noEmit` (via `pnpm verify`). Not picked up by

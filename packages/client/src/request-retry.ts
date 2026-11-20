@@ -32,7 +32,7 @@ export const REQUEST_RETRY_MAX_DELAY_MILLIS: number = 10_000;
 /**
  * Total attempts (first try included) the client makes for one request
  * answered with an enveloped `MaintenancePending` before it surfaces that
- * error (main-7 slice 3, S6b), on every verb. Every refused write has
+ * error, on every verb. Every refused write has
  * already dispatched one bounded fold, so the third attempt lands behind
  * two fold passes; a backlog that needs more keeps draining on the
  * caller's later writes. The same 3-attempt cap as

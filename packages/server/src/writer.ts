@@ -163,7 +163,7 @@ export interface CommitInput {
   readonly insertGuard?: InsertGuard;
 
   /**
-   * Force the post-commit maintenance tick (main-10 G6): dispatch it even
+   * Force the post-commit maintenance tick: dispatch it even
    * when the ratio-OR-boundary gate is closed, and let it bypass Gate 1
    * inside the runner. Ignored under `BAERLY_MAINTENANCE_DISABLE`.
    *
@@ -174,7 +174,7 @@ export interface CommitInput {
 
   /**
    * Commit-time re-check of a decision the caller made at a log tail it
-   * read (main-10 G5-race). See {@link CommitAdmission}.
+   * read (the commit-time re-check). See {@link CommitAdmission}.
    *
    * @internal — set by the write verbs in `./query.ts` for the capacity
    * re-check (`capacityDecision`).
@@ -867,7 +867,7 @@ export class Writer {
     // profile) so the pre-fire cadence can't diverge from the fold's.
     const gcInterval =
       maint?.options?.profile?.gcInterval ?? MAINTENANCE_PROFILE_CF_FREE.gcInterval;
-    // A forced tick (main-10 G6) skips the ratio-OR-boundary gate: the
+    // A forced tick skips the ratio-OR-boundary gate: the
     // verb found the collection at its growth-refusal point.
     const forceFold =
       (input.forceMaintenance === true || admissionForces) && maint?.disabled !== true;
