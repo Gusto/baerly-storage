@@ -125,6 +125,58 @@ export const parsePrereg = (raw: unknown): Prereg => {
   return raw as unknown as Prereg;
 };
 
+export const ANALYZE_USAGE =
+  "usage: pnpm bench:cpu-factor:analyze <events> [node-baseline.json] [--prereg <file.json> | --prereg=<file.json>]";
+
+export type AnalyzeArgs =
+  | { readonly eventsPath: string; readonly basePath?: string; readonly preregPath?: string }
+  | { readonly error: string };
+
+/**
+ * Parse the analyzer's argv. `--prereg` takes `<file>` or `=<file>`; any
+ * other flag is refused, so a mistyped flag can never drop the verdict.
+ */
+export const parseAnalyzeArgs = (argv: readonly string[]): AnalyzeArgs => {
+  const positional: string[] = [];
+  let preregPath: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    let value: string | undefined;
+    if (arg === "--prereg") {
+      value = argv[++i];
+      if (value === undefined || value.startsWith("-")) {
+        return { error: "--prereg needs a file argument" };
+      }
+    } else if (arg.startsWith("--prereg=")) {
+      value = arg.slice("--prereg=".length);
+      if (value === "") {
+        return { error: "--prereg needs a file argument" };
+      }
+    } else if (arg.startsWith("-") && arg !== "-") {
+      return { error: `unknown flag ${arg}` };
+    } else {
+      positional.push(arg);
+      continue;
+    }
+    if (preregPath !== undefined) {
+      return { error: "--prereg given more than once" };
+    }
+    preregPath = value;
+  }
+  if (positional.length === 0) {
+    return { error: "missing <events>" };
+  }
+  if (positional.length > 2) {
+    return { error: `unexpected argument ${positional[2]}` };
+  }
+  const [eventsPath, basePath] = positional as [string, string | undefined];
+  return {
+    eventsPath,
+    ...(basePath === undefined ? {} : { basePath }),
+    ...(preregPath === undefined ? {} : { preregPath }),
+  };
+};
+
 export interface DecisionRow {
   readonly cell: string;
   readonly row: CellRow | undefined;

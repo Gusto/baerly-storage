@@ -58,7 +58,7 @@ Run the baseline on a quiet machine. It records the load average before and afte
 
 8. Analyze locally: `pnpm bench:cpu-factor:node-baseline` (on a quiet machine; the analyzer reads `out/node-baseline.json`), then `pnpm bench:cpu-factor:analyze cpu-factor-events.jsonl`.
 
-   For a preregistered capture, add `--prereg <file.json>` (see [Preregistered verdict](#preregistered-verdict)).
+   For a preregistered capture, add `--prereg <file.json>` or `--prereg=<file.json>` (see [Preregistered verdict](#preregistered-verdict)). Any other flag is refused with exit 2.
 
 9. **Delete everything:** `./wrangler.sh delete baerly-cpu-factor-bench` and `./wrangler.sh r2 bucket delete baerly-cpu-factor-synthetic`. Confirm in the dashboard.
 10. Return only `cpu-factor-events.jsonl` (bench URLs, outcomes, CPU times and the bench's own log lines) through an internal channel.
