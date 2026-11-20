@@ -143,6 +143,15 @@ export interface DocumentValuesOptions {
    * refused (JSON turns them into `null`).
    */
   readonly undefinedMembersAbsent?: boolean;
+  /**
+   * Called once, with the rendered path of the first finite integer
+   * outside the safe range (`Number.isInteger(v) && !Number.isSafeInteger(v)`,
+   * so `|v| > 2^53 - 1`), after the whole value passed every other check.
+   * Such a number was already rounded by `JSON.parse` or a numeric literal
+   * before it got here. Nothing is refused; the hook only reports. Absent
+   * hook, no path is rendered.
+   */
+  readonly onUnsafeInteger?: (path: string) => void;
 }
 
 /**
@@ -193,6 +202,8 @@ export const assertDocumentValues = (
   options?: DocumentValuesOptions,
 ): void => {
   const undefinedMembersAbsent = options?.undefinedMembersAbsent === true;
+  const onUnsafeInteger = options?.onUnsafeInteger;
+  let unsafeAt: Pending | undefined;
   // Explicit work stack, so a deep document does not consume the call
   // stack. `ancestors` holds the containers on the current root-to-node
   // path; a container reached again through its own subtree is a cycle
@@ -213,6 +224,14 @@ export const assertDocumentValues = (
     }
     if (typeof current === "number") {
       if (Number.isFinite(current)) {
+        if (
+          onUnsafeInteger !== undefined &&
+          unsafeAt === undefined &&
+          Number.isInteger(current) &&
+          !Number.isSafeInteger(current)
+        ) {
+          unsafeAt = next;
+        }
         continue;
       }
       return refuse(verb, next, String(current), NON_FINITE_RESOLUTION);
@@ -277,5 +296,8 @@ export const assertDocumentValues = (
       }
       pending.push({ value: member, parent: next, key, depth: next.depth + 1 });
     }
+  }
+  if (unsafeAt !== undefined) {
+    onUnsafeInteger!(pathOf(unsafeAt));
   }
 };

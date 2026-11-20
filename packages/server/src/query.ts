@@ -62,6 +62,7 @@ import {
   type PlannedWrite,
 } from "./capacity.ts";
 import { callerFacingCheck, markCallerFacing } from "./caller-facing-error.ts";
+import { unsafeIntegerReport } from "./unsafe-integer.ts";
 import {
   assertDocId,
   assertReadDocId,
@@ -774,9 +775,10 @@ export const runInsert = async <T extends DocumentData>(
   // A present, non-string `_id` is a caller bug, refused before it could be
   // replaced by a minted one.
   const supplied = doc["_id"];
+  const unsafe = unsafeIntegerReport(ctx.collectionName, "insert");
   callerFacingCheck(() => {
     assertInsertIdType(supplied);
-    assertDocumentValues(doc, "insert");
+    assertDocumentValues(doc, "insert", { onUnsafeInteger: unsafe.onUnsafeInteger });
   });
   const _id = typeof supplied === "string" && supplied.length > 0 ? supplied : uuidv7();
   // Guard the resolved id at the write origin — the only place a
@@ -845,6 +847,7 @@ export const runInsert = async <T extends DocumentData>(
     admission: admission.next(),
     ...(admission.forceMaintenance && { forceMaintenance: true }),
   });
+  unsafe.report();
   admission.warn();
 
   return { _id };
@@ -1024,7 +1027,13 @@ const runUpdate = async <T extends DocumentData>(
   // `Map` patch value as an object to merge field by field, so over an
   // object field it would vanish from the post-image instead of being
   // refused there. `undefined` members are absent, as in the post-image.
-  callerFacingCheck(() => assertDocumentValues(patch, "update", { undefinedMembersAbsent: true }));
+  const unsafe = unsafeIntegerReport(ctx.collectionName, "update");
+  callerFacingCheck(() =>
+    assertDocumentValues(patch, "update", {
+      undefinedMembersAbsent: true,
+      onUnsafeInteger: unsafe.onUnsafeInteger,
+    }),
+  );
   const read = await runReadRows<T>(ctx, state);
   const { rows } = read;
   // Merge and validate every row first, so the per-row checks and the
@@ -1084,6 +1093,9 @@ const runUpdate = async <T extends DocumentData>(
       }
       throw error;
     }
+    if (modified === 0) {
+      unsafe.report();
+    }
     admission.committed(entry);
     modified++;
   }
@@ -1131,7 +1143,10 @@ export const runReplaceById = async <T extends DocumentData>(
   // Guard the caller-supplied id before it becomes a written key
   // segment (log `doc_id`). Same boundary as `runInsert`.
   callerFacingCheck(() => assertDocId(id));
-  callerFacingCheck(() => assertDocumentValues(doc, "replace"));
+  const unsafe = unsafeIntegerReport(ctx.collectionName, "replace");
+  callerFacingCheck(() =>
+    assertDocumentValues(doc, "replace", { onUnsafeInteger: unsafe.onUnsafeInteger }),
+  );
   const body: DocumentData = { ...(doc as DocumentData), _id: id };
   callerFacingCheck(() => assertDocumentSize(body, "replace"));
   const wire: PredicateWire = {
@@ -1173,6 +1188,7 @@ export const runReplaceById = async <T extends DocumentData>(
     }
     throw error;
   }
+  unsafe.report();
   admission.warn();
 };
 
