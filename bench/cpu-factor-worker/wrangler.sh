@@ -5,7 +5,7 @@
 #   ./wrangler.sh whoami
 #   ./wrangler.sh deploy
 # Reads credentials/cloudflare-deploy-free.json ({ api_token, account_id }) by
-# default (the S1 probes are valid only on Workers Free); set
+# default (the subrequest probes are valid only on Workers Free); set
 # CPU_FACTOR_TIER=paid to read credentials/cloudflare-deploy.json instead.
 # CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID already in the environment win.
 # The token is exported only into the exec'd wrangler; it is never printed.

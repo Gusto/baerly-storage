@@ -218,7 +218,7 @@ describe("analyze", () => {
     expect(formatReport(a)).toContain("=> PASS");
   });
 
-  test("summarizes S1 probe results from log lines", () => {
+  test("summarizes subrequest probe results from log lines", () => {
     const probeEvent = (probe: unknown) => ({
       outcome: "ok",
       cpuTime: 1,

@@ -2,7 +2,7 @@
  * Four distribution parameters per preset. Empirically extracted
  * from a real corpus by `scripts/fetch-bench-fixtures.sh` and
  * persisted to `bench/load-harness/presets/calibration.json`
- * (checked into the repo — see ticket 52). If the calibration file
+ * (checked into the repo). If the calibration file
  * is missing or doesn't have an entry for a preset, the harness
  * falls back to the literal defaults declared in each preset's
  * source file.

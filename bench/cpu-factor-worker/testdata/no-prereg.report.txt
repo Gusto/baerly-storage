@@ -90,7 +90,7 @@ Measured deployed/Node factor (median over fitting cells):
   fold: p50-basis 8.46x, p99-basis 7.37x (2 cells)
   tree: p50-basis 1.13x, p99-basis 1.00x (1 cells)
 
-Gate (compactor-11 Task 1): pass iff both C and E fit (>= 50 ok samples, < 1% kills) and measured deployed p99 <= 8 ms; Free limit 10 ms. Estimates are diagnostic only.
+Gate: pass iff both C and E fit (>= 50 ok samples, < 1% kills) and measured deployed p99 <= 8 ms; Free limit 10 ms. Estimates are diagnostic only.
   main: C p99 7.00 ms measured; E p99 8.00 ms measured => PASS
 
 Largest passing size (fitting cells with measured deployed p99 <= 8 ms, every smaller size passing too):
@@ -179,7 +179,7 @@ Leaves per step that fit, distinct paths (measured p99; every smaller k fits too
   distinct paths, leaf 64 KiB, d=2: not measured (no samples in this capture)
   distinct paths, leaf 64 KiB, d=3: not measured (no samples in this capture)
 
-S1 probe (calls before failure; 60 sequential calls per run; valid only on a Workers FREE account, on Paid every probe reads clean):
+subrequest probe (calls before failure; 60 sequential calls per run; valid only on a Workers FREE account, on Paid every probe reads clean):
   probe-cache-match is INCONCLUSIVE on *.workers.dev (the Cache API is a no-op there); only a custom-domain route can show whether Cache API calls count against 50.
   r2-head: skipped in all 1 runs (no binding)
   fetch: 2 runs; completed 49,60; first failing call 50; clean runs 1; errors: Error: Too many subrequests.

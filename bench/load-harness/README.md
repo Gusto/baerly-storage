@@ -1,6 +1,6 @@
 # bench/load-harness
 
-Reproducible synthetic workload library for the baerly-storage load bench. Ticket 53's runner consumes these generators; ticket 54's CLI surfaces them as `--preset=` flags.
+Reproducible synthetic workload library for the baerly-storage load bench. The runner consumes these generators; the CLI surfaces them as `--preset=` flags.
 
 ## What's here
 
@@ -14,7 +14,7 @@ bench/load-harness/
 ├── presets.ts          # Preset interface + registry (registerPreset/getPreset/listPresets)
 ├── presets/
 │   ├── recent-first-crud.ts  # notes-app shape preset
-│   └── calibration.json      # default distribution parameters (overwritten by ticket 52)
+│   └── calibration.json      # default distribution parameters (overwritten by the extraction script)
 └── tests/
     ├── rng.test.ts     # 4 determinism / bounds cases
     ├── dataset.test.ts # 3 determinism / distribution cases
@@ -34,7 +34,7 @@ Preset names must be unique across the registry. `registerPreset` throws on dupl
 
 ## How to override calibration
 
-`bench/load-harness/presets/calibration.json` holds the default distribution parameters. Ticket 52 overwrites this file with parameters extracted from real corpora (MovieLens 100K + GH Archive WatchEvent slices). To supply custom parameters without editing `calibration.json`, pass `tenantSizeBuckets`, `tenantTrafficBuckets`, `recordPopularityBuckets`, or `recordSizeBuckets` directly to `buildDataset`:
+`bench/load-harness/presets/calibration.json` holds the default distribution parameters. `scripts/extract-bench-calibration.ts` overwrites this file with parameters extracted from real corpora (MovieLens 100K + GH Archive WatchEvent slices). To supply custom parameters without editing `calibration.json`, pass `tenantSizeBuckets`, `tenantTrafficBuckets`, `recordPopularityBuckets`, or `recordSizeBuckets` directly to `buildDataset`:
 
 ```ts
 import { buildDataset } from "./bench/load-harness/generators/dataset.ts";
@@ -51,7 +51,7 @@ Per-call overrides take precedence over `calibration.json`; `calibration.json` t
 
 ## How the runner uses this
 
-Ticket 53's runner follows this sequence for each preset:
+The runner follows this sequence for each preset:
 
 1. `loadCalibration()` — reads `presets/calibration.json` once at startup.
 2. `buildDataset({ seed, ...preset.datasetParams, calibration })` — builds the in-memory tenant/record tree.
@@ -59,6 +59,6 @@ Ticket 53's runner follows this sequence for each preset:
    - **seed phase:** PUT every record once via `Writer`.
    - **other phases:** `generateOpStream({ seed, dataset, mix, opCount })` then dispatch each `Op` to the appropriate `Db` / `Writer` call.
    - Take a `CountingStorage` snapshot before and after each phase.
-4. Emit the per-phase snapshot deltas as the run-JSON (ticket 54).
+4. Emit the per-phase snapshot deltas as the run-JSON.
 
 The `seed` fed to `buildDataset` and `generateOpStream` should be the same value (typically passed via `--seed=` on the CLI) so that the full run is reproducible from a single integer.

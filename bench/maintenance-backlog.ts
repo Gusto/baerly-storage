@@ -1,5 +1,5 @@
 /**
- * Maintenance-backlog-vs-write-rate probe — Phase 2 DECISIVE evidence.
+ * Maintenance-backlog-vs-write-rate probe — evidence on whether free-rate maintenance keeps up.
  *
  * THE QUESTION. The "paid Workers are throttled at the free maintenance
  * rate" motivation rests entirely on one unmeasured claim: that

@@ -1,5 +1,5 @@
 /**
- * S1 probe: at which call count does each subrequest-like operation fail on
+ * subrequest probe: at which call count does each subrequest-like operation fail on
  * Workers Free? One request runs one probe (so each probe starts with a full
  * budget) as PROBE_CALLS sequential calls and records the first failure:
  *

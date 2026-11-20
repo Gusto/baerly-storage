@@ -9,9 +9,9 @@ An owner-deployed Cloudflare Worker that measures, on a real Workers account, pe
 
   The report says how many leaves fit under Free's ~10 ms per (path, B, d), measured directly with no factor involved.
 
-- **S1 probe cells (`probe-r2-head`, `probe-fetch`, `probe-cache-match`):** 60 sequential calls per request, recording the call index at which each first fails and the exact error. `probe-r2-head` is `env.BUCKET.head` on a missing key; `probe-fetch` is the control (`HEAD https://example.com/`, no data sent); `probe-cache-match` is `caches.default.match`. This answers whether R2 binding calls on Free count against the 50-subrequest cap.
+- **subrequest-probe cells (`probe-r2-head`, `probe-fetch`, `probe-cache-match`):** 60 sequential calls per request, recording the call index at which each first fails and the exact error. `probe-r2-head` is `env.BUCKET.head` on a missing key; `probe-fetch` is the control (`HEAD https://example.com/`, no data sent); `probe-cache-match` is `caches.default.match`. This answers whether R2 binding calls on Free count against the 50-subrequest cap.
 
-  - **Free account only.** The S1 probes are valid only on a Workers Free account. On Paid the 50 cap does not apply and every probe reads clean.
+  - **Free account only.** The subrequest probes are valid only on a Workers Free account. On Paid the 50 cap does not apply and every probe reads clean.
   - **Cache probe caveat.** The Cache API is documented as a no-op on `*.workers.dev`, so a clean `probe-cache-match` result there is inconclusive for "Cache API calls count against 50". It is meaningful only on a custom-domain route. The R2 and fetch probes are unaffected.
 
 ## Data, bindings, secrets
@@ -37,11 +37,11 @@ Run the baseline on a quiet machine. It records the load average before and afte
 
    No zone permissions (no routes, workers.dev only). Revoke the token after step 9.
 
-1. `./wrangler.sh whoami` and confirm the account is an **owner-approved test account on the Workers Free plan**. This bench uses synthetic data only; no company data goes to the account. The S1 probes are valid only on Free.
+1. `./wrangler.sh whoami` and confirm the account is an **owner-approved test account on the Workers Free plan**. This bench uses synthetic data only; no company data goes to the account. The subrequest probes are valid only on Free.
 2. Create the empty synthetic bucket: `./wrangler.sh r2 bucket create baerly-cpu-factor-synthetic`.
 3. From the repo root, `pnpm bench:cpu-factor:build` (wrangler deploys `dist/worker.js`, which nothing else builds). Then from `bench/cpu-factor-worker/`: `./wrangler.sh deploy`. The Worker gets a public `*.workers.dev` URL that serves only synthetic data. A run sends about 12,000 requests, within Free's 100,000 per day. Delete the Worker promptly.
 4. Terminal 1: `./wrangler.sh tail baerly-cpu-factor-bench --format json > tail.json`.
-5. Terminal 2: `./run-cells.sh https://baerly-cpu-factor-bench.<subdomain>.workers.dev 200` (about 20 minutes; S1 probe cells send 5 requests each). A `503` or error 1102 under a cell means the platform killed it for exceeding CPU; that is expected for large cells.
+5. Terminal 2: `./run-cells.sh https://baerly-cpu-factor-bench.<subdomain>.workers.dev 200` (about 20 minutes; subrequest-probe cells send 5 requests each). A `503` or error 1102 under a cell means the platform killed it for exceeding CPU; that is expected for large cells.
 6. Wait about 10 seconds, stop the tail, and check `grep -c '"cpuTime"' tail.json`. If 0, export per-invocation CPU from the dashboard (Observability) as JSON with URL, outcome and `$workers.cpuTimeMs`, and save it as `observability.json`.
 7. Strip the chosen capture to synthetic fields only (tail events also carry request headers and connection metadata). This normalizes both tail and Observability fields:
 
@@ -64,7 +64,7 @@ Run the baseline on a quiet machine. It records the load average before and afte
 9. **Delete everything:** `./wrangler.sh delete baerly-cpu-factor-bench` and `./wrangler.sh r2 bucket delete baerly-cpu-factor-synthetic`. Confirm in the dashboard.
 10. Return only `cpu-factor-events.jsonl` (bench URLs, outcomes, CPU times and the bench's own log lines) through an internal channel.
 
-Run this deployment in the same window as any other S1 evidence, so both see the same platform conditions.
+Run this deployment in the same window as any other Workers Free-limit evidence, so both see the same platform conditions.
 
 ## Reading the output
 

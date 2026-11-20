@@ -1,8 +1,8 @@
 /**
  * Load-harness CLI entry point.
  *
- * Wires the ticket-50 CountingStorage + ticket-51 preset framework
- * + ticket-53 runner + manifest cache into one invocation. Writes
+ * Wires the `CountingStorage` wrapper, the preset framework, the runner
+ * and the manifest cache into one invocation. Writes
  * a canonical `RunResult` JSON to `bench/results/load/` per the
  * shape locked in `assemble-result.ts`.
  *
@@ -27,7 +27,7 @@
  * sub-1 write/s under this harness, so larger `--records`/`--ops`
  * (e.g. 200/400) can run for many minutes without completing.
  *
- * Result JSON shape locked at ticket 54 §2. Run an analysis pass via:
+ * Result JSON shape locked in `assemble-result.ts`. Run an analysis pass via:
  *
  * ```sql
  * SELECT run.preset, run.cache_mode, derived.get_per_op
@@ -210,7 +210,7 @@ async function buildVariant(v: Variant): Promise<VariantBuild> {
     }
     case "cloudflare-r2": {
       throw new Error(
-        `bench:load: --variant=cloudflare-r2 is deferred. Run the miniflare-pool variant under a future ticket.`,
+        `bench:load: --variant=cloudflare-r2 is deferred. Run the miniflare-pool variant instead.`,
       );
     }
     case "node-gcs": {

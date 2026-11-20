@@ -1,5 +1,5 @@
 /**
- * Seed phase. Consumes a `Dataset` (ticket 51) and issues one
+ * Seed phase. Consumes a `Dataset` and issues one
  * `db.collection(collection).insert(...)` per record. No batching at MVP
  * — one `commit()` per row is a different workload shape than
  * "user pastes a CSV"; revisit if a future preset wants bulk-load

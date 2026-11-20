@@ -41,9 +41,9 @@ export interface OpLatencyByOp {
 
 /**
  * The `object_store` + `latency_ms` + `ops_by_prefix` portion of the
- * load-harness run-JSON shape. Ticket 54 (load-harness CLI) wraps this
+ * load-harness run-JSON shape. The load-harness CLI wraps this
  * inside a larger object with `run`, `derived`, `cache`, and
- * `compaction` blocks. This ticket only owns this inner portion.
+ * `compaction` blocks. This type only owns the inner portion.
  *
  * `ops_by_prefix` is keyed by the first two segments of each key —
  * e.g., `tenant-007/collection-notes` — so the load-bench operator
