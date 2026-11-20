@@ -336,7 +336,11 @@ export default defineConfig({
     //
     // `reporters` is a top-level option — `ProjectConfig` doesn't accept it,
     // so the setting applies across both projects from here.
-    reporters: process.env["CLAUDECODE"] ? ["minimal"] : undefined,
+    //
+    // Spread rather than `reporters: undefined`: an explicit `undefined` key
+    // overrides vitest's default reporters with nothing, so every run
+    // outside Claude Code (CI included) printed no results at all.
+    ...(process.env["CLAUDECODE"] ? { reporters: ["minimal"] } : {}),
     coverage: {
       provider: "v8",
       include: ["src/**", "packages/*/src/**"],
