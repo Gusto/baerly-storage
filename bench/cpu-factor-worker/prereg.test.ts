@@ -223,6 +223,20 @@ describe("evaluatePrereg", () => {
     expect(formatPrereg(stray.a, stray.p, stray.v)).toContain("Unmatched events: 1 (non-ok: 0)");
   });
 
+  test("a killed warmup is reported but does not fail its decision cell", () => {
+    const events = goodEvents();
+    const target = DECISION[0]!;
+    const warm = events.findIndex((e) => e.url === url(target, "&warmup=1"));
+    events[warm] = { ...events[warm]!, outcome: "exceededCpu" };
+    events[warm + 1] = { ...events[warm + 1]!, outcome: "exception" };
+    const { v, a, p } = verdict(events);
+    expect(v.cells[0]!.pass).toBe(true);
+    expect(v.pass).toBe(true);
+    const text = formatPrereg(a, p, v);
+    expect(text).toContain(`${target} | 60 | 0 | 0 | 0 | 0 | 1 / 1 | 5.00 | PASS`);
+    expect(text).toContain(`Note: 1 decision cell(s) had killed warmups (${target})`);
+  });
+
   test("without prereg the report is unchanged by incomplete tracking", () => {
     const a = analyze(goodEvents(), BASE);
     expect(a.method).toBe("nearest-rank");
