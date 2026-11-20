@@ -130,7 +130,7 @@ For production recovery, treat restore as a cutover to a proven copy, not as an 
 
 Long-poll readers no longer need draining. A `--force` reseed re-mints the collection's `generation` nonce, and every `/v1/since` cursor carries the generation it was minted under, so a stale pre-restore cursor is rejected with `CursorExpired` (HTTP 410) telling the client to re-bootstrap. The React client (`useQuery` subscriptions) acts on that automatically: it drops the cursor and resumes from the collection's log floor. A custom `/v1/since` consumer must handle the 410 the same way — restart with an empty cursor rather than retrying the rejected one.
 
-This closes a real hazard rather than merely documenting it. A `--force` reseed can lower the live log floor (`log_seq_start`), and the older protocol detected a dead cursor only by testing its seq against that floor — so a lowered floor let a stale cursor pass, silently resume into the new generation, and miss every restored row beneath it. See invariant 13 in [the sync protocol spec](../spec/sync-protocol.md).
+A `--force` reseed keeps the old live log floor (`log_seq_start`) as a lower bound, protecting restored data from folded log survivors that LIST has not shown. The generation check also prevents a pre-restore cursor from resuming through those retained old entries. Older restore builds could lower the floor and reuse slots, which let seq-only cursors silently skip restored rows. See invariant 13 in [the sync protocol spec](../spec/sync-protocol.md).
 
 The safe cutover shape is:
 

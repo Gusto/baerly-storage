@@ -505,15 +505,11 @@ async function pollOnce(
       if (session === SINCE_NO_GENERATION) {
         cursorGeneration = NO_GENERATION;
       }
-      // (1) Wrong generation. A seq identifies a `log/<seq>` slot, and
-      // slots are REUSED: `restore --force` truncates and reseeds
-      // `log_seq_start` to one past the highest surviving log object,
-      // which can land below the old floor (the floor exemption —
-      // invariant 12 in `docs/spec/sync-protocol.md`). A pre-restore
-      // cursor would then clear check (2) below and resume into the new
-      // generation, silently skipping every restored row beneath it —
-      // gapped, not broken, which is the failure mode a sync client can't
-      // detect for itself.
+      // (1) Wrong generation. Retained entries below the fold floor can
+      // belong to a truncated collection, so a pre-restore cursor must
+      // expire before reading them. Older restore builds could also lower
+      // the floor and reuse slots, letting a seq-only cursor silently skip
+      // restored rows. A generation comparison covers both cases.
       //
       // Both spellings of "no generation" — a manifest predating the
       // field and a bare-LSN cursor predating the composite shape —

@@ -359,10 +359,10 @@ describe("fold-stage0 frozen corpus: current.json compatibility contract", () =>
     ).rejects.toMatchObject({ code: "Internal" });
   });
 
-  test("restore --force deliberately bypasses the floor guard and may lower the floor", async () => {
+  test("restore --force retains the frozen fold floor when no old log objects remain", async () => {
     expect.hasAssertions();
     memoryBucketSerial += 1;
-    const bucket = `memory://fold-stage0-floor-exemption-${memoryBucketSerial}`;
+    const bucket = `memory://fold-stage0-restore-floor-${memoryBucketSerial}`;
     const parsed = await parseBucketUri(bucket);
     const storage = parsed.storage;
     await storage.put(
@@ -378,8 +378,8 @@ describe("fold-stage0 frozen corpus: current.json compatibility contract", () =>
     expect(code).toBe(0);
     expect(read).not.toBeNull();
     expect(read!.json.snapshot).toBeNull();
-    expect(read!.json.log_seq_start).toBe(0);
-    expect(read!.json.tail_hint).toBe(1);
+    expect(read!.json.log_seq_start).toBe(9);
+    expect(read!.json.tail_hint).toBe(10);
   });
 });
 
