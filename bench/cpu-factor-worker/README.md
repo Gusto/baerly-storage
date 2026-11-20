@@ -83,7 +83,15 @@ Run this deployment in the same window as any other S1 evidence, so both see the
 - `percentileMethod`: `nearest-rank` (the analyzer's default without `--prereg`) or `r7` (linear interpolation, Hyndman-Fan type 7). It applies to every percentile in the report, and the verdict names it.
 - `capture`: `requestsPerCell` and `warmupsPerCell` (what `run-cells.sh` sends; checked against the events per decision cell) and `concurrency` (`xargs -P`; events do not record it, so it is printed as declared). Other keys are refused.
 
-A decision cell passes iff it has no event missing a URL, outcome or CPU time, zero kills, zero `other` outcomes, at least `sampleFloor` ok samples and p99 at or below the threshold. The verdict passes iff at least one decision cell passes and nothing mismatches: an absent decision cell, request or warmup counts that differ from `capture`, an incomplete event in a decision cell, or an incomplete event that cannot be attributed to a cell each print a reason and make the run FAIL (exit 1). Without `--prereg` the output is unchanged.
+A decision cell passes iff it has no event missing a URL, outcome or CPU time, zero kills, zero `other` outcomes, at least `sampleFloor` ok samples and p99 at or below the threshold. The verdict passes iff at least one decision cell passes and nothing mismatches. Each of these prints a reason and makes the run FAIL (exit 1):
+
+- a decision cell absent from the capture;
+- request or warmup counts per decision cell that differ from `capture`;
+- a decision cell whose `&i=` request ids are not exactly `1..requestsPerCell`. Duplicate event lines are detected, never deduplicated: a repeated id fails the run, since a duplicate could otherwise cancel a lost event in the count. An event without an id fails it too;
+- an incomplete event in a decision cell, or one that cannot be attributed to any cell;
+- an unmatched event (no readable known cell) whose outcome is not `ok`, since it may be a decision-cell kill with a mangled URL. Unmatched `ok` events are counted in the verdict but do not fail it: the `workers.dev` URL is public, and a lost decision-cell event already fails its count.
+
+Without `--prereg` the output is unchanged.
 
 ## Not covered yet
 

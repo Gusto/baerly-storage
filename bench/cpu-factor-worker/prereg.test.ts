@@ -18,10 +18,11 @@ const PREREG = {
 };
 
 const url = (cell: string, extra = "") => `https://x.workers.dev/?cell=${cell}${extra}`;
-const ev = (cell: string, cpu = 5, outcome = "ok") => ({
+/** Request `i` of a cell, as `run-cells.sh` sends it. */
+const ev = (cell: string, i: number, cpu = 5, outcome = "ok") => ({
   outcome,
   cpuTime: cpu,
-  url: url(cell),
+  url: url(cell, `&i=${i}`),
   logs: [],
 });
 
@@ -29,8 +30,11 @@ const ev = (cell: string, cpu = 5, outcome = "ok") => ({
 const goodEvents = (cells: readonly string[] = DECISION) =>
   cells.flatMap((c) => [
     ...Array.from({ length: 2 }, () => ({ outcome: "ok", cpuTime: 99, url: url(c, "&warmup=1") })),
-    ...Array.from({ length: 60 }, () => ev(c)),
+    ...Array.from({ length: 60 }, (_, i) => ev(c, i + 1)),
   ]);
+/** Index of request `i` of `cell` in `goodEvents()`. */
+const at = (events: readonly { url: string }[], cell: string, i: number) =>
+  events.findIndex((e) => e.url === url(cell, `&i=${i}`));
 
 const verdict = (events: object[], prereg: object = PREREG) => {
   const p = parsePrereg(prereg);
@@ -53,7 +57,7 @@ describe("percentile methods", () => {
   test("nearest-rank stays the default and differs from R-7", () => {
     expect(pct(xs, 90)).toBe(9);
     expect(pct(xs, 50)).toBe(5);
-    const events = [1, 2, 3, 4].map((cpu) => ev("noop", cpu));
+    const events = [1, 2, 3, 4].map((cpu, i) => ev("noop", i + 1, cpu));
     expect(analyze(events, BASE).rows.find((r) => r.cell.name === "noop")!.d.p50).toBe(2);
     expect(
       analyze(events, BASE, { method: "r7" }).rows.find((r) => r.cell.name === "noop")!.d.p50,
@@ -103,8 +107,8 @@ describe("evaluatePrereg", () => {
   });
 
   test("a kill in a decision cell fails the run even though other cells pass", () => {
-    const events = goodEvents().filter((_, i) => i !== 5); // drop one ok of cell 0 ...
-    events.push(ev(DECISION[0]!, 10, "exceededCpu")); // ... replaced by a kill
+    const events = goodEvents();
+    events[at(events, DECISION[0]!, 4)] = ev(DECISION[0]!, 4, 10, "exceededCpu"); // one ok -> kill
     const { v } = verdict(events);
     expect(v.cells[0]!.pass).toBe(false);
     expect(v.cells[0]!.reasons.join()).toContain("1 killed");
@@ -183,6 +187,40 @@ describe("evaluatePrereg", () => {
     expect(v.cells[1]!.pass).toBe(false);
     expect(v.failures.join()).toContain("cannot be attributed to any cell");
     expect(v.pass).toBe(false);
+  });
+
+  test("a duplicated event line FAILs even when it cancels a count shortfall", () => {
+    const events = goodEvents();
+    const target = DECISION[0]!;
+    events[at(events, target, 7)] = ev(target, 8); // request 7 lost, request 8 twice
+    const { v, a } = verdict(events);
+    expect(a.rows.find((r) => r.cell.name === target)!.invocations).toBe(60);
+    expect(v.failures).toEqual([`${target}: duplicate request id(s) i=8 x2`]);
+    expect(v.pass).toBe(false);
+  });
+
+  test("a decision-cell event without a request id, or with one outside 1..N, FAILs", () => {
+    const target = DECISION[0]!;
+    const noId = goodEvents();
+    noId[at(noId, target, 3)]!.url = url(target);
+    expect(verdict(noId).v.failures).toEqual([
+      `${target}: 1 event(s) without a request id (&i=), so duplicates cannot be ruled out`,
+    ]);
+    const outside = goodEvents();
+    outside[at(outside, target, 60)]!.url = url(target, "&i=61");
+    expect(verdict(outside).v.failures).toEqual([`${target}: request id(s) outside 1..60: i=61`]);
+  });
+
+  test("an unmatched non-ok event FAILs the run; an unmatched ok one is only listed", () => {
+    const mangled = { outcome: "exceededCpu", cpuTime: 12, url: "https://x.workers.dev/?cel=x" };
+    const killed = verdict([...goodEvents(), mangled]);
+    expect(killed.v.failures).toEqual([
+      "1 unmatched event(s) with a non-ok outcome; any of them may be a decision-cell kill whose cell could not be read",
+    ]);
+    expect(killed.v.pass).toBe(false);
+    const stray = verdict([...goodEvents(), { ...mangled, outcome: "ok" }]);
+    expect(stray.v.pass).toBe(true);
+    expect(formatPrereg(stray.a, stray.p, stray.v)).toContain("Unmatched events: 1 (non-ok: 0)");
   });
 
   test("without prereg the report is unchanged by incomplete tracking", () => {
