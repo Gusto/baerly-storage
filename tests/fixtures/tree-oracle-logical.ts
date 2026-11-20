@@ -98,6 +98,7 @@
  * - Every value is a string, finite number, boolean, array or plain object:
  *   no `null`, `undefined`, function, symbol, bigint, accessor property or
  *   array hole.
+ * - Objects and arrays nest at most {@link MAX_DOCUMENT_DEPTH} levels, counting the root as 1.
  * - The body's canonical bytes are at most {@link MAX_DOCUMENT_BYTES}.
  *
  * An entry with no string `doc_id` names no row, so no later entry can
@@ -303,6 +304,9 @@ export const DOC_ID_MAX_UTF8_BYTES = 256;
 /** Canonical-byte ceiling for one row: 1 MiB (`MAX_DOCUMENT_BYTES` in `packages/protocol/src/constants.ts`). */
 export const MAX_DOCUMENT_BYTES = 1_048_576;
 
+/** Container-depth ceiling, restating `MAX_DOCUMENT_DEPTH` in `packages/protocol/src/constants.ts`. */
+export const MAX_DOCUMENT_DEPTH = 100;
+
 /** A row's current candidate: a body, or a corrupt write that throws if it survives. */
 type LiveRow =
   | { readonly body: DocumentData; readonly origin: string }
@@ -469,14 +473,14 @@ const assertSurvivor = (id: string, body: DocumentData, origin: string): void =>
   if (body["_id"] !== id) {
     throw domainError(origin, id, `has a body whose _id is ${JSON.stringify(body["_id"])}`);
   }
-  assertDocumentValue(body, origin, id);
+  assertDocumentValue(body, origin, id, 1);
   const bytes = utf8.encode(JSON.stringify(copyDocument(body))).length;
   if (bytes > MAX_DOCUMENT_BYTES) {
     throw domainError(origin, id, `has ${bytes} canonical bytes, over ${MAX_DOCUMENT_BYTES}`);
   }
 };
 
-const assertDocumentValue = (value: unknown, origin: string, id: string): void => {
+const assertDocumentValue = (value: unknown, origin: string, id: string, depth: number): void => {
   if (typeof value === "string" || typeof value === "boolean") {
     return;
   }
@@ -486,15 +490,18 @@ const assertDocumentValue = (value: unknown, origin: string, id: string): void =
     }
     return;
   }
+  if (typeof value === "object" && value !== null && depth > MAX_DOCUMENT_DEPTH) {
+    throw domainError(origin, id, `nests deeper than ${MAX_DOCUMENT_DEPTH} container levels`);
+  }
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index++) {
-      assertOwnDataProperty(value, String(index), origin, id);
+      assertOwnDataProperty(value, String(index), origin, id, depth + 1);
     }
     return;
   }
   if (isPlainObject(value)) {
     for (const key of Object.keys(value)) {
-      assertOwnDataProperty(value, key, origin, id);
+      assertOwnDataProperty(value, key, origin, id, depth + 1);
     }
     return;
   }
@@ -507,6 +514,7 @@ const assertOwnDataProperty = (
   key: string,
   origin: string,
   id: string,
+  depth: number,
 ): void => {
   const descriptor = Object.getOwnPropertyDescriptor(container, key);
   if (descriptor === undefined) {
@@ -515,7 +523,7 @@ const assertOwnDataProperty = (
   if (!("value" in descriptor)) {
     throw domainError(origin, id, `holds an accessor property ${JSON.stringify(key)}`);
   }
-  assertDocumentValue(descriptor.value, origin, id);
+  assertDocumentValue(descriptor.value, origin, id, depth);
 };
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
