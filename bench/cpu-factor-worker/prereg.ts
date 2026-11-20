@@ -99,6 +99,10 @@ export const parsePrereg = (raw: unknown): Prereg => {
     for (const c of cells as string[]) {
       if (!Object.hasOwn(CELL_BY_NAME, c)) {
         errs.push(`decision cell "${c}" is not a known cell`);
+      } else if (CELL_BY_NAME[c]!.samples !== undefined) {
+        errs.push(
+          `decision cell "${c}" is sent ${CELL_BY_NAME[c]!.samples} times, not requestsPerCell; only uniformly sent cells can decide`,
+        );
       }
       if (seen.has(c)) {
         errs.push(`decision cell "${c}" is listed twice`);
@@ -118,11 +122,75 @@ export const parsePrereg = (raw: unknown): Prereg => {
     num(cap["requestsPerCell"], "capture.requestsPerCell", true, 1);
     num(cap["warmupsPerCell"], "capture.warmupsPerCell", true, 0);
     num(cap["concurrency"], "capture.concurrency", true, 1);
+    const floor = raw["sampleFloor"];
+    const n = cap["requestsPerCell"];
+    if (typeof floor === "number" && typeof n === "number" && floor > n) {
+      errs.push(
+        `sampleFloor ${floor} exceeds capture.requestsPerCell ${n}, so no decision cell could pass`,
+      );
+    }
   }
   if (errs.length > 0) {
     throw new Error(`prereg: ${errs.join("; ")}`);
   }
   return raw as unknown as Prereg;
+};
+
+/**
+ * Keys that occur twice in one JSON object, as dotted paths. `JSON.parse`
+ * keeps the last value silently, so a file could declare two thresholds.
+ */
+export const duplicateKeys = (text: string): string[] => {
+  const dups: string[] = [];
+  // One frame per open container; `expectKey` marks where an object's next key starts.
+  const stack: { obj: boolean; keys: Set<string>; path: string; expectKey: boolean }[] = [];
+  let lastKey = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const top = stack.at(-1);
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') {
+        j += text[j] === "\\" ? 2 : 1;
+      }
+      if (top?.obj === true && top.expectKey) {
+        let key: string;
+        try {
+          key = JSON.parse(text.slice(i, j + 1)) as string;
+        } catch {
+          return dups; // malformed; JSON.parse reports it
+        }
+        if (top.keys.has(key)) {
+          dups.push(top.path === "" ? key : `${top.path}.${key}`);
+        }
+        top.keys.add(key);
+        top.expectKey = false;
+        lastKey = key;
+      }
+      i = j;
+    } else if (ch === "{" || ch === "[") {
+      let path = "";
+      if (top !== undefined) {
+        const parent = top.obj ? lastKey : "[]";
+        path = top.path === "" ? parent : `${top.path}.${parent}`;
+      }
+      stack.push({ obj: ch === "{", keys: new Set(), path, expectKey: ch === "{" });
+    } else if (ch === "}" || ch === "]") {
+      stack.pop();
+    } else if (ch === "," && top?.obj === true) {
+      top.expectKey = true;
+    }
+  }
+  return dups;
+};
+
+/** Parse and validate prereg file text; refuses duplicate keys. Throws on any problem. */
+export const parsePreregText = (text: string): Prereg => {
+  const dups = duplicateKeys(text);
+  if (dups.length > 0) {
+    throw new Error(`prereg: duplicate key(s) ${dups.map((k) => `"${k}"`).join(", ")}`);
+  }
+  return parsePrereg(JSON.parse(text));
 };
 
 export const ANALYZE_USAGE =
