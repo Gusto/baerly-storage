@@ -119,7 +119,7 @@ describe("orderRows", () => {
     expect(got.map((row) => row.docId)).toEqual(want.map((row) => row.docId));
   });
 
-  test("keeps tied rows in input order on reversed input", () => {
+  test("orders tied keys by _id on reversed input", () => {
     const rows = [3, 3, 2, 2, 2, 1, 1].map((a, i) => ({
       docId: `d${i}`,
       doc: { _id: `d${i}`, a },
@@ -132,7 +132,7 @@ describe("orderRows", () => {
     ]);
   });
 
-  test("breaks heap ties by input index", () => {
+  test("breaks heap ties by _id", () => {
     // Neither in order nor reversed, so the heap path runs.
     const rows = Array.from({ length: 40 }, (_, i) => ({
       docId: `d${i}`,
@@ -184,4 +184,135 @@ describe("orderRows", () => {
       "d2",
     ]);
   });
+});
+
+// ---------------------------------------------------------------------
+// `order` is a total order: a fixed cross-type rank, then the value,
+// then `_id`.
+// ---------------------------------------------------------------------
+
+const rowsOf = (values: readonly unknown[]): OrderRow[] =>
+  values.map((value, i) => {
+    const doc: Record<string, unknown> = { _id: `d${i}` };
+    if (value !== undefined) {
+      doc["a"] = value;
+    }
+    return { docId: `d${i}`, doc: doc as DocumentData };
+  });
+
+const idsOf = (rows: readonly OrderRow[]): string[] => rows.map((row) => row.docId);
+
+describe("order is a total order", () => {
+  test("null sorts among numbers instead of equalling everything", () => {
+    const rows = rowsOf([5, null, 1, 3]);
+    expect(idsOf(sortByOrderSpec(rows, { a: "asc" }))).toEqual(["d1", "d2", "d3", "d0"]);
+    expect(idsOf(orderRows(rows, { a: "asc" }, 2))).toEqual(["d1", "d2"]);
+  });
+
+  test("ranks null and missing, numbers, strings, booleans, objects, arrays", () => {
+    const rows = rowsOf([[1], { x: 1 }, true, "b", 2, null, undefined, false, "a", -1]);
+    // null and missing tie on rank, so `_id` orders them.
+    expect(idsOf(sortByOrderSpec(rows, { a: "asc" }))).toEqual([
+      "d5", // null
+      "d6", // missing
+      "d9", // -1
+      "d4", // 2
+      "d8", // "a"
+      "d3", // "b"
+      "d7", // false
+      "d2", // true
+      "d1", // object
+      "d0", // array
+    ]);
+  });
+
+  test("a number never ties a string that coerces to it", () => {
+    const rows = rowsOf(["2", 10, "10", 2]);
+    expect(idsOf(sortByOrderSpec(rows, { a: "asc" }))).toEqual(["d3", "d1", "d2", "d0"]);
+  });
+
+  test("desc reverses the whole order, null and missing last", () => {
+    const rows = rowsOf([5, null, 1, undefined, "x"]);
+    expect(idsOf(sortByOrderSpec(rows, { a: "desc" }))).toEqual(["d4", "d0", "d2", "d3", "d1"]);
+  });
+
+  test("equal keys resolve by _id, in the last key's direction", () => {
+    const rows = rowsOf([1, 1, 1]);
+    expect(idsOf(sortByOrderSpec(rows.toReversed(), { a: "asc" }))).toEqual(["d0", "d1", "d2"]);
+    expect(idsOf(sortByOrderSpec(rows, { a: "desc" }))).toEqual(["d2", "d1", "d0"]);
+    expect(idsOf(sortByOrderSpec(rows.toReversed(), {}))).toEqual(["d0", "d1", "d2"]);
+  });
+
+  test("the bounded path agrees on ties and mixed types", () => {
+    const rows = rowsOf(Array.from({ length: 100 }, (_, i) => [null, 1, "1", false][i % 4]));
+    for (const dir of ["asc", "desc"] as const) {
+      expect(idsOf(orderRows(rows, { a: dir }, 7))).toEqual(
+        idsOf(sortByOrderSpec(rows, { a: dir }).slice(0, 7)),
+      );
+    }
+  });
+
+  const anyValueArb = fc.constantFrom(
+    undefined,
+    null,
+    -2,
+    0,
+    3.5,
+    "",
+    "a",
+    "ab",
+    "10",
+    "2",
+    true,
+    false,
+    { x: 1 },
+    [1],
+  );
+  const rowsArb = fc
+    .array(anyValueArb, { minLength: 0, maxLength: 40 })
+    .map((values) => rowsOf(values));
+
+  fcTest.prop({ rows: rowsArb, dir: dirArb })(
+    "sorted output is sorted and independent of input order",
+    ({ rows, dir }) => {
+      const spec = { a: dir };
+      const out = sortByOrderSpec(rows, spec);
+      for (let i = 1; i < out.length; i++) {
+        expect(sortByOrderSpec([out[i]!, out[i - 1]!], spec)).toEqual([out[i - 1], out[i]]);
+      }
+      expect(idsOf(sortByOrderSpec(rows.toReversed(), spec))).toEqual(idsOf(out));
+      expect(
+        idsOf(
+          sortByOrderSpec(
+            rows.toSorted((x, y) => (x.docId < y.docId ? 1 : -1)),
+            spec,
+          ),
+        ),
+      ).toEqual(idsOf(out));
+    },
+  );
+
+  fcTest.prop({ rows: rowsArb, dir: dirArb })(
+    "the comparator is antisymmetric and transitive",
+    ({ rows, dir }) => {
+      const spec = { a: dir };
+      const before = (x: OrderRow, y: OrderRow): boolean =>
+        idsOf(sortByOrderSpec([y, x], spec))[0] === x.docId && x.docId !== y.docId;
+      for (const x of rows) {
+        for (const y of rows) {
+          expect(before(x, y) && before(y, x)).toBe(false);
+          if (x.docId !== y.docId) {
+            expect(before(x, y) || before(y, x)).toBe(true);
+          }
+        }
+      }
+      const out = sortByOrderSpec(rows, spec);
+      // Transitivity: every earlier row orders before every later one.
+      for (let i = 0; i < out.length; i++) {
+        for (let j = i + 1; j < out.length; j++) {
+          expect(before(out[i]!, out[j]!)).toBe(true);
+        }
+      }
+    },
+  );
 });

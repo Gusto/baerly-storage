@@ -122,7 +122,7 @@ The narrowed `Db<typeof config>` carries the same `collection(name)` overloads a
 
 _When NOT to use: from the browser — call collection verbs over HTTP via `createBaerlyClient`._
 
-`Collection<T>` carries the common-case verbs directly (collection-level reads plus by-primary-key mutations). Modifiers (`where`, `order`, `limit`) return a `Query<T>` for bulk-by-predicate work. Terminals fire I/O on the spot.
+`Collection<T>` carries the common-case verbs directly (collection-level reads plus by-primary-key mutations). Modifiers (`where`, `order`, `limit`) return a `Query<T>` for bulk-by-predicate work. Terminals fire I/O on the spot. `order` is a total order: `null`/missing, numbers, strings, booleans, objects, arrays; `desc` reverses it; ties order by `_id`.
 
 ```ts
 interface Collection<T extends DocumentData = DocumentData> {

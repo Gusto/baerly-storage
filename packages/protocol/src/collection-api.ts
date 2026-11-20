@@ -102,7 +102,7 @@ export interface Collection<T extends DocumentData = DocumentData> {
    */
   where(predicate: PredicateArg<T>): Query<T>;
 
-  /** Order modifier; last call wins. */
+  /** Order modifier; last call wins. A total order, see {@link Query.order}. */
   order(spec: OrderSpec<T>): Query<T>;
 
   /** Limit modifier; last call wins. */
@@ -481,7 +481,10 @@ export type Predicate<T extends DocumentData = DocumentData> = {
     : DocumentValue;
 };
 
-/** Order specifier. Top-level fields only on day one. */
+/**
+ * Order specifier. Top-level fields only on day one. The sort is a
+ * total order; see {@link Query.order} for the rules.
+ */
 export type OrderSpec<T extends DocumentData = DocumentData> = {
   readonly [K in keyof T]?: "asc" | "desc";
 };
@@ -496,6 +499,31 @@ export type OrderSpec<T extends DocumentData = DocumentData> = {
  */
 export interface Query<T extends DocumentData = DocumentData> {
   where(predicate: PredicateArg<T>): Query<T>;
+  /**
+   * Sort the result by the spec's fields, first key most significant.
+   * The sort is a total order, the same for every value a field can hold:
+   *
+   * - Values of different types order `null` or missing, then numbers,
+   *   then strings, then booleans (`false` before `true`), then objects,
+   *   then arrays. A number never ties a string, whatever it would
+   *   coerce to.
+   * - Within a type, numbers order numerically and strings by JS `<`
+   *   (UTF-16 code units). `null` and missing tie, as do any two objects
+   *   and any two arrays.
+   * - `"desc"` reverses the whole order, so `null` or missing sort last.
+   * - Rows still tied after every key order by `_id` (UTF-8 byte
+   *   order), in the direction of the last key (`"asc"` for an empty
+   *   spec). `"desc"` is therefore the exact reverse of `"asc"`, and
+   *   the same query always returns the same order.
+   *
+   * @example
+   * ```ts
+   * const newest = await db.collection("tickets")
+   *   .order({ closed_at: "desc", priority: "asc" })
+   *   .limit(20)
+   *   .all();
+   * ```
+   */
   order(spec: OrderSpec<T>): Query<T>;
   limit(n: number): Query<T>;
 

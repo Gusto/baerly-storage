@@ -15,6 +15,8 @@ import {
   QUERY_TOP_K_SAMPLE,
 } from "@baerly/protocol";
 
+import { compareDocIds } from "./snapshot-doc-id.ts";
+
 /**
  * A materialised row paired with the `doc_id` it is stored under. The
  * mutation verbs commit under `docId`, and check that the row's own `_id`
@@ -81,68 +83,84 @@ export const limitedLength = (n: number, limit: number | undefined): number => {
 };
 
 /**
- * Compare two primitive order-key values under one direction, as
- * {@link sortByOrderSpec} does: a missing value sorts low under `asc`
- * and high under `desc`; otherwise `<`. {@link orderRows} calls it only
- * once its pre-scan has ruled out objects and `null`.
+ * The cross-type rank of an order-key value: `null` and a missing
+ * field, numbers, strings, booleans, objects, arrays. Values of
+ * different ranks never compare by value, so no JS `<` coercion
+ * (`"10" < 9`, `null < 1`) leaks into the order.
  */
-const compareKey = (a: unknown, b: unknown, desc: boolean): number => {
-  if (a === b) {
+const typeRank = (value: unknown): number => {
+  if (value === undefined || value === null) {
     return 0;
   }
-  if (a === undefined) {
-    return desc ? 1 : -1;
+  const type = typeof value;
+  if (type === "number") {
+    return 1;
   }
-  if (b === undefined) {
-    return desc ? -1 : 1;
+  if (type === "string") {
+    return 2;
   }
-  const cmp = (a as number) < (b as number) ? -1 : 1;
-  return desc ? -cmp : cmp;
+  if (type === "boolean") {
+    return 3;
+  }
+  return Array.isArray(value) ? 5 : 4;
 };
 
 /**
- * Stable multi-key sort built from an `OrderSpec`. Keys are taken in
- * the spec's insertion order, which matches the caller's source-order
- * expectation. `Array.prototype.sort` is stable on Node 26+ and Workerd.
+ * Ascending comparison of two order-key values: by {@link typeRank},
+ * then within a rank by `<` (booleans `false < true`). `null` and a
+ * missing field tie, as do any two objects and any two arrays, which
+ * have no value order; the caller's `_id` tiebreak settles those.
+ */
+const compareValues = (a: unknown, b: unknown): number => {
+  const rankA = typeRank(a);
+  const rankB = typeRank(b);
+  if (rankA !== rankB) {
+    return rankA < rankB ? -1 : 1;
+  }
+  if (rankA === 0 || rankA >= 4 || a === b) {
+    return 0;
+  }
+  return (a as number) < (b as number) ? -1 : 1;
+};
+
+/**
+ * The total order {@link sortByOrderSpec} sorts by: each key in the
+ * spec's order by {@link compareValues}, negated under `desc`, then
+ * the row's `_id` by UTF-8 byte order. `desc` reverses the whole
+ * order, so `null` and missing sort last. The `_id` tiebreak takes the
+ * last key's direction (`asc` for an empty spec), which makes `desc` the
+ * exact reverse of `asc`. `docId` is the row's `_id`, unique per row, so
+ * no two rows tie.
+ */
+const makeRowComparator = <D extends DocumentData>(
+  spec: OrderSpec<D>,
+): ((a: StoredDoc<D>, b: StoredDoc<D>) => number) => {
+  const fields = Object.keys(spec) as Array<keyof D>;
+  const desc = fields.map((field) => spec[field] === "desc");
+  const idSign = desc[desc.length - 1] === true ? -1 : 1;
+  return (a, b) => {
+    for (let j = 0; j < fields.length; j++) {
+      const cmp = compareValues(a.doc[fields[j]!], b.doc[fields[j]!]);
+      if (cmp !== 0) {
+        return desc[j]! ? -cmp : cmp;
+      }
+    }
+    return idSign * compareDocIds(a.docId, b.docId);
+  };
+};
+
+/**
+ * Stable multi-key sort built from an `OrderSpec`, a total order (see
+ * `Query.order`): keys are taken in the spec's insertion order, which
+ * matches the caller's source-order expectation, then `_id` breaks
+ * ties.
  *
  * Top-level fields only (locked at `OrderSpec<T>`).
- * Values are `DocumentValue` — string / number / boolean / object —
- * but only the primitive types are sensibly orderable; comparing two
- * objects falls through to "considered equal," which preserves the
- * stable-sort order of the input.
  */
 export const sortByOrderSpec = <D extends DocumentData, R extends StoredDoc<D>>(
   rows: readonly R[],
   spec: OrderSpec<D>,
-): R[] => {
-  const entries = Object.entries(spec) as Array<[keyof D, "asc" | "desc"]>;
-  return rows.toSorted((a, b) => {
-    for (const [field, dir] of entries) {
-      const av: D[keyof D] | undefined = a.doc[field];
-      const bv: D[keyof D] | undefined = b.doc[field];
-      if (av === bv) {
-        continue;
-      }
-      // `undefined` (missing field) sorts low under asc / high under
-      // desc — same shape SQL's `NULLS FIRST` gives on asc.
-      if (av === undefined) {
-        return dir === "desc" ? 1 : -1;
-      }
-      if (bv === undefined) {
-        return dir === "desc" ? -1 : 1;
-      }
-      // string / number / boolean compare uniformly under `<`. Booleans
-      // compare false < true (JS default). Object values fall through
-      // as "considered equal" — see JSDoc above.
-      if (typeof av === "object" || typeof bv === "object") {
-        continue;
-      }
-      const cmp = av < bv ? -1 : 1;
-      return dir === "desc" ? -cmp : cmp;
-    }
-    return 0;
-  });
-};
+): R[] => rows.toSorted(makeRowComparator(spec));
 
 /**
  * `sortByOrderSpec(rows, spec)` cut by `limit` as the row path cuts it,
@@ -150,24 +168,15 @@ export const sortByOrderSpec = <D extends DocumentData, R extends StoredDoc<D>>(
  *
  * The bounded path runs when `limit` is an integer in
  * `[1, QUERY_TOP_K_MAX]` below `rows.length` (PostgreSQL's bounded
- * top-N heapsort for `ORDER BY … LIMIT` has the same shape). One O(n)
- * pass checks that each order key holds a single primitive type (plus
- * missing values), under which the comparator is a total preorder; a
- * key holding objects, `null` or mixed types falls back to the full
- * sort, whose comparator is not transitive there. The same pass
- * compares adjacent rows:
+ * top-N heapsort for `ORDER BY … LIMIT` has the same shape). A linear
+ * pass compares adjacent rows under the total order, including the
+ * `_id` tiebreak:
  *
- * - No row orders before its predecessor: the input is already in
- *   order, so the first `limit` rows are the answer.
- * - No row orders after its predecessor: the input is in reverse order,
- *   so the answer is read from the end, keeping tied rows in input
- *   order.
- * - Otherwise a max-heap keeps the best `limit` rows under the
- *   comparator, ties broken by input index, which is the stable sort's
- *   order. The heap's result does not depend on the order rows are fed
- *   in, so it reads the input from the end when more compared adjacent
- *   pairs fall than rise (later rows ordering first), which keeps root
- *   replacements rare on nearly reversed input.
+ * - Already ordered input returns its first `limit` rows.
+ * - Reverse ordered input returns its last `limit` rows in reverse.
+ * - Otherwise a max-heap keeps the best `limit` rows. It scans from
+ *   the end when more adjacent pairs fall than rise, reducing heap
+ *   replacements on nearly reversed input.
  *
  * The output is identical to `sortByOrderSpec(rows, spec).slice(0, limit)`.
  */
@@ -186,56 +195,25 @@ export const orderRows = <D extends DocumentData, R extends StoredDoc<D>>(
   ) {
     return sortByOrderSpec(rows, spec);
   }
-  const fields = Object.keys(spec) as Array<keyof D>;
-  const desc = fields.map((field) => spec[field] === "desc");
-  const types: Array<string | undefined> = [];
-  // Key values of the previous and current row, so each row is read once.
-  let prev: unknown[] = [];
-  let cur: unknown[] = [];
+  const compareRows = makeRowComparator(spec);
   let ascents = 0;
   let descents = 0;
-  for (let i = 0; i < n; i++) {
-    const doc = rows[i]!.doc;
-    for (let j = 0; j < fields.length; j++) {
-      const value: unknown = doc[fields[j]!];
-      if (value !== undefined) {
-        const type = typeof value;
-        if (type === "object" || (types[j] !== undefined && types[j] !== type)) {
-          return sortByOrderSpec(rows, spec).slice(0, limit);
-        }
-        types[j] = type;
-      }
-      cur[j] = value;
-    }
+  for (let i = 1; i < n; i++) {
     // Compare a sample prefix, then only while the input still looks
     // monotone: the counts pick a path, the answer never depends on them.
-    if (i > 0 && (i <= QUERY_TOP_K_SAMPLE || ascents === 0 || descents === 0)) {
-      let cmp = 0;
-      for (let j = 0; j < fields.length && cmp === 0; j++) {
-        cmp = compareKey(prev[j], cur[j], desc[j]!);
-      }
+    if (i <= QUERY_TOP_K_SAMPLE || ascents === 0 || descents === 0) {
+      const cmp = compareRows(rows[i - 1]!, rows[i]!);
       if (cmp < 0) {
         ascents++;
       } else if (cmp > 0) {
         descents++;
       }
     }
-    const swap = prev;
-    prev = cur;
-    cur = swap;
   }
   if (descents === 0) {
     return rows.slice(0, limit);
   }
-  const compareKeys = (a: number, b: number): number => {
-    const x = rows[a]!.doc;
-    const y = rows[b]!.doc;
-    let cmp = 0;
-    for (let j = 0; j < fields.length && cmp === 0; j++) {
-      cmp = compareKey(x[fields[j]!], y[fields[j]!], desc[j]!);
-    }
-    return cmp;
-  };
+  const compareKeys = (a: number, b: number): number => compareRows(rows[a]!, rows[b]!);
   if (ascents === 0) {
     // Reverse order: take tie groups from the end, each in input order.
     const out: R[] = [];
