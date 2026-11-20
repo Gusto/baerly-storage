@@ -101,7 +101,13 @@ const cpuOf = (e: Json): unknown =>
   e?.["cpuTimeMs"] ??
   e?.["$workers"]?.["cpuTimeMs"] ??
   e?.["$metadata"]?.["cpuTimeMs"];
-const outcomeOf = (e: Json): string => e?.["outcome"] ?? e?.["$workers"]?.["outcome"] ?? "ok";
+/**
+ * A record without an outcome is not evidence of success: a capture that drops
+ * the field would otherwise count killed invocations as ok samples.
+ */
+const MISSING_OUTCOME = "missing";
+const outcomeOf = (e: Json): string =>
+  e?.["outcome"] ?? e?.["$workers"]?.["outcome"] ?? MISSING_OUTCOME;
 const logLineOf = (e: Json): Json | undefined => {
   for (const log of e?.["logs"] ?? []) {
     const message = log?.message;
@@ -172,6 +178,8 @@ export interface Analysis {
   readonly events: number;
   readonly unmatched: number;
   readonly missingCpu: number;
+  /** Matched events with no outcome field; counted under `other`, never as ok. */
+  readonly missingOutcome: number;
   readonly rows: CellRow[];
   readonly noop: { readonly deployed: number; readonly node: number };
   readonly factor: {
@@ -211,6 +219,7 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
   );
   let unmatched = 0;
   let missingCpu = 0;
+  let missingOutcome = 0;
   for (const e of events) {
     let cell: string | null | undefined = e?.["cell"];
     const url = urlOf(e);
@@ -236,6 +245,9 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
       continue;
     }
     if (outcome !== "ok") {
+      if (outcome === MISSING_OUTCOME) {
+        missingOutcome++;
+      }
       slot.other++;
       continue;
     }
@@ -416,6 +428,7 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
     events: events.length,
     unmatched,
     missingCpu,
+    missingOutcome,
     rows,
     noop: { deployed: noopDep, node: noopNode },
     factor: { overall, perKind, distinct },
@@ -463,7 +476,7 @@ export const formatReport = (a: Analysis): string => {
   }
   out.push(
     `Node baseline: ${a.baselineHost}, ${a.baselineSamples} samples per cell`,
-    `Events parsed: ${a.events}; unmatched: ${a.unmatched}; missing cpuTime: ${a.missingCpu}`,
+    `Events parsed: ${a.events}; unmatched: ${a.unmatched}; missing cpuTime: ${a.missingCpu}; missing outcome: ${a.missingOutcome}`,
     "",
     "Cell CPU below is warm-isolate (cold invocations dropped), not a cold-start cost.",
     "cell | n ok | killed | other | deployed p50 / p90 / p99 ms | node p50 / p99 ms | factor p50 | factor p99 | factor p50 net of noop",
