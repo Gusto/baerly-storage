@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { analyze, formatReport, type NodeBaseline, parseStream } from "./analyze.ts";
 import { CELLS } from "./src/cells.ts";
@@ -255,5 +256,26 @@ describe("parseStream", () => {
       { b: "}" },
       { c: { d: 2 } },
     ]);
+  });
+});
+
+describe("report without a preregistration", () => {
+  // testdata/no-prereg.report.txt is formatReport output from f97da6f3 (the
+  // analyzer before --prereg existed) on testdata/no-prereg.events.jsonl.
+  // The fixture mixes URL warmups, `cell`-field events (with warmup, foreign
+  // and malformed URLs), `cell: null` warmups, unmatched events and probes.
+  const data = (name: string) => readFileSync(new URL(`testdata/${name}`, import.meta.url), "utf8");
+
+  test("is byte-identical to the pre-prereg analyzer", () => {
+    const a = analyze(
+      parseStream(data("no-prereg.events.jsonl")),
+      JSON.parse(data("no-prereg.baseline.json")) as NodeBaseline,
+    );
+    expect(formatReport(a)).toBe(data("no-prereg.report.txt"));
+  });
+
+  test("a malformed URL without a cell field is unmatched, not a crash", () => {
+    const a = analyze([{ outcome: "ok", cpuTime: 1, url: "not a url" }], makeBaseline(QUIET));
+    expect(a.unmatched).toBe(1);
   });
 });

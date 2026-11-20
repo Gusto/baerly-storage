@@ -55,6 +55,7 @@ const UNFORMATTED_EXT = new Set([
   "svg",
   "ico",
   "txt",
+  "jsonl", // NDJSON test data (one event per line); oxfmt does not parse it
   "example",
   "tape", // VHS terminal-demo scripts (docs/assets/*.tape) — no formatter owns these
 ]);
