@@ -23,6 +23,7 @@ import { MAINTENANCE_TAIL_HINT_REFRESH_WRITES } from "@baerly/protocol";
 import { runAsCliEntrypoint } from "../measurement/cli-entrypoint.ts";
 import {
   ALL_ATTEMPTS,
+  assertSafeInteger,
   canonicalDepth,
   collectionShape,
   commitHoldRequests,
@@ -35,13 +36,13 @@ import {
   internalNodeCount,
   LEAF_TARGET_SWEEP,
   PAID_HOST,
-  type PathSharing,
   type RetryPolicy,
   type Scenario,
   summarizeDepth,
   PROTOTYPE_TREE_DEFAULTS,
   type TreeParams,
   type Verdict,
+  validateTreeParams,
 } from "./model.ts";
 
 const DEPTHS = [0, 1, 2, 3] as const;
@@ -142,6 +143,18 @@ const crossReadTable = (base: Omit<Scenario, "policy">, reader: HostProfile): st
   return lines;
 };
 
+const numberOption = (name: string, value: string): number => {
+  if (value.trim() === "") {
+    throw new RangeError(`${name} must be a number`);
+  }
+  return Number(value);
+};
+const countOption = (name: string, value: string): number => {
+  const count = numberOption(name, value);
+  assertSafeInteger(count, name);
+  return count;
+};
+
 const main = async (): Promise<number> => {
   const { values } = parseArgs({
     options: {
@@ -163,28 +176,45 @@ const main = async (): Promise<number> => {
       sharing: { type: "string", default: "distinct" },
     },
   });
-  const writeRead = values["write-read"] === "scan" ? "scan" : "point";
-  const sharing: PathSharing = values.sharing === "shared" ? "shared" : "distinct";
+  const writeRead = values["write-read"];
+  if (writeRead !== "point" && writeRead !== "scan") {
+    throw new RangeError("write-read must be point or scan");
+  }
+  const sharing = values.sharing;
+  if (sharing !== "shared" && sharing !== "distinct") {
+    throw new RangeError("sharing must be shared or distinct");
+  }
+  const tail = values.tail === undefined ? undefined : countOption("tail", values.tail);
+  const lag = countOption("lag", values.lag);
+  const concurrent = countOption("concurrent", values.concurrent);
   const assumptions = {
     ...DEFAULT_ASSUMPTIONS,
-    neighborLeavesPerChangedLeaf: Number(values.neighbors),
-    splitCreatesPerRewrittenNode: Number(values.splits),
+    neighborLeavesPerChangedLeaf: countOption("neighbors", values.neighbors),
+    splitCreatesPerRewrittenNode: countOption("splits", values.splits),
   };
-  const leafSizes = values["leaf-bytes"].split(",").map(Number);
+  const leafSizes = values["leaf-bytes"]
+    .split(",")
+    .map((value) => numberOption("leaf-bytes", value));
   const paramsFor = (leafTargetBytes: number): TreeParams => ({
     leafTargetBytes,
-    leafMinFill: Number(values["min-fill"]),
-    minFanout: Number(values["min-fanout"]),
-    maxFanout: Number(values["max-fanout"]),
-    depth0: { bytes: Number(values["t-bytes"]), rows: Number(values["t-rows"]) },
+    leafMinFill: numberOption("min-fill", values["min-fill"]),
+    minFanout: numberOption("min-fanout", values["min-fanout"]),
+    maxFanout: numberOption("max-fanout", values["max-fanout"]),
+    depth0: {
+      bytes: numberOption("t-bytes", values["t-bytes"]),
+      rows: numberOption("t-rows", values["t-rows"]),
+    },
   });
+  for (const leafBytes of leafSizes) {
+    validateTreeParams(paramsFor(leafBytes));
+  }
   const scenarioFor = (host: HostProfile, params: TreeParams): Omit<Scenario, "policy"> => ({
     host,
     params,
     sharing,
-    tailEntries: values.tail === undefined ? host.tailEntries : Number(values.tail),
-    tailHintLag: Number(values.lag),
-    concurrentCommits: Number(values.concurrent),
+    tailEntries: tail ?? host.tailEntries,
+    tailHintLag: lag,
+    concurrentCommits: concurrent,
     writeStateRead: writeRead,
     assumptions,
   });

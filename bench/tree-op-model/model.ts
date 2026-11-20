@@ -277,9 +277,34 @@ export const PROTOTYPE_TREE_DEFAULTS: TreeParams = {
 /** The leaf targets swept before one is chosen. */
 export const LEAF_TARGET_SWEEP: readonly number[] = [16 * 1024, 64 * 1024];
 
+/** Refuse counts or dimensions that cannot be represented exactly. */
+export const assertSafeInteger = (value: number, name: string, minimum = 0): void => {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new RangeError(`${name} must be a safe integer >= ${minimum}, got ${value}`);
+  }
+};
+
+/** Validate layout domains before deriving a shape or its depth. */
+export const validateTreeParams = (params: TreeParams): void => {
+  assertSafeInteger(params.leafTargetBytes, "leaf-bytes", 1);
+  if (!Number.isFinite(params.leafMinFill) || params.leafMinFill <= 0 || params.leafMinFill > 1) {
+    throw new RangeError(`min-fill must be finite and in (0, 1], got ${params.leafMinFill}`);
+  }
+  assertSafeInteger(params.minFanout, "min-fanout", 2);
+  if (params.maxFanout !== Infinity) {
+    assertSafeInteger(params.maxFanout, "max-fanout", params.minFanout);
+  }
+  assertSafeInteger(params.depth0.bytes, "t-bytes");
+  assertSafeInteger(params.depth0.rows, "t-rows");
+};
+
 /** Leaves of `size` in its least-filled tree: at most one per row. */
-export const leafCount = (params: TreeParams, size: CollectionSize): number =>
-  Math.min(size.rows, Math.ceil(size.bytes / (params.leafTargetBytes * params.leafMinFill)));
+export const leafCount = (params: TreeParams, size: CollectionSize): number => {
+  validateTreeParams(params);
+  assertSafeInteger(size.bytes, "collection bytes");
+  assertSafeInteger(size.rows, "collection rows");
+  return Math.min(size.rows, Math.ceil(size.bytes / (params.leafTargetBytes * params.leafMinFill)));
+};
 
 /**
  * The depth the canonical tree of `size` has under `params`: 0 within the
@@ -311,10 +336,11 @@ export const collectionShape = (
   params: TreeParams,
   size: CollectionSize,
 ): TreeShape | null => {
+  assertSafeInteger(depth, "depth");
+  const leaves = leafCount(params, size);
   if (depth === 0) {
     return { depth: 0, fanout: 1, leaves: 1 };
   }
-  const leaves = leafCount(params, size);
   if (leaves < 2) {
     return null;
   }
