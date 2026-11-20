@@ -129,7 +129,7 @@ One-shot snapshot dump of a baerly-storage collection into a SQL-native database
 
 ## Export round-trip (`pnpm test:export-round-trip`)
 
-Phase 9 gate; ensures byte-equal preservation across `export → SQLite → restore`. Seeds a `LocalFsStorage`-backed baerly-storage bucket, runs the `packages/cli/src/export/` pipeline against the `sqlite3` CLI binary (auto-skips when absent), re-imports the SQL dump through `baerly admin restore`, and asserts byte-equal `baerly admin dump` between the source and restored buckets. Uses [`serializeExportPlan` / `deserializeExportPlan`](../../packages/cli/src/export/plan-sidecar.ts) to coerce SQLite values back to their original JS types.
+Round-trip gate; ensures byte-equal preservation across `export → SQLite → restore`. Seeds a `LocalFsStorage`-backed baerly-storage bucket, runs the `packages/cli/src/export/` pipeline against the `sqlite3` CLI binary (auto-skips when absent), re-imports the SQL dump through `baerly admin restore`, and asserts byte-equal `baerly admin dump` between the source and restored buckets. Uses [`serializeExportPlan` / `deserializeExportPlan`](../../packages/cli/src/export/plan-sidecar.ts) to coerce SQLite values back to their original JS types.
 
 - Tests: [`tests/integration/export-round-trip.test.ts`](../../tests/integration/export-round-trip.test.ts), [`packages/cli/src/export/plan-sidecar.test.ts`](../../packages/cli/src/export/plan-sidecar.test.ts)
 
