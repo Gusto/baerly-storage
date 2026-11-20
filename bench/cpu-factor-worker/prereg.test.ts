@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { analyze, formatReport, type NodeBaseline, pct, pctR7 } from "./analyze.ts";
 import {
@@ -6,6 +7,8 @@ import {
   formatPrereg,
   parseAnalyzeArgs,
   parsePrereg,
+  parsePreregText,
+  duplicateKeys,
 } from "./prereg.ts";
 import { CELLS } from "./src/cells.ts";
 
@@ -99,6 +102,44 @@ describe("parsePrereg", () => {
   });
   test("accepts a complete file", () => {
     expect(parsePrereg(PREREG).sampleFloor).toBe(50);
+    expect(parsePreregText(JSON.stringify(PREREG)).sampleFloor).toBe(50);
+  });
+  test("the committed example parses once the owner fills in floor and threshold", () => {
+    const text = readFileSync(new URL("prereg.example.json", import.meta.url), "utf8");
+    expect(() => parsePreregText(text)).toThrow(/sampleFloor must be set/);
+    const filled = text.replace('"sampleFloor": null', '"sampleFloor": 50');
+    expect(
+      parsePreregText(filled.replace('"p99ThresholdMs": null', '"p99ThresholdMs": 8')),
+    ).toEqual({ ...JSON.parse(text), sampleFloor: 50, p99ThresholdMs: 8 });
+  });
+  test("refuses a sample floor above the requests per cell", () => {
+    expect(() =>
+      parsePrereg({
+        ...PREREG,
+        sampleFloor: 61,
+        capture: { ...PREREG.capture, requestsPerCell: 60 },
+      }),
+    ).toThrow(/sampleFloor 61 exceeds capture.requestsPerCell 60/);
+    expect(parsePrereg({ ...PREREG, sampleFloor: 60 }).sampleFloor).toBe(60);
+  });
+  test("refuses duplicate keys at any depth, including escaped spellings", () => {
+    const text = (inner: string) => JSON.stringify(PREREG).replace(/^\{/, `{${inner},`);
+    expect(() => parsePreregText(text('"p99ThresholdMs":1000'))).toThrow(
+      /duplicate key\(s\) "p99ThresholdMs"/,
+    );
+    expect(() => parsePreregText(text('"\\u0073ampleFloor":1'))).toThrow(/"sampleFloor"/);
+    const nested = JSON.stringify(PREREG).replace('"capture":{', '"capture":{"concurrency":9,');
+    expect(() => parsePreregText(nested)).toThrow(/duplicate key\(s\) "capture.concurrency"/);
+    // The same key in sibling objects, and key-like strings in values or arrays, are not.
+    expect(duplicateKeys('{"a":{"b":1},"c":{"b":2},"d":"\\"a\\":","e":["a","a",{"a":1}]}')).toEqual(
+      [],
+    );
+    expect(duplicateKeys('{"e":[{"a":1,"a":2}]}')).toEqual(["e.[].a"]);
+  });
+  test("refuses decision cells the driver does not send requestsPerCell times", () => {
+    expect(() => parsePrereg({ ...PREREG, decisionCells: ["probe-fetch"] })).toThrow(
+      /decision cell "probe-fetch" is sent 5 times, not requestsPerCell/,
+    );
   });
 });
 
@@ -143,9 +184,14 @@ describe("evaluatePrereg", () => {
   });
 
   test("floor applied as declared", () => {
-    const { v } = verdict(goodEvents(), { ...PREREG, sampleFloor: 61 });
+    const events = goodEvents();
+    for (const c of DECISION) {
+      const coldLog = [{ message: [`CPUFACTOR ${JSON.stringify({ cell: c, cold: true })}`] }];
+      events[at(events, c, 1)]!.logs = coldLog; // one cold, excluded: 59 ok per cell
+    }
+    const { v } = verdict(events, { ...PREREG, sampleFloor: 60 });
     expect(v.pass).toBe(false);
-    expect(v.cells[0]!.reasons.join()).toContain("n ok 60 < floor 61");
+    expect(v.cells[0]!.reasons).toEqual(["n ok 59 < floor 60"]);
   });
 
   test("unexpected capture constants fail loudly", () => {

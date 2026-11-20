@@ -75,10 +75,10 @@ Run this deployment in the same window as any other S1 evidence, so both see the
 
 ## Preregistered verdict
 
-`pnpm bench:cpu-factor:analyze cpu-factor-events.jsonl --prereg my-prereg.json` checks the capture against a declaration made before the run. Copy `prereg.example.json` and fill in the owner's values; `sampleFloor` and `p99ThresholdMs` ship as `null` and the analyzer refuses a file that leaves them null or omits them. Fields:
+`pnpm bench:cpu-factor:analyze cpu-factor-events.jsonl --prereg my-prereg.json` checks the capture against a declaration made before the run. Copy `prereg.example.json` and fill in the owner's values; `sampleFloor` and `p99ThresholdMs` ship as `null` and the analyzer refuses a file that leaves them null or omits them. It also refuses unknown keys and a key given twice in one object (`JSON.parse` would silently keep the last). Fields:
 
-- `decisionCells`: cell names that can decide the question. Each must be present in the capture.
-- `sampleFloor`: minimum ok samples per decision cell.
+- `decisionCells`: cell names that can decide the question, each listed once. Each must be a cell `run-cells.sh` sends `requestsPerCell` times (the S1 probe cells, which send their own count, are refused) and must be present in the capture.
+- `sampleFloor`: minimum ok samples per decision cell; at most `capture.requestsPerCell`.
 - `p99ThresholdMs`: a decision cell passes only if its p99 is at or below this.
 - `percentileMethod`: `nearest-rank` (the analyzer's default without `--prereg`) or `r7` (linear interpolation, Hyndman-Fan type 7). It applies to every percentile in the report, and the verdict names it.
 - `coldInvocations`: `exclude` or `include`. Whether ok invocations that log `"cold":true` (the first request in an isolate) count toward n ok and p99. Without `--prereg` they are always excluded. With `exclude`, a slow cold start cannot fail a cell by p99; the verdict says so and lists each decision cell's cold count. A killed cold invocation counts as a kill under either setting. Events without the `CPUFACTOR` log line cannot be tagged cold and count as warm. With `include`, the report is labelled COLD-INCLUSIVE.
