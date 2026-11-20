@@ -98,7 +98,7 @@
       "ratchet": {
         "raw": 610816,
         "gz": 167680,
-        "minGz": 54272
+        "minGz": 59904
       },
       "note": "server-side. Also inside the cloudflare.js closure, so growth here shows up on that entry too."
     },
