@@ -547,6 +547,42 @@ describe("logical read oracle", () => {
   );
 });
 
+type Outcome<T> = { readonly value: T } | { readonly code: string };
+
+const outcomeOf = <T>(action: () => T): Outcome<T> => {
+  try {
+    return { value: action() };
+  } catch (error) {
+    return { code: error instanceof BaerlyError ? error.code : String(error) };
+  }
+};
+
+const asyncOutcomeOf = async <T>(action: () => Promise<T>): Promise<Outcome<T>> => {
+  try {
+    return { value: await action() };
+  } catch (error) {
+    return { code: error instanceof BaerlyError ? error.code : String(error) };
+  }
+};
+
+/** Both folds refused with the same code, or both produced the same rows. */
+const expectSameOutcome = (
+  oracle: Outcome<ReadonlyMap<string, DocumentData>>,
+  production: Outcome<ReadonlyMap<string, DocumentData>>,
+): void => {
+  if ("code" in oracle || "code" in production) {
+    const code = (o: Outcome<unknown>): string => ("code" in o ? o.code : "no error");
+    if (code(oracle) !== code(production)) {
+      throw new Violation(
+        "production-agreement",
+        `oracle ${code(oracle)}, production ${code(production)}`,
+      );
+    }
+    return;
+  }
+  expectRows("production-agreement", oracle.value, production.value);
+};
+
 // ── Domain and misuse ──────────────────────────────────────────────────
 
 const entry = (seq: number, op: "I" | "U" | "D", id: string, after?: unknown): LogEntry =>
@@ -560,6 +596,9 @@ const entry = (seq: number, op: "I" | "U" | "D", id: string, after?: unknown): L
     seq,
     ...(after !== undefined && { after }),
   }) as LogEntry;
+
+const unknownOp = (seq: number, id: string): LogEntry =>
+  ({ ...entry(seq, "I", id, { _id: id }), op: "X" }) as unknown as LogEntry;
 
 const foldEntries = (entries: readonly LogEntry[], targetSeq = entries.length): LogicalView =>
   foldLogical({ collection: COLLECTION, base: new Map(), baseSeq: 0, entries, targetSeq });
@@ -600,7 +639,14 @@ describe("logical fold domain", () => {
     expect(codeOf(() => foldEntries([entry(0, "I", "a\uD800", { _id: "a\uD800" })]))).toBe(
       "InvalidResponse",
     );
+  });
+
+  test("a surviving corrupt write is InvalidResponse, and it replaces the prior row", () => {
     expect(codeOf(() => foldEntries([entry(0, "U", "a")]))).toBe("InvalidResponse");
+    expect(codeOf(() => foldEntries([entry(0, "I", "a", { _id: "a" }), entry(1, "U", "a")]))).toBe(
+      "InvalidResponse",
+    );
+    expect(codeOf(() => foldEntries([unknownOp(0, "a")]))).toBe("InvalidResponse");
   });
 
   test("a later entry repairs a corrupt one, because only survivors are validated", () => {
@@ -609,8 +655,28 @@ describe("logical fold domain", () => {
       entry(1, "U", "a", { _id: "a", n: 1 }),
       entry(2, "I", "b", { _id: "x" }),
       entry(3, "D", "b"),
+      entry(4, "U", "c"),
+      entry(5, "I", "c", { _id: "c" }),
+      unknownOp(6, "d"),
+      entry(7, "D", "d"),
     ]);
-    expect([...view.rows]).toEqual([["a", { _id: "a", n: 1 }]]);
+    expect([...view.rows]).toEqual([
+      ["a", { _id: "a", n: 1 }],
+      ["c", { _id: "c" }],
+    ]);
+  });
+
+  test("an entry with no string doc_id is skipped, as production skips it", () => {
+    const entries = [
+      entry(0, "I", "a", { _id: "a" }),
+      { ...entry(1, "D", "a"), doc_id: undefined } as unknown as LogEntry,
+    ];
+    const view = foldEntries(entries);
+    expect([...view.rows]).toEqual([["a", { _id: "a" }]]);
+    expect(view.foldedSeq).toBe(2);
+    const production = new Map<string, DocumentData>();
+    foldLogEntriesOnto(production, entries, { collection: COLLECTION });
+    expectSameOutcome({ value: view.rows }, { value: production });
   });
 
   test("another collection's entry fills its slot and changes no row", () => {
@@ -633,42 +699,6 @@ describe("logical fold domain", () => {
 });
 
 // ── Cross-check against the production folds ──────────────────────────
-
-type Outcome<T> = { readonly value: T } | { readonly code: string };
-
-const outcomeOf = <T>(action: () => T): Outcome<T> => {
-  try {
-    return { value: action() };
-  } catch (error) {
-    return { code: error instanceof BaerlyError ? error.code : String(error) };
-  }
-};
-
-const asyncOutcomeOf = async <T>(action: () => Promise<T>): Promise<Outcome<T>> => {
-  try {
-    return { value: await action() };
-  } catch (error) {
-    return { code: error instanceof BaerlyError ? error.code : String(error) };
-  }
-};
-
-/** Both folds refused with the same code, or both produced the same rows. */
-const expectSameOutcome = (
-  oracle: Outcome<ReadonlyMap<string, DocumentData>>,
-  production: Outcome<ReadonlyMap<string, DocumentData>>,
-): void => {
-  if ("code" in oracle || "code" in production) {
-    const code = (o: Outcome<unknown>): string => ("code" in o ? o.code : "no error");
-    if (code(oracle) !== code(production)) {
-      throw new Violation(
-        "production-agreement",
-        `oracle ${code(oracle)}, production ${code(production)}`,
-      );
-    }
-    return;
-  }
-  expectRows("production-agreement", oracle.value, production.value);
-};
 
 describe("logical fold agrees with production", () => {
   fcTest.prop({ c: crossCaseArb })("foldLogEntriesOnto (the read-path fold)", ({ c }) => {
