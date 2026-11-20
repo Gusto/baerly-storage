@@ -57,6 +57,9 @@ Run the baseline on a quiet machine. It records the load average before and afte
    ```
 
 8. Analyze locally: `pnpm bench:cpu-factor:node-baseline` (on a quiet machine; the analyzer reads `out/node-baseline.json`), then `pnpm bench:cpu-factor:analyze cpu-factor-events.jsonl`.
+
+   For a preregistered capture, add `--prereg <file.json>` (see [Preregistered verdict](#preregistered-verdict)).
+
 9. **Delete everything:** `./wrangler.sh delete baerly-cpu-factor-bench` and `./wrangler.sh r2 bucket delete baerly-cpu-factor-synthetic`. Confirm in the dashboard.
 10. Return only `cpu-factor-events.jsonl` (bench URLs, outcomes, CPU times and the bench's own log lines) through an internal channel.
 
@@ -69,6 +72,18 @@ Run this deployment in the same window as any other S1 evidence, so both see the
 - `Cold` invocations (first request in an isolate) and `&warmup=1` requests are dropped.
 - A cell with 1% or more kills, or fewer than 50 ok samples, does not fit and is excluded from factors. Only fitting cells with measured deployed p99 at or below 8 ms can pass the C/E gate or establish a passing size; Node-derived estimates are diagnostic only.
 - Probe lines show `completed`, the first failing call and the error text per run.
+
+## Preregistered verdict
+
+`pnpm bench:cpu-factor:analyze cpu-factor-events.jsonl --prereg my-prereg.json` checks the capture against a declaration made before the run. Copy `prereg.example.json` and fill in the owner's values; `sampleFloor` and `p99ThresholdMs` ship as `null` and the analyzer refuses a file that leaves them null or omits them. Fields:
+
+- `decisionCells`: cell names that can decide the question. Each must be present in the capture.
+- `sampleFloor`: minimum ok samples per decision cell.
+- `p99ThresholdMs`: a decision cell passes only if its p99 is at or below this.
+- `percentileMethod`: `nearest-rank` (the analyzer's default without `--prereg`) or `r7` (linear interpolation, Hyndman-Fan type 7). It applies to every percentile in the report, and the verdict names it.
+- `capture`: `requestsPerCell` and `warmupsPerCell` (what `run-cells.sh` sends; checked against the events per decision cell) and `concurrency` (`xargs -P`; events do not record it, so it is printed as declared). Other keys are refused.
+
+A decision cell passes iff it has no event missing a URL, outcome or CPU time, zero kills, zero `other` outcomes, at least `sampleFloor` ok samples and p99 at or below the threshold. The verdict passes iff at least one decision cell passes and nothing mismatches: an absent decision cell, request or warmup counts that differ from `capture`, an incomplete event in a decision cell, or an incomplete event that cannot be attributed to a cell each print a reason and make the run FAIL (exit 1). Without `--prereg` the output is unchanged.
 
 ## Not covered yet
 

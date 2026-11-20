@@ -127,7 +127,24 @@ export const pct = (xs: readonly number[], p: number): number => {
   const s = xs.toSorted((a, b) => a - b);
   return s[Math.min(s.length - 1, Math.max(0, Math.ceil((p / 100) * s.length) - 1))]!;
 };
-const median = (xs: readonly number[]) => pct(xs, 50);
+
+export type PercentileMethod = "nearest-rank" | "r7";
+export const PERCENTILE_METHODS: readonly PercentileMethod[] = ["nearest-rank", "r7"];
+
+/** Hyndman-Fan type 7 (R's default, Excel's PERCENTILE.INC): linear interpolation at (n-1)p. */
+export const pctR7 = (xs: readonly number[], p: number): number => {
+  if (xs.length === 0) {
+    return Number.NaN;
+  }
+  const s = xs.toSorted((a, b) => a - b);
+  const h = ((s.length - 1) * p) / 100;
+  const lo = Math.floor(h);
+  const hi = Math.min(s.length - 1, lo + 1);
+  return s[lo]! + (h - lo) * (s[hi]! - s[lo]!);
+};
+
+export const percentile = (xs: readonly number[], p: number, method: PercentileMethod): number =>
+  method === "r7" ? pctR7(xs, p) : pct(xs, p);
 
 export interface CellRow {
   readonly cell: Cell;
@@ -135,6 +152,10 @@ export interface CellRow {
   readonly killed: number;
   readonly other: number;
   readonly cold: number;
+  /** Every non-warmup event attributed to this cell, whatever its outcome. */
+  readonly invocations: number;
+  /** Events tagged `&warmup=1` for this cell (excluded from every statistic). */
+  readonly warmups: number;
   readonly fits: boolean;
   readonly d: { readonly p50: number; readonly p90: number; readonly p99: number };
   readonly node: NodeCellStats | undefined;
@@ -180,6 +201,10 @@ export interface Analysis {
   readonly missingCpu: number;
   /** Matched events with no outcome field; counted under `other`, never as ok. */
   readonly missingOutcome: number;
+  /** Percentile method behind every p50/p90/p99 in this analysis. */
+  readonly method: PercentileMethod;
+  /** Non-warmup events missing a URL, an outcome or a CPU time. */
+  readonly incomplete: IncompleteEvent[];
   readonly rows: CellRow[];
   readonly noop: { readonly deployed: number; readonly node: number };
   readonly factor: {
@@ -205,36 +230,83 @@ export interface Analysis {
   readonly probes: Record<string, ProbeSummary>;
 }
 
+export interface IncompleteEvent {
+  /** 0-based position in the parsed stream. */
+  readonly index: number;
+  /** Cell the event is attributed to, or null when it cannot be. */
+  readonly cell: string | null;
+  readonly missing: Array<"url" | "outcome" | "cpuTime">;
+}
+
 interface Slot {
   ok: number[];
   killed: number;
   other: number;
   cold: number;
+  invocations: number;
+  warmups: number;
   probes: Json[];
 }
 
-export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis => {
+export interface AnalyzeOptions {
+  /** Defaults to nearest-rank; a preregistration selects one explicitly. */
+  readonly method?: PercentileMethod;
+}
+
+export const analyze = (
+  events: readonly Json[],
+  base: NodeBaseline,
+  options: AnalyzeOptions = {},
+): Analysis => {
+  const method = options.method ?? "nearest-rank";
+  const q = (xs: readonly number[], p: number) => percentile(xs, p, method);
+  const median = (xs: readonly number[]) => q(xs, 50);
+  const incomplete: IncompleteEvent[] = [];
   const byCell = new Map<string, Slot>(
-    CELLS.map((c) => [c.name, { ok: [], killed: 0, other: 0, cold: 0, probes: [] }]),
+    CELLS.map((c) => [
+      c.name,
+      { ok: [], killed: 0, other: 0, cold: 0, invocations: 0, warmups: 0, probes: [] },
+    ]),
   );
   let unmatched = 0;
   let missingCpu = 0;
   let missingOutcome = 0;
-  for (const e of events) {
+  for (const [index, e] of events.entries()) {
     let cell: string | null | undefined = e?.["cell"];
     const url = urlOf(e);
-    if (cell === undefined && typeof url === "string") {
+    let warmup = false;
+    if (typeof url === "string") {
       const u = new URL(url);
-      if (u.searchParams.get("warmup") === "1") {
-        continue;
+      warmup = u.searchParams.get("warmup") === "1";
+      if (cell === undefined) {
+        cell = u.searchParams.get("cell");
       }
-      cell = u.searchParams.get("cell");
     }
     const slot = cell === null || cell === undefined ? undefined : byCell.get(cell);
+    if (warmup) {
+      if (slot !== undefined) {
+        slot.warmups++;
+      }
+      continue;
+    }
+    const missing: IncompleteEvent["missing"] = [];
+    if (typeof url !== "string") {
+      missing.push("url");
+    }
+    if (outcomeOf(e) === MISSING_OUTCOME) {
+      missing.push("outcome");
+    }
+    if (typeof cpuOf(e) !== "number") {
+      missing.push("cpuTime");
+    }
+    if (missing.length > 0) {
+      incomplete.push({ index, cell: slot === undefined ? null : cell!, missing });
+    }
     if (slot === undefined) {
       unmatched++;
       continue;
     }
+    slot.invocations++;
     const line = logLineOf(e);
     if (line?.["probe"] !== undefined) {
       slot.probes.push(line["probe"]);
@@ -278,7 +350,7 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
   const rows: CellRow[] = CELLS.map((c) => {
     const s = byCell.get(c.name)!;
     const n = base.cells[c.name];
-    const d = { p50: pct(s.ok, 50), p90: pct(s.ok, 90), p99: pct(s.ok, 99) };
+    const d = { p50: q(s.ok, 50), p90: q(s.ok, 90), p99: q(s.ok, 99) };
     const total = s.ok.length + s.killed;
     const fits = total > 0 && s.killed / total < 0.01 && s.ok.length >= MIN_OK_SAMPLES;
     return {
@@ -287,6 +359,8 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
       killed: s.killed,
       other: s.other,
       cold: s.cold,
+      invocations: s.invocations,
+      warmups: s.warmups,
       fits,
       d,
       node: n,
@@ -429,6 +503,8 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
     unmatched,
     missingCpu,
     missingOutcome,
+    method,
+    incomplete,
     rows,
     noop: { deployed: noopDep, node: noopNode },
     factor: { overall, perKind, distinct },
