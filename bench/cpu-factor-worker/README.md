@@ -91,6 +91,8 @@ A decision cell passes iff it has no event missing a URL, outcome or CPU time, z
 - an incomplete event in a decision cell, or one that cannot be attributed to any cell;
 - an unmatched event (no readable known cell) whose outcome is not `ok`, since it may be a decision-cell kill with a mangled URL. Unmatched `ok` events are counted in the verdict but do not fail it: the `workers.dev` URL is public, and a lost decision-cell event already fails its count.
 
+Warmups (`&warmup=1`) are excluded from every check, as the preregistration fixes exclusions by tag and never by value. Their count still has to match `warmupsPerCell`, and the verdict table lists each decision cell's killed and other-outcome warmups, with a note naming any cell whose warmup was killed. A killed warmup does not fail its cell.
+
 Without `--prereg` the output is unchanged.
 
 ## Not covered yet

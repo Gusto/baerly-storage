@@ -167,6 +167,10 @@ export interface CellRow {
    * statistic). An event with an explicit `cell` field is never a warmup.
    */
   readonly warmups: number;
+  /** Warmups killed (`exceededCpu` / `exceededResources`). Reported, never a sample. */
+  readonly warmupKilled: number;
+  /** Warmups with any other non-ok outcome, including a missing one. */
+  readonly warmupOther: number;
   /**
    * `&i=` request ids of this cell's non-warmup events, in capture order
    * (`run-cells.sh` numbers requests 1..N). Repeats are kept.
@@ -265,6 +269,8 @@ interface Slot {
   cold: number;
   invocations: number;
   warmups: number;
+  warmupKilled: number;
+  warmupOther: number;
   requestIds: string[];
   missingRequestId: number;
   probes: Json[];
@@ -294,6 +300,8 @@ export const analyze = (
         cold: 0,
         invocations: 0,
         warmups: 0,
+        warmupKilled: 0,
+        warmupOther: 0,
         requestIds: [],
         missingRequestId: 0,
         probes: [],
@@ -315,6 +323,12 @@ export const analyze = (
         const warm = byCell.get(params.get("cell") ?? "");
         if (warm !== undefined) {
           warm.warmups++;
+          const outcome = outcomeOf(e);
+          if (outcome === "exceededCpu" || outcome === "exceededResources") {
+            warm.warmupKilled++;
+          } else if (outcome !== "ok") {
+            warm.warmupOther++;
+          }
         }
         continue;
       }
@@ -402,6 +416,8 @@ export const analyze = (
       cold: s.cold,
       invocations: s.invocations,
       warmups: s.warmups,
+      warmupKilled: s.warmupKilled,
+      warmupOther: s.warmupOther,
       requestIds: s.requestIds,
       missingRequestId: s.missingRequestId,
       fits,
