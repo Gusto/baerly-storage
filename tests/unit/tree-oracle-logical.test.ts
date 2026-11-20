@@ -16,6 +16,7 @@ import {
   type LogEntry,
   logObjectKey,
   MAX_DOCUMENT_BYTES as PRODUCTION_MAX_DOCUMENT_BYTES,
+  MAX_DOCUMENT_DEPTH as PRODUCTION_MAX_DOCUMENT_DEPTH,
   MemoryStorage,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
@@ -40,6 +41,7 @@ import {
   foldLogicalMutant,
   LOGICAL_FOLD_MUTANTS,
   MAX_DOCUMENT_BYTES,
+  MAX_DOCUMENT_DEPTH,
   type LogicalFoldInput,
   type LogicalFoldMutant,
   type LogicalRange,
@@ -771,6 +773,38 @@ describe("logical fold domain", () => {
     expect(codeOf(() => foldEntries([entry(0, "I", "a", body)]))).toBe("InvalidResponse");
   });
 
+  const nestedDocument = (depth: number, kind: "object" | "array"): DocumentData => {
+    const [open, close] = kind === "object" ? ['{"v":', "}"] : ["[", "]"];
+    return JSON.parse(
+      '{"_id":"a","v":' + open.repeat(depth - 1) + "true" + close.repeat(depth - 1) + "}",
+    ) as DocumentData;
+  };
+
+  test.each(["object", "array"] as const)(
+    "a surviving document of 100 %s levels fits; 101 is InvalidResponse",
+    (kind) => {
+      expect(
+        codeOf(() => foldEntries([entry(0, "I", "a", nestedDocument(100, kind))])),
+      ).toBeUndefined();
+      expect(codeOf(() => foldEntries([entry(0, "I", "a", nestedDocument(101, kind))]))).toBe(
+        "InvalidResponse",
+      );
+    },
+  );
+
+  test("a deeply nested stored document is InvalidResponse without overflowing the stack", () => {
+    const body = nestedDocument(10_000, "object");
+    expect(codeOf(() => foldEntries([entry(0, "I", "a", body)]))).toBe("InvalidResponse");
+  });
+
+  test("a later repair supersedes a deeply nested stored document", () => {
+    const view = foldEntries([
+      entry(0, "I", "a", nestedDocument(10_000, "object")),
+      entry(1, "U", "a", { _id: "a", repaired: true }),
+    ]);
+    expect([...view.rows]).toEqual([["a", { _id: "a", repaired: true }]]);
+  });
+
   test("an accessor property is refused without being called", () => {
     let calls = 0;
     const top = {
@@ -959,6 +993,7 @@ describe("logical fold agrees with production", () => {
 
   test("the restated ceilings equal production's", () => {
     expect(MAX_DOCUMENT_BYTES).toBe(PRODUCTION_MAX_DOCUMENT_BYTES);
+    expect(MAX_DOCUMENT_DEPTH).toBe(PRODUCTION_MAX_DOCUMENT_DEPTH);
     expect(DOC_ID_MAX_UTF8_BYTES).toBe(ARBITRARY_DOC_ID_MAX_UTF8_BYTES);
   });
 
