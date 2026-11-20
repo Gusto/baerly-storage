@@ -126,6 +126,36 @@ export interface PreregVerdict {
   readonly cells: DecisionRow[];
 }
 
+const listed = (xs: readonly string[]) =>
+  xs.length > 10 ? `${xs.slice(0, 10).join(", ")}, ... (${xs.length})` : xs.join(", ");
+
+/**
+ * `run-cells.sh` numbers a cell's requests `&i=1..N`. A decision cell's ids
+ * must be exactly that set: a repeated id is a duplicated event line, which
+ * could otherwise cancel a shortfall in the per-cell count.
+ */
+const requestIdMismatches = (name: string, row: CellRow, n: number): string[] => {
+  const out: string[] = [];
+  if (row.missingRequestId > 0) {
+    out.push(
+      `${name}: ${row.missingRequestId} event(s) without a request id (&i=), so duplicates cannot be ruled out`,
+    );
+  }
+  const counts = new Map<string, number>();
+  for (const id of row.requestIds) {
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  const dup = [...counts].filter(([, c]) => c > 1).map(([id, c]) => `i=${id} x${c}`);
+  if (dup.length > 0) {
+    out.push(`${name}: duplicate request id(s) ${listed(dup)}`);
+  }
+  const outside = [...counts.keys()].filter((id) => !/^[1-9][0-9]*$/.test(id) || Number(id) > n);
+  if (outside.length > 0) {
+    out.push(`${name}: request id(s) outside 1..${n}: ${listed(outside.map((id) => `i=${id}`))}`);
+  }
+  return out;
+};
+
 /** Apply the declared rule to an analysis made with `prereg.percentileMethod`. */
 export const evaluatePrereg = (a: Analysis, p: Prereg): PreregVerdict => {
   const failures: string[] = [];
@@ -138,6 +168,11 @@ export const evaluatePrereg = (a: Analysis, p: Prereg): PreregVerdict => {
   if (unattributed.length > 0) {
     failures.push(
       `${unattributed.length} incomplete event(s) cannot be attributed to any cell, so none can be ruled out of a decision cell`,
+    );
+  }
+  if (a.unmatchedNonOk > 0) {
+    failures.push(
+      `${a.unmatchedNonOk} unmatched event(s) with a non-ok outcome; any of them may be a decision-cell kill whose cell could not be read`,
     );
   }
   const cells = p.decisionCells.map((name): DecisionRow => {
@@ -159,6 +194,7 @@ export const evaluatePrereg = (a: Analysis, p: Prereg): PreregVerdict => {
         `${name}: ${row.warmups} warmup events, prereg expects ${p.capture.warmupsPerCell}`,
       );
     }
+    failures.push(...requestIdMismatches(name, row, p.capture.requestsPerCell));
     if (incomplete > 0) {
       reasons.push(`${incomplete} event(s) missing url, outcome or cpuTime`);
       failures.push(`${name}: ${incomplete} event(s) missing url, outcome or cpuTime`);
@@ -202,6 +238,7 @@ export const formatPrereg = (a: Analysis, p: Prereg, v: PreregVerdict): string =
     );
   }
   out.push(
+    `Unmatched events: ${a.unmatched} (non-ok: ${a.unmatchedNonOk}). A non-ok one fails the run; an ok one is listed only, since the workers.dev URL is public.`,
     `Incomplete events (missing url, outcome or cpuTime): ${a.incomplete.length}`,
     ...a.incomplete.map(
       (i) =>

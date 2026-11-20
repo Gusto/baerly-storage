@@ -167,6 +167,13 @@ export interface CellRow {
    * statistic). An event with an explicit `cell` field is never a warmup.
    */
   readonly warmups: number;
+  /**
+   * `&i=` request ids of this cell's non-warmup events, in capture order
+   * (`run-cells.sh` numbers requests 1..N). Repeats are kept.
+   */
+  readonly requestIds: string[];
+  /** Non-warmup events of this cell with no `&i=` request id. */
+  readonly missingRequestId: number;
   readonly fits: boolean;
   readonly d: { readonly p50: number; readonly p90: number; readonly p99: number };
   readonly node: NodeCellStats | undefined;
@@ -209,6 +216,8 @@ export interface Analysis {
   readonly baselineSamples: number;
   readonly events: number;
   readonly unmatched: number;
+  /** Unmatched non-warmup events whose outcome is not `ok` (kills, errors, missing). */
+  readonly unmatchedNonOk: number;
   readonly missingCpu: number;
   /** Matched events with no outcome field; counted under `other`, never as ok. */
   readonly missingOutcome: number;
@@ -256,6 +265,8 @@ interface Slot {
   cold: number;
   invocations: number;
   warmups: number;
+  requestIds: string[];
+  missingRequestId: number;
   probes: Json[];
 }
 
@@ -276,10 +287,21 @@ export const analyze = (
   const byCell = new Map<string, Slot>(
     CELLS.map((c) => [
       c.name,
-      { ok: [], killed: 0, other: 0, cold: 0, invocations: 0, warmups: 0, probes: [] },
+      {
+        ok: [],
+        killed: 0,
+        other: 0,
+        cold: 0,
+        invocations: 0,
+        warmups: 0,
+        requestIds: [],
+        missingRequestId: 0,
+        probes: [],
+      },
     ]),
   );
   let unmatched = 0;
+  let unmatchedNonOk = 0;
   let missingCpu = 0;
   let missingOutcome = 0;
   for (const [index, e] of events.entries()) {
@@ -314,9 +336,18 @@ export const analyze = (
     }
     if (slot === undefined) {
       unmatched++;
+      if (outcomeOf(e) !== "ok") {
+        unmatchedNonOk++;
+      }
       continue;
     }
     slot.invocations++;
+    const requestId = params?.get("i");
+    if (requestId === null || requestId === undefined) {
+      slot.missingRequestId++;
+    } else {
+      slot.requestIds.push(requestId);
+    }
     const line = logLineOf(e);
     if (line?.["probe"] !== undefined) {
       slot.probes.push(line["probe"]);
@@ -371,6 +402,8 @@ export const analyze = (
       cold: s.cold,
       invocations: s.invocations,
       warmups: s.warmups,
+      requestIds: s.requestIds,
+      missingRequestId: s.missingRequestId,
       fits,
       d,
       node: n,
@@ -511,6 +544,7 @@ export const analyze = (
     baselineSamples: base.samples,
     events: events.length,
     unmatched,
+    unmatchedNonOk,
     missingCpu,
     missingOutcome,
     method,
