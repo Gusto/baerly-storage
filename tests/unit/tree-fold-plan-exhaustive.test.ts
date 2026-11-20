@@ -128,6 +128,13 @@ const firstExhaustiveFailure = async (mutant?: TreeMutant): Promise<string | und
   return undefined;
 };
 
+/**
+ * Each sweep folds all 4,032 change sets over both backgrounds: a few
+ * seconds alone, but over a minute on a CI runner sharing the
+ * parallel pool with the rest of the suite.
+ */
+const SWEEP_TIMEOUT_MS = 300_000;
+
 describe("exhaustive small scope", () => {
   test("the backgrounds are deep trees with isolated leaves", async () => {
     const config = configOf(SMALL_LAYOUT);
@@ -146,9 +153,13 @@ describe("exhaustive small scope", () => {
     expect(exhaustiveChangeSets()).toHaveLength(28 * 16 + 56 * 64);
   });
 
-  test("every change set over two or three IDs folds to the canonical root", async () => {
-    await expect(firstExhaustiveFailure()).resolves.toBeUndefined();
-  }, 60_000);
+  test(
+    "every change set over two or three IDs folds to the canonical root",
+    async () => {
+      await expect(firstExhaustiveFailure()).resolves.toBeUndefined();
+    },
+    SWEEP_TIMEOUT_MS,
+  );
 
   describe("mutation", () => {
     test.each(PLAN_MUTANTS.map((mutant) => [mutant.name, mutant] as const))(
@@ -156,7 +167,7 @@ describe("exhaustive small scope", () => {
       async (_name, mutant) => {
         await expect(firstExhaustiveFailure(mutant)).resolves.toBeDefined();
       },
-      60_000,
+      SWEEP_TIMEOUT_MS,
     );
   });
 });
