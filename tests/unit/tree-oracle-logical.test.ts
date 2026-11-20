@@ -149,6 +149,8 @@ interface FoldCase {
   readonly cut: number;
   /** Spare choice for properties that need a second position. */
   readonly pick: number;
+  /** A permutation of `ops` indices: the order `entries` is passed in. */
+  readonly entryOrder: readonly number[];
 }
 
 const idArb = fc.constantFrom(...ID_POOL);
@@ -180,14 +182,25 @@ const baseArb = fc.uniqueArray(fc.tuple(idArb, fieldsArb), {
   maxLength: ID_POOL.length,
 });
 
+const permutationArb = (length: number): fc.Arbitrary<number[]> => {
+  const indices = Array.from({ length }, (_, i) => i);
+  return fc.shuffledSubarray(indices, { minLength: length, maxLength: length });
+};
+
 const foldCaseArbWith = (kind: fc.Arbitrary<Kind>): fc.Arbitrary<FoldCase> =>
-  fc.record({
-    base: baseArb,
-    baseSeq: fc.nat({ max: 20 }),
-    ops: fc.array(opArb(kind), { maxLength: 24 }),
-    cut: fc.nat(),
-    pick: fc.nat(),
-  });
+  fc
+    .record({
+      base: baseArb,
+      baseSeq: fc.nat({ max: 20 }),
+      ops: fc.array(opArb(kind), { maxLength: 24 }),
+      cut: fc.nat(),
+      pick: fc.nat(),
+    })
+    .chain((c) =>
+      permutationArb(c.ops.length).map((entryOrder): FoldCase =>
+        Object.assign({}, c, { entryOrder }),
+      ),
+    );
 
 const foldCaseArb = foldCaseArbWith(kindArb);
 /** Adds NFD-alias entries, which every fold must refuse with the same code. */
@@ -217,7 +230,7 @@ const inputOf = (c: FoldCase): LogicalFoldInput => ({
   collection: COLLECTION,
   base: new Map(c.base.map(([id, fields]) => [id, bodyOf(id, fields)])),
   baseSeq: c.baseSeq,
-  entries: c.ops.map((op, i) => entryOf(op, c.baseSeq + i)),
+  entries: c.entryOrder.map((i) => entryOf(c.ops[i]!, c.baseSeq + i)),
   targetSeq: c.baseSeq + (c.cut % (c.ops.length + 1)),
 });
 
@@ -349,11 +362,6 @@ interface OrderCase {
   readonly ops: readonly Op[];
   readonly opOrder: readonly number[];
 }
-
-const permutationArb = (length: number): fc.Arbitrary<number[]> => {
-  const indices = Array.from({ length }, (_, i) => i);
-  return fc.shuffledSubarray(indices, { minLength: length, maxLength: length });
-};
 
 const orderCaseArb: fc.Arbitrary<OrderCase> = fc
   .tuple(
@@ -981,6 +989,7 @@ describe("mutation", () => {
     "skip-first-mutation": ["last-write-wins"],
     "skip-last-mutation": ["last-write-wins"],
     "first-write-wins": ["last-write-wins"],
+    "array-order-not-seq-order": ["last-write-wins"],
     "delete-as-noop": ["last-write-wins"],
     "absent-delete-creates-row": ["absent-delete-invisible", "last-write-wins"],
     "merge-instead-of-replace": ["last-write-wins"],
