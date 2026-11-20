@@ -47,8 +47,9 @@
  *
  * Runs under default `FC_NUM_RUNS=100` on `pnpm test`. The cranked
  * variant `pnpm test:fuzz-maintenance` (`FC_NUM_RUNS=10000`) is the
- * intended thorough sweep. Every test stays selectable on its own with
- * `-t`.
+ * intended thorough sweep; `.github/workflows/crash-fuzzer.yml` runs it in
+ * CI one test per job (see docs/contributing/development.md, "Crash fuzzer
+ * in CI"). Tests must stay selectable on their own with `-t`.
  *
  * Test-only. The control-flow-level kill points complement
  * `tests/integration/randomized.test.ts`'s transport-level
