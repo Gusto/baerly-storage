@@ -20,11 +20,11 @@ type DocumentData = {
  * Local copy — kept in sync with `packages/protocol/src/log.ts`; do
  * NOT import. The test is an external consumer of the frozen
  * contract; any drift in `@baerly/protocol` should fail TypeScript
- * here. See ticket 07 §2.
+ * here.
  *
  * INTENTIONALLY DECOUPLED: this interface is a hand-maintained mirror,
  * not the protocol type. Any change to `LogEntry` in
- * `@baerly/protocol` (e.g. ticket 01's field rename) must hand-edit
+ * `@baerly/protocol` (e.g. a field rename) must hand-edit
  * this local copy to match — it will NOT break automatically, by
  * design. Re-importing the protocol type to "fix" that would defeat
  * the external-consumer simulation this test exists for.

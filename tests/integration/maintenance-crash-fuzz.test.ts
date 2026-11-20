@@ -880,11 +880,11 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// ticket-01 bug reproductions (characterization tests)
+// Bug reproductions (characterization tests)
 // ─────────────────────────────────────────────────────────────────────
 
 /**
- * Two storage variants for the ticket-01 characterization tests:
+ * Two storage variants for the characterization tests:
  * `memory` (zero infra) and `local-fs` (real I/O over a temp dir).
  * Mirrors the variant table in `maintenance-e2e.test.ts`; the
  * Minio / Cloudflare variants are intentionally excluded so these
@@ -903,7 +903,7 @@ const BUG_VARIANTS: readonly BugVariant[] = [
   {
     label: "local-fs",
     build: async () => {
-      const root = await mkdtemp(join(tmpdir(), "baerly-ticket01-"));
+      const root = await mkdtemp(join(tmpdir(), "baerly-characterization-"));
       return {
         storage: new LocalFsStorage({ root }),
         cleanup: async () => {

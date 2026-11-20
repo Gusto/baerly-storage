@@ -1,5 +1,5 @@
 /**
- * main-10 exit: capacity refusal and its recovery end to end over HTTP, on
+ * Capacity refusal and its recovery end to end over HTTP, on
  * `memory` + `local-fs`, through the Node adapter (`baerlyNode(...).fetch`:
  * verifier, per-request maintenance context, router) and `@baerly/client`.
  *
@@ -110,7 +110,7 @@ const clientOn = (handler: Handler) => {
 
 const VARIANTS = makeVariants("baerly-recovery-http-");
 
-describe("main-10 exit: refusal and recovery over HTTP (Node adapter, declared C)", () => {
+describe("refusal and recovery over HTTP (Node adapter, declared C)", () => {
   for (const variant of VARIANTS) {
     describe(variant.label, () => {
       let cleanups: Array<() => Promise<void>> = [];

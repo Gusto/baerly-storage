@@ -915,7 +915,7 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
   const sumCounter = (name: string): number =>
     snap.counters.filter((c) => c.name === name).reduce((acc, c) => acc + c.value, 0);
 
-  // The six load-bearing metric names per the ticket.
+  // The six load-bearing metric names.
   expect(histogramCount("db.write.class_a_ops_per_logical_write")).toBe(100);
   expect(histogramCount("db.compact.entries_folded")).toBeGreaterThan(0);
   expect(lastGaugeValue("db.manifest.lag_window_depth")).toBeDefined();
@@ -1263,7 +1263,7 @@ export const runCollectionApiCascade = async (opts: {
   const db = Db.create({ storage: opts.storage, app: APP, tenant });
 
   // 1. Predicate `$`-key rejection. SYNCHRONOUS at `.where(...)` —
-  //    operator-policy boundary is public contract (ticket 12).
+  //    operator-policy boundary is public contract.
   const rejectionTable = freshTableName("reject");
   await provision(opts.storage, APP, tenant, rejectionTable);
   predicateRejection(db, rejectionTable);
@@ -1307,7 +1307,7 @@ export const runCollectionApiCascade = async (opts: {
 
   // 8. Schema validation — `insert` / `update` / `replace` validate
   //    the post-image against a per-collection
-  //    `SchemaValidator` (ticket 70). Runs on every adapter via the
+  //    `SchemaValidator`. Runs on every adapter via the
   //    variant table.
   await runSchemaValidation(opts.storage, APP, tenant);
 

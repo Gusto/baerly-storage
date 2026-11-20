@@ -62,8 +62,8 @@ import {
  * appears in {@link Grounding}. Parse `varA` / `varB` directly,
  * compare grounded values, return true iff every clause holds.
  *
- * Leaving `tests/fixtures/consistency.ts` untouched (per ticket 07
- * scope: read only) — this helper lives in the cascade driver
+ * Leaving `tests/fixtures/consistency.ts` untouched — this helper lives in the
+ * cascade driver
  * because it's an environment-specific shim.
  */
 const causallyConsistent = (grounding: Grounding, kb: Knowledge): boolean => {

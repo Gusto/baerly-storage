@@ -1,5 +1,5 @@
 /**
- * main-10 Tasks 2–5: target behavior for growth refusal on a host that
+ * Target behavior for growth refusal on a host that
  * cannot fold, on `memory` + `local-fs`. Rules (rows; bytes is the analogue
  * with C):
  *
@@ -374,7 +374,7 @@ const commitLogGets = (ops: readonly string[]): number => {
 
 const VARIANTS = makeVariants("baerly-growth-refusal-");
 
-describe("main-10: growth refusal (target behavior)", () => {
+describe("growth refusal (target behavior)", () => {
   for (const variant of VARIANTS) {
     describe(variant.label, () => {
       let cleanups: Array<() => Promise<void>> = [];
@@ -723,7 +723,7 @@ describe("main-10: growth refusal (target behavior)", () => {
 
       // ── R1: row-exact fold ─────────────────────────────────────────
       describe("R1 row-exact fold", () => {
-        test("G2: byte-growing updates at 16 rows are accepted and their fold lands on SMALL", async () => {
+        test("byte-growing updates at 16 rows are accepted and their fold lands on SMALL", async () => {
           const storage = await sixteen();
           for (let i = 0; i < PASS; i++) {
             await expect(
@@ -836,7 +836,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           );
         });
 
-        // Forced tick (R5, main-10 Task 4).
+        // Forced tick (R5).
         test("in-band only: at E - 1, same-size updates fold through forced write ticks and the backlog stays bounded", async () => {
           const storage = await atEMinus1();
           const WRITES = 10;
@@ -855,7 +855,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           expect(s.rows).toBe(E - 1);
         });
 
-        // Forced tick (R5, main-10 Task 4) within the per-pass budget (R1).
+        // Forced tick (R5) within the per-pass budget (R1).
         test("per-pass budget: with more than PASS entries pending, each forced write tick folds at most PASS entries, and some fold lands", async () => {
           const storage = await folded(10, SMALL);
           // 9 pending inserts: projected E - 1, so the refusal condition holds.
@@ -902,8 +902,8 @@ describe("main-10: growth refusal (target behavior)", () => {
         });
       });
 
-      // ── G6: forced tick and backpressure (main-10 Task 4) ──────────
-      describe("G6 forced tick and backpressure", () => {
+      // ── forced tick and backpressure ──────────
+      describe("forced tick and backpressure", () => {
         /** The refusal error itself, or `"accepted"`. */
         const errorOf = (storage: Storage, host: Host, write: Write) =>
           onHost(storage, host, write).then(
@@ -1024,7 +1024,7 @@ describe("main-10: growth refusal (target behavior)", () => {
         test("bytes: PASS pending entries in a row past C are no progress, so even a delete is refused; backpressure when a pass crosses the run", async () => {
           // [3M insert, 4 same-size updates, its delete]: the final projection
           // fits, but each of the first PASS entries leaves the snapshot past
-          // C, so no pass can reach a fitting end and every tick defers (G5).
+          // C, so no pass can reach a fitting end and every tick defers.
           const split = await bytesState("near");
           await commit(split.storage, [
             { op: "I", i: 10, pad: GROW_PAD },
@@ -1095,8 +1095,8 @@ describe("main-10: growth refusal (target behavior)", () => {
         }
       });
 
-      // ── G5-race: commit-time re-check ───────────────────────────────
-      describe("G5-race commit-time re-check", () => {
+      // ── commit-time re-check ───────────────────────────────
+      describe("commit-time re-check", () => {
         /**
          * Writer A passes its pre-commit check, then pauses at `pauses`
          * while writer B's whole request runs; then A resumes.

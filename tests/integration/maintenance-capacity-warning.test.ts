@@ -1,5 +1,5 @@
 /**
- * main-10 Task 5 (G7): the early capacity warning and the state it may touch,
+ * The early capacity warning and the state it may touch,
  * on `memory` + `local-fs`, host SMALL (E = 20 rows, 5 entries per pass).
  *
  * - W1 an admitted write that leaves the collection at >= 90% of E carries
@@ -138,7 +138,7 @@ const keys = async (storage: Storage): Promise<string[]> => {
 
 const VARIANTS = makeVariants("baerly-capacity-warning-");
 
-describe("main-10 Task 5: early capacity warning and its state (G7)", () => {
+describe("early capacity warning and its state", () => {
   for (const variant of VARIANTS) {
     describe(variant.label, () => {
       let cleanups: Array<() => Promise<void>> = [];

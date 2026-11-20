@@ -1,5 +1,5 @@
 /**
- * Shared scaffolding for the main-10 fold-stall suites:
+ * Shared scaffolding for the fold-stall suites:
  * `tests/integration/maintenance-fold-stall.test.ts` (today's stall) and
  * `tests/integration/maintenance-growth-refusal.test.ts` (target refusal).
  *
