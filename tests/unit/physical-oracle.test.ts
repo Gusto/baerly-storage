@@ -207,6 +207,15 @@ describe("surfaced-error allow-list", () => {
     expect(surfacedErrorViolation("gc", "string")).toMatch(/non-BaerlyError: string/);
   });
 
+  test("admits a run's extra codes only for that run", () => {
+    const lost = new BaerlyError("NetworkError", "x");
+    expect(surfacedErrorViolation("gc", lost)).toMatch(/outside the allow-list: NetworkError/);
+    expect(surfacedErrorViolation("gc", lost, ["NetworkError"])).toBeUndefined();
+    expect(
+      surfacedErrorViolation("gc", new BaerlyError("InvalidConfig", "x"), ["NetworkError"]),
+    ).toMatch(/outside the allow-list: InvalidConfig/);
+  });
+
   test("tolerates the known abort relabel only when the cause is the abort", () => {
     const abort = Object.assign(new Error("x"), { name: "AbortError" });
     expect(
