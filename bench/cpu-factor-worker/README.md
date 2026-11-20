@@ -69,7 +69,7 @@ Run this deployment in the same window as any other S1 evidence, so both see the
 
 - All CPU numbers (fold and tree cells) are warm-isolate: JIT-hot, with the first request per isolate dropped. Uniform `x` padding is a best case for JSON. Do not read p50 as a cold fold cost.
 - Deployed `cpuTime` is authoritative; the in-isolate timer is a cross-check, since workerd clocks advance only across I/O.
-- `Cold` invocations (first request in an isolate) and `&warmup=1` requests are dropped.
+- `Cold` invocations (first request in an isolate) and `&warmup=1` requests are dropped, so they never enter n ok or p99. A killed cold invocation still counts as a kill. A preregistration can include cold invocations (`coldInvocations`).
 - A cell with 1% or more kills, or fewer than 50 ok samples, does not fit and is excluded from factors. Only fitting cells with measured deployed p99 at or below 8 ms can pass the C/E gate or establish a passing size; Node-derived estimates are diagnostic only.
 - Probe lines show `completed`, the first failing call and the error text per run.
 
@@ -81,6 +81,7 @@ Run this deployment in the same window as any other S1 evidence, so both see the
 - `sampleFloor`: minimum ok samples per decision cell.
 - `p99ThresholdMs`: a decision cell passes only if its p99 is at or below this.
 - `percentileMethod`: `nearest-rank` (the analyzer's default without `--prereg`) or `r7` (linear interpolation, Hyndman-Fan type 7). It applies to every percentile in the report, and the verdict names it.
+- `coldInvocations`: `exclude` or `include`. Whether ok invocations that log `"cold":true` (the first request in an isolate) count toward n ok and p99. Without `--prereg` they are always excluded. With `exclude`, a slow cold start cannot fail a cell by p99; the verdict says so and lists each decision cell's cold count. A killed cold invocation counts as a kill under either setting. Events without the `CPUFACTOR` log line cannot be tagged cold and count as warm. With `include`, the report is labelled COLD-INCLUSIVE.
 - `capture`: `requestsPerCell` and `warmupsPerCell` (what `run-cells.sh` sends; checked against the events per decision cell) and `concurrency` (`xargs -P`; events do not record it, so it is printed as declared). Other keys are refused.
 
 A decision cell passes iff it has no event missing a URL, outcome or CPU time, zero kills, zero `other` outcomes, at least `sampleFloor` ok samples and p99 at or below the threshold. The verdict passes iff at least one decision cell passes and nothing mismatches. Each of these prints a reason and makes the run FAIL (exit 1):
