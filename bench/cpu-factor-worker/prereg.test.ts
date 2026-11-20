@@ -285,6 +285,41 @@ describe("evaluatePrereg", () => {
     );
   });
 
+  test("boundaries: p99 equal to the threshold and n ok equal to the floor pass", () => {
+    const target = DECISION[0]!;
+    const events = goodEvents();
+    events[at(events, target, 60)]!.cpuTime = 8; // nearest-rank p99 of 60 = the max
+    const exact = verdict(events, { ...PREREG, sampleFloor: 60 });
+    expect(exact.v.cells[0]!.row!.d.p99).toBe(8);
+    expect(exact.v.cells[0]!.pass).toBe(true);
+    expect(exact.v.pass).toBe(true);
+    events[at(events, target, 60)]!.cpuTime = 8.01;
+    expect(verdict(events).v.cells[0]!.reasons).toEqual(["p99 8.01 ms > 8 ms"]);
+  });
+
+  test("an other outcome fails its decision cell", () => {
+    const target = DECISION[0]!;
+    const events = goodEvents();
+    events[at(events, target, 9)]!.outcome = "exception";
+    const { v } = verdict(events, { ...PREREG, decisionCells: [target] });
+    expect(v.cells[0]!.reasons).toEqual(["1 other outcome(s)"]);
+    expect(v.failures).toEqual(["no decision cell passes"]);
+  });
+
+  test("a missing outcome reaches other, and is never an ok sample", () => {
+    const target = DECISION[0]!;
+    const events: Partial<Ev>[] = goodEvents();
+    delete events[at(goodEvents(), target, 9)]!.outcome;
+    const { v, a } = verdict(events, { ...PREREG, decisionCells: [target] });
+    expect(a.missingOutcome).toBe(1);
+    expect(v.cells[0]!.row!.other).toBe(1);
+    expect(v.cells[0]!.row!.n).toBe(59);
+    expect(v.cells[0]!.reasons).toEqual([
+      "1 event(s) missing url, outcome or cpuTime",
+      "1 other outcome(s)",
+    ]);
+  });
+
   test("without prereg the report is unchanged by incomplete tracking", () => {
     const a = analyze(goodEvents(), BASE);
     expect(a.method).toBe("nearest-rank");
