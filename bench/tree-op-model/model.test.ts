@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  CF_PAID_REQUEST_LIMIT,
+  COMMIT_RESOLUTION_RESERVE,
   GC_MARK_LIST_PAGE_KEYS,
   MAINTENANCE_FOLD_BASE_REQUESTS,
   MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS,
@@ -11,21 +13,35 @@ import { loadRequestCountSnapshot, parseCell } from "../../scripts/request-count
 import {
   ALL_ATTEMPTS,
   byKind,
+  canonicalDepth,
   chargedRequests,
   collectionShape,
   DEFAULT_ASSUMPTIONS,
+  FLOOR_COLLECTION,
+  FREE_R2_HOST,
   findLogTailGets,
   foldTickCalls,
   GC_WORST_STATE,
   gcTickCalls,
   type GcTickState,
   HAPPY_PATH,
+  hostFoldTickVerdict,
+  hostGcTickVerdict,
+  hostPointReadVerdict,
+  hostScanVerdict,
+  LEAF_TARGET_SWEEP,
   maxFittingChangedLeaves,
+  PAID_COLLECTION,
+  PAID_HOST,
   pathUnionInternalNodes,
   pointReadCalls,
   scanCalls,
   sumCalls,
   type Scenario,
+  summarizeDepth,
+  TP_SPEC_DEFAULTS,
+  tickVerdict,
+  type TreeParams,
   type TreeShape,
   writeRouteCalls,
 } from "./model.ts";
@@ -227,25 +243,38 @@ describe("findLogTailGets", () => {
 });
 
 describe("floor shapes", () => {
-  const sizing = { leafTargetBytes: 4096, leafMinFill: 0.5, maxFanout: Infinity };
+  const sizing: TreeParams = { ...TP_SPEC_DEFAULTS, leafTargetBytes: 4096, minFanout: 2 };
 
   test("the floor collection at 4 KiB leaves, half full, is 256 leaves", () => {
-    expect(collectionShape(1, sizing)).toEqual({ depth: 1, fanout: 256, leaves: 256 });
-    expect(collectionShape(2, sizing)).toEqual({ depth: 2, fanout: 16, leaves: 256 });
+    expect(collectionShape(1, sizing, FLOOR_COLLECTION)).toEqual({
+      depth: 1,
+      fanout: 256,
+      leaves: 256,
+    });
+    expect(collectionShape(2, sizing, FLOOR_COLLECTION)).toEqual({
+      depth: 2,
+      fanout: 16,
+      leaves: 256,
+    });
   });
 
   test("a depth the floor cannot take is null", () => {
     // One 512 KiB leaf has no depth-1 tree.
     expect(
-      collectionShape(1, { leafTargetBytes: 1024 * 1024, leafMinFill: 1, maxFanout: Infinity }),
+      collectionShape(
+        1,
+        { ...sizing, leafTargetBytes: 1024 * 1024, leafMinFill: 1 },
+        FLOOR_COLLECTION,
+      ),
     ).toBeNull();
-    expect(collectionShape(1, { ...sizing, maxFanout: 64 })).toBeNull();
+    expect(collectionShape(1, { ...sizing, maxFanout: 64 }, FLOOR_COLLECTION)).toBeNull();
   });
 
   test("the fold tick's budget shrinks with distinct paths", () => {
-    const shape = collectionShape(2, sizing)!;
+    const shape = collectionShape(2, sizing, FLOOR_COLLECTION)!;
     const scenario: Scenario = {
-      sizing,
+      host: FREE_R2_HOST,
+      params: sizing,
       sharing: "distinct",
       tailEntries: 50,
       tailHintLag: 0,
@@ -259,4 +288,107 @@ describe("floor shapes", () => {
     expect(distinct).toBeGreaterThan(0);
     expect(shared).toBeGreaterThan(distinct);
   });
+});
+
+describe("TP-SPEC parameters and the depth-0 rule", () => {
+  test("Paid C/E is depth 2 at the starting values: 1,024 half-full 16 KiB leaves, fanout 32", () => {
+    expect(PAID_COLLECTION).toEqual({ bytes: 8 * 1024 * 1024, rows: 32_768 });
+    expect(canonicalDepth(TP_SPEC_DEFAULTS, PAID_COLLECTION)).toBe(2);
+    expect(collectionShape(2, TP_SPEC_DEFAULTS, PAID_COLLECTION)).toEqual({
+      depth: 2,
+      fanout: 32,
+      leaves: 1024,
+    });
+  });
+
+  test("a collection within T is one leaf; above T the CDC rule applies", () => {
+    expect(canonicalDepth(TP_SPEC_DEFAULTS, FLOOR_COLLECTION)).toBe(0);
+    // T lowered below the floor collection: its 64 leaves need depth 2 at fanout 32.
+    const noT = { ...TP_SPEC_DEFAULTS, depth0: { bytes: 0, rows: 0 } };
+    expect(canonicalDepth(noT, FLOOR_COLLECTION)).toBe(2);
+    // Over T in rows alone is enough.
+    expect(canonicalDepth(TP_SPEC_DEFAULTS, { bytes: 1024, rows: 4096 })).toBe(0);
+    expect(canonicalDepth(TP_SPEC_DEFAULTS, { bytes: 1024 * 1024, rows: 4096 })).toBe(2);
+  });
+});
+
+/** A Paid scenario at the TP-SPEC starting values. */
+const paidScenario = (over: Partial<Scenario> = {}): Scenario => ({
+  host: PAID_HOST,
+  params: TP_SPEC_DEFAULTS,
+  sharing: "distinct",
+  tailEntries: PAID_HOST.tailEntries,
+  tailHintLag: 128,
+  concurrentCommits: 0,
+  writeStateRead: "point",
+  policy: HAPPY_PATH,
+  assumptions: DEFAULT_ASSUMPTIONS,
+  ...over,
+});
+
+describe("Paid ledger", () => {
+  test("is CF_PAID_REQUEST_LIMIT, Paid's 10,000 less the 10% margin (B1-limits)", () => {
+    expect(PAID_HOST.ledger.internal).toBe(CF_PAID_REQUEST_LIMIT);
+    expect(CF_PAID_REQUEST_LIMIT).toBe(9000);
+  });
+
+  test("depth 0 at Paid's 200-entry tail is main's recorded read", () => {
+    // Depth 0 costs the same at any snapshot size, so main's cell anchors
+    // the Paid table's depth-0 row.
+    const s = paidScenario();
+    const total = (cell: string) => {
+      const k = recorded(cell);
+      return k.get + k.put + k.delete + k.listPage;
+    };
+    expect(hostPointReadVerdict(DEPTH_0, s).charge.internal).toBe(
+      total("get tail=200 idx=0 snap=100"),
+    );
+    expect(hostScanVerdict(DEPTH_0, s).charge.internal).toBe(total("scan tail=200 idx=0 snap=100"));
+  });
+
+  describe("a tick's budget holds the write route and its commit hold", () => {
+    const shape = collectionShape(2, TP_SPEC_DEFAULTS, PAID_COLLECTION)!;
+    // The write route at depth 2, restated by hand: point read = head GET +
+    // 200 tail entries + probe miss + 2 internal nodes + the leaf (205);
+    // then the Writer's current.json GET (1) and findLogTail over a
+    // 128-slot lag (gallop 1,3,...,127 hit, 255 miss = 9 GETs, then 7
+    // bisection GETs: 16). 222 calls.
+    const route = 205 + 1 + 16;
+    const hold = STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE;
+
+    test.each([
+      ["happy", HAPPY_PATH, route],
+      ["all attempts", ALL_ATTEMPTS, route * STORAGE_RETRY_MAX_ATTEMPTS],
+    ] as const)("%s", (_name, policy, routeCharge) => {
+      const s = paidScenario({ policy });
+      const budget = CF_PAID_REQUEST_LIMIT - routeCharge - hold;
+      expect(hostFoldTickVerdict(shape, 1, s).budget.internal).toBe(budget);
+      expect(hostGcTickVerdict(shape, s).budget.internal).toBe(budget);
+    });
+
+    test("a tick one request over that budget is refused, though under the bare ledger", () => {
+      const write = writeRouteCalls({
+        read: { shape, tailEntries: PAID_HOST.tailEntries, emptyBase: false },
+        writeStateRead: "point",
+        tailHintLag: 128,
+      });
+      const overByOne = { ...sumCalls(), gets: CF_PAID_REQUEST_LIMIT - route - hold + 1 };
+      expect(chargedRequests(overByOne, HAPPY_PATH)).toBeLessThan(CF_PAID_REQUEST_LIMIT);
+      expect(tickVerdict(overByOne, write, HAPPY_PATH, PAID_HOST.ledger).fits).toBe(false);
+      const atBudget = { ...overByOne, gets: overByOne.gets - 1 };
+      expect(tickVerdict(atBudget, write, HAPPY_PATH, PAID_HOST.ledger).fits).toBe(true);
+    });
+  });
+
+  test.each(LEAF_TARGET_SWEEP)(
+    "Paid C/E at its canonical depth fits every cell with every attempt charged, %i B leaves",
+    (leafTargetBytes) => {
+      const params = { ...TP_SPEC_DEFAULTS, leafTargetBytes };
+      const depth = canonicalDepth(params, PAID_COLLECTION);
+      const sum = summarizeDepth(depth, paidScenario({ params, policy: ALL_ATTEMPTS }));
+      expect(sum.shape).not.toBeNull();
+      expect(sum.s5).toBe(false);
+      expect(sum.maxK).toBeGreaterThanOrEqual(PAID_HOST.entriesPerPass);
+    },
+  );
 });
