@@ -3,28 +3,35 @@
  * the canonical tree of the new row set, rewriting only the changed
  * paths and their resync neighbours and reusing every other node.
  *
- * The result is exactly `buildTree` of the new row set
- * (`tests/unit/tree-fold-plan*.test.ts` check this). It relies on the
- * chunkers resetting at every cut, so re-chunking can start at an old
- * node boundary and stop at one:
+ * The result is the canonical tree of the new row set
+ * (`tests/unit/tree-fold-plan*.test.ts` and
+ * `tests/unit/tree-fold-planner.test.ts` check this). It relies on the
+ * chunkers resetting at every cut, so re-chunking can start at a node
+ * boundary of a canonical level and stop at one:
  *
- * - **Restart.** A change re-chunks from the start of the old node that
- *   holds its first changed entry, or that would hold it: the first old
- *   node whose `hi` is not below it, else the last node of the level.
- *   The end of a level is not a cut, so a change past the last node
- *   re-chunks that node. At the leaf level a cut before an isolated
- *   document read that document's size, so a change at or just before
- *   an isolated leaf also re-chunks the leaf before it.
- * - **Resync.** Re-chunking stops at the start of an old node once its
+ * - **Restart.** A change re-chunks from the start of the node that
+ *   holds its first changed entry, or that would hold it: the first node
+ *   whose `hi` is not below it, else the last node of the level. The end
+ *   of a level is not a cut, so a change past the last node re-chunks
+ *   that node. At the leaf level a cut before an isolated document read
+ *   that document's size, so a change at or just before an isolated leaf
+ *   also re-chunks the leaf before it.
+ * - **Resync.** Re-chunking stops at the start of a node once its
  *   chunker is empty there and no pending change falls in or before that
- *   node. Everything after is chunked as before, so the old nodes are
- *   reused until the next change's restart point.
+ *   node. Everything after is chunked as before, so those nodes are kept
+ *   until the next change's restart point.
  * - **Whole-level rules.** The depth-0 rule and the root rule depend on
  *   a whole level. Crossing the depth-0 limits downward reads every
- *   leaf. Each level's new node count is the captured root's
- *   `level_nodes` count, less the old nodes replaced there, plus the
- *   fresh ones; a level of at most `branchFanoutMax` nodes is regrouped
- *   into the root, which reads the old nodes one level up.
+ *   leaf; crossing them upward chunks every document. A level whose new
+ *   node count is at most `branchFanoutMax` is regrouped into the root,
+ *   which reads every node one level up; a root's child level that grows
+ *   past it is chunked whole.
+ * - **Level counts.** A level's new node count is its count before the
+ *   change (the captured root's `level_nodes`, to begin with), less the
+ *   nodes replaced there, plus the new ones. The counts are trusted while
+ *   a level stays content-chunked. A level that is regrouped is listed
+ *   node by node, and a count that disagrees with the list is
+ *   `InvalidResponse`.
  *
  * Every node the planner reads comes through `get` and is strictly
  * decoded against the entry that routed to it, and every reused entry
@@ -32,10 +39,12 @@
  * is always live under the captured root. The root is always fresh: it
  * carries the new fold end.
  *
- * {@link FoldPlanner} adds a fold's changes one at a time in seq order,
- * charging every node GET as it is issued and the publication's calls
- * as a reserve, so the fold can stop at the last change that fits its
- * request ledger.
+ * {@link planFold} plans a whole fold at once. {@link FoldPlanner} adds
+ * a fold's changes one at a time in seq order onto the tree of the
+ * changes it has accepted, re-planning only the region each change
+ * touches, and charges every node GET as it is issued and the
+ * publication's calls as a reserve, so the fold can stop at the last
+ * change that fits its request ledger.
  */
 import { BaerlyError, encodeJsonBytes } from "@baerly/protocol";
 import { assertSnapshotDocId, compareDocIds } from "../snapshot-doc-id.ts";
@@ -44,6 +53,7 @@ import {
   BranchChunker,
   buildTree,
   type ChunkSteps,
+  childSummary,
   chunkSteps,
   freshNodeCount,
   LeafChunker,
@@ -55,10 +65,10 @@ import {
   type PlannedNode,
   type PlannedTree,
 } from "./build.ts";
-import { type ChunkKey, chunkHash } from "./chunk.ts";
+import type { ChunkKey } from "./chunk.ts";
 import { TREE_HEAD_CAS_CHARGE, TREE_RETRIED_CALL_CHARGE } from "./constants.ts";
 import { treeNodeKey } from "./key.ts";
-import { DEFAULT_TREE_CONFIG, type TreeConfig, type TreeLayout } from "./layout.ts";
+import { bytesEqual, DEFAULT_TREE_CONFIG, type TreeConfig, type TreeLayout } from "./layout.ts";
 import {
   type CanonicalDocument,
   type DecodedTreeNode,
@@ -66,6 +76,7 @@ import {
   type TreeChildEntry,
   type TreeDocument,
   type TreeNodeExpectation,
+  type TreeNodeSummary,
 } from "./node-codec.ts";
 
 // ---------------------------------------------------------------------
@@ -170,31 +181,52 @@ const internal = (detail: string): never => {
 };
 
 // ---------------------------------------------------------------------
-// The captured tree, read lazily
+// The tree a pass walks, read lazily
 // ---------------------------------------------------------------------
 
-/** A node of the captured tree. Its body is read on first use. */
-interface OldNode {
+/**
+ * A node of the tree a pass walks: the captured tree, or the tree of the
+ * changes a {@link FoldPlanner} has accepted, whose nodes are fresh or
+ * reused from the captured tree. A reused node's body is read on first
+ * use.
+ */
+interface ViewNode {
   readonly level: number;
-  /** The entry that names this node in its parent; `null` for the root. */
-  readonly entry: TreeChildEntry | null;
-  readonly parent: OldNode | null;
+  /** The child its parent holds; the root holds itself as a fresh child. */
+  readonly child: PlannedChild;
+  readonly summary: TreeNodeSummary;
+  readonly parent: ViewNode | null;
   /** Position among the parent's children. */
   readonly index: number;
+  /** A reused node's body, once read. */
   decoded: DecodedTreeNode | null;
-  /** The children, once a branch body is read. */
-  children: OldNode[] | null;
+  /** The children, once a branch is opened. */
+  children: ViewNode[] | null;
 }
 
-/** An old run of one level replaced by fresh nodes. */
-interface Splice<N extends PlannedNode> {
-  /** First and last old node replaced, in level order. */
-  readonly first: OldNode;
-  readonly last: OldNode;
-  /** How many old nodes the run holds. */
+/** An old run of one level replaced by new nodes. */
+interface Splice {
+  /** First and last node replaced, in level order. */
+  readonly first: ViewNode;
+  readonly last: ViewNode;
+  /** How many nodes the run holds. */
   readonly count: number;
-  readonly fresh: readonly N[];
+  /** How many of them are fresh nodes. */
+  readonly freshReplaced: number;
+  /** The nodes that replace the run, in order. */
+  readonly out: readonly PlannedChild[];
 }
+
+/**
+ * The child a parent holds for a node a pass just built: the node
+ * itself as a fresh child, or a reused node it equals.
+ */
+type Adopt = (node: PlannedNode) => PlannedChild;
+
+const freshChild: Adopt = (node) => ({ kind: "fresh", node });
+
+const freshIn = (children: readonly PlannedChild[]): number =>
+  children.reduce((total, child) => total + (child.kind === "fresh" ? 1 : 0), 0);
 
 const canonicalOf = (doc: TreeDocument): CanonicalDocument => ({
   doc,
@@ -202,70 +234,107 @@ const canonicalOf = (doc: TreeDocument): CanonicalDocument => ({
   bytes: encodeJsonBytes(doc).byteLength,
 });
 
-/** Level order of two old nodes of one level: their ranges are disjoint. */
-const compareNodes = (a: OldNode, b: OldNode): number => compareDocIds(a.entry!.lo, b.entry!.lo);
+/** The canonical documents of each read leaf, encoded once. */
+type DocsCache = WeakMap<DecodedTreeNode, readonly CanonicalDocument[]>;
+
+const leafDocs = (decoded: DecodedTreeNode, cache: DocsCache): readonly CanonicalDocument[] => {
+  if (decoded.node.kind !== "leaf") {
+    return internal(`node ${JSON.stringify(decoded.key)} is not a leaf`);
+  }
+  let docs = cache.get(decoded);
+  if (docs === undefined) {
+    docs = decoded.node.docs.map(canonicalOf);
+    cache.set(decoded, docs);
+  }
+  return docs;
+};
+
+/** Level order of two nodes of one level: their ranges are disjoint. */
+const compareNodes = (a: ViewNode, b: ViewNode): number =>
+  compareDocIds(a.summary.lo, b.summary.lo);
 
 /** Read and strictly decode one node of the captured tree. */
 type NodeLoader = (key: string, expected: TreeNodeExpectation) => Promise<DecodedTreeNode>;
 
-class CapturedTree {
-  readonly root: OldNode;
+/** Called for every reused node a pass reads, with the entry that named it. */
+type OnRead = (level: number, entry: TreeChildEntry, decoded: DecodedTreeNode) => void;
+
+class TreeView {
+  readonly root: ViewNode;
+  /** Every reused node this view read, in read order. */
   readonly read: DecodedTreeNode[] = [];
   readonly #prefix: string;
   readonly #loadNode: NodeLoader;
+  readonly #docs: DocsCache;
+  readonly #onRead: OnRead | undefined;
 
-  constructor(prefix: string, root: DecodedTreeNode, loadNode: NodeLoader) {
+  constructor(
+    prefix: string,
+    root: PlannedNode,
+    loadNode: NodeLoader,
+    docs: DocsCache,
+    onRead?: OnRead,
+  ) {
     this.#prefix = prefix;
     this.#loadNode = loadNode;
-    this.root = {
-      level: root.node.level,
-      entry: null,
-      parent: null,
-      index: 0,
-      decoded: root,
+    this.#docs = docs;
+    this.#onRead = onRead;
+    this.root = this.#node(root.level, { kind: "fresh", node: root }, null, 0);
+  }
+
+  #node(level: number, child: PlannedChild, parent: ViewNode | null, index: number): ViewNode {
+    return {
+      level,
+      child,
+      summary: childSummary(child),
+      parent,
+      index,
+      decoded: null,
       children: null,
     };
-    this.#adopt(this.root, root);
   }
 
-  #adopt(node: OldNode, decoded: DecodedTreeNode): void {
-    node.decoded = decoded;
-    if (decoded.node.kind === "branch") {
-      node.children = decoded.node.children.map((entry, index) => ({
-        level: node.level - 1,
+  /** Read `node` if it is reused, and list a branch's children. */
+  async #open(node: ViewNode): Promise<void> {
+    const { child } = node;
+    if (child.kind === "reused" && node.decoded === null) {
+      const { entry } = child;
+      const decoded = await this.#loadNode(treeNodeKey(this.#prefix, entry.attempt, entry.sha256), {
+        prefix: this.#prefix,
+        root: false,
+        level: node.level,
         entry,
-        parent: node,
-        index,
-        decoded: null,
-        children: null,
-      }));
+      });
+      this.read.push(decoded);
+      this.#onRead?.(node.level, entry, decoded);
+      node.decoded = decoded;
     }
+    if (node.level === 0 || node.children !== null) {
+      return;
+    }
+    let children: readonly PlannedChild[];
+    if (child.kind === "fresh") {
+      children =
+        child.node.kind === "branch"
+          ? child.node.children
+          : internal(`node at level ${node.level} is a leaf`);
+    } else {
+      const body = node.decoded!.node;
+      children =
+        body.kind === "branch"
+          ? body.children.map((entry) => ({ kind: "reused", entry }))
+          : internal(`node at level ${node.level} is a leaf`);
+    }
+    node.children = children.map((c, index) => this.#node(node.level - 1, c, node, index));
   }
 
-  /** Read and strictly decode `node` against the entry that routed to it. */
-  async load(node: OldNode): Promise<DecodedTreeNode> {
-    if (node.decoded !== null) {
-      return node.decoded;
-    }
-    const entry = node.entry!;
-    const decoded = await this.#loadNode(treeNodeKey(this.#prefix, entry.attempt, entry.sha256), {
-      prefix: this.#prefix,
-      root: false,
-      level: node.level,
-      entry,
-    });
-    this.read.push(decoded);
-    this.#adopt(node, decoded);
-    return decoded;
-  }
-
-  async #children(node: OldNode): Promise<OldNode[]> {
-    await this.load(node);
+  async #children(node: ViewNode): Promise<ViewNode[]> {
+    await this.#open(node);
     return node.children!;
   }
 
   /** The node after `node` on its level, or `null` at the level's end. */
-  async next(node: OldNode): Promise<OldNode | null> {
+  async next(node: ViewNode): Promise<ViewNode | null> {
     const parent = node.parent;
     if (parent === null) {
       return null;
@@ -282,7 +351,7 @@ class CapturedTree {
   }
 
   /** The node before `node` on its level, or `null` at the level's start. */
-  async prev(node: OldNode): Promise<OldNode | null> {
+  async prev(node: ViewNode): Promise<ViewNode | null> {
     const parent = node.parent;
     if (parent === null) {
       return null;
@@ -299,7 +368,7 @@ class CapturedTree {
   }
 
   /** The first node of `level`. */
-  async first(level: number): Promise<OldNode> {
+  async first(level: number): Promise<ViewNode> {
     let node = this.root;
     while (node.level > level) {
       const children = await this.#children(node);
@@ -309,61 +378,63 @@ class CapturedTree {
   }
 
   /** The first leaf whose `hi` is not below `id`, else the last leaf. */
-  async seekLeaf(id: string): Promise<OldNode> {
+  async seekLeaf(id: string): Promise<ViewNode> {
     let node = this.root;
     while (node.level > 0) {
       const children = await this.#children(node);
-      node = children.find((child) => compareDocIds(id, child.entry!.hi) <= 0) ?? children.at(-1)!;
+      node = children.find((child) => compareDocIds(id, child.summary.hi) <= 0) ?? children.at(-1)!;
     }
     return node;
   }
 
-  /** The documents of the old leaf `node`. */
-  async docs(node: OldNode): Promise<CanonicalDocument[]> {
-    const decoded = await this.load(node);
-    if (decoded.node.kind !== "leaf") {
-      return internal(`node at level ${node.level} is not a leaf`);
+  /** The documents of the leaf `node`. */
+  async docs(node: ViewNode): Promise<readonly CanonicalDocument[]> {
+    const { child } = node;
+    if (child.kind === "fresh") {
+      return child.node.kind === "leaf"
+        ? child.node.docs
+        : internal(`node at level ${node.level} is not a leaf`);
     }
-    return decoded.node.docs.map(canonicalOf);
+    await this.#open(node);
+    return leafDocs(node.decoded!, this.#docs);
   }
 
   /**
-   * Every node of the new `level`, in order: the old nodes with each
-   * splice's run replaced by its fresh nodes. Reads every old node one
-   * level up.
+   * Every node of the new `level`, in order: the nodes with each
+   * splice's run replaced by its new nodes. Reads every node one level
+   * up.
    */
-  async levelItems(
-    level: number,
-    splices: readonly Splice<PlannedNode>[],
-  ): Promise<{ readonly child: PlannedChild; readonly old: OldNode | null }[]> {
-    const items: { child: PlannedChild; old: OldNode | null }[] = [];
+  async levelItems(level: number, splices: readonly Splice[]): Promise<PlannedChild[]> {
+    const items: PlannedChild[] = [];
     let si = 0;
-    let node: OldNode | null = await this.first(level);
+    let node: ViewNode | null = await this.first(level);
     while (node !== null) {
       const splice = splices[si];
       if (splice !== undefined && node === splice.first) {
-        for (const fresh of splice.fresh) {
-          items.push({ child: { kind: "fresh", node: fresh }, old: null });
-        }
+        items.push(...splice.out);
         si += 1;
         node = await this.next(splice.last);
         continue;
       }
-      items.push({ child: { kind: "reused", entry: node.entry! }, old: node });
+      items.push(node.child);
       node = await this.next(node);
     }
     return items;
   }
 
-  /** The old node `node` as a fresh planned node, so it can become a root. */
-  async materialize(node: OldNode): Promise<PlannedNode> {
-    const decoded = await this.load(node);
-    if (decoded.node.kind === "leaf") {
-      return plannedLeaf(decoded.node.docs.map(canonicalOf));
+  /** The node `child` at `level` as a fresh planned node, so it can become a root. */
+  async materialize(child: PlannedChild, level: number): Promise<PlannedNode> {
+    if (child.kind === "fresh") {
+      return child.node;
     }
+    const node = this.#node(level, child, null, 0);
+    if (level === 0) {
+      return plannedLeaf(await this.docs(node));
+    }
+    const children = await this.#children(node);
     return plannedBranch(
-      decoded.node.level,
-      decoded.node.children.map((entry) => ({ kind: "reused", entry })),
+      level,
+      children.map((c) => c.child),
     );
   }
 }
@@ -413,15 +484,15 @@ interface Totals {
 }
 
 /**
- * Apply `mutations` (sorted) to `docs` (sorted), calling `emit` for each
- * resulting document in order, and add the change in totals to `delta`.
+ * `docs` (sorted) with `mutations` (sorted) applied, adding the change
+ * in totals to `delta`.
  */
-const mergeInto = async (
+const merged = (
   docs: readonly CanonicalDocument[],
   mutations: readonly TreeMutation[],
-  delta: Totals,
-  emit: (doc: CanonicalDocument) => Promise<void> | void,
-): Promise<void> => {
+  delta: Totals = { rows: 0, bytes: 0 },
+): CanonicalDocument[] => {
+  const out: CanonicalDocument[] = [];
   let d = 0;
   let m = 0;
   while (d < docs.length || m < mutations.length) {
@@ -436,7 +507,7 @@ const mergeInto = async (
       order = compareDocIds(old.id, mutation.id);
     }
     if (order < 0) {
-      await emit(old!);
+      out.push(old!);
       d += 1;
       continue;
     }
@@ -448,66 +519,79 @@ const mergeInto = async (
     if (mutation!.doc !== null) {
       delta.rows += 1;
       delta.bytes += mutation!.doc.bytes;
-      await emit(mutation!.doc);
+      out.push(mutation!.doc);
     }
     m += 1;
   }
+  return out;
 };
+
+/** Whether two canonical documents are the same row: same reference, or same canonical bytes. */
+const sameDocument = (a: CanonicalDocument, b: CanonicalDocument): boolean =>
+  a.doc === b.doc ||
+  (a.id === b.id &&
+    a.bytes === b.bytes &&
+    bytesEqual(encodeJsonBytes(a.doc), encodeJsonBytes(b.doc)));
 
 // ---------------------------------------------------------------------
 // Level passes
 // ---------------------------------------------------------------------
 
 /** Where re-chunking for a change at `id` starts on the leaf level. */
-const leafRestart = async (tree: CapturedTree, id: string, steps: PlanSteps): Promise<OldNode> => {
-  const leaf = await tree.seekLeaf(id);
+const leafRestart = async (view: TreeView, id: string, steps: PlanSteps): Promise<ViewNode> => {
+  const leaf = await view.seekLeaf(id);
   if (
-    compareDocIds(id, leaf.entry!.hi) <= 0 &&
-    steps.leafRestartsBefore(leaf.entry!, steps.layout)
+    compareDocIds(id, leaf.summary.hi) <= 0 &&
+    steps.leafRestartsBefore(leaf.summary, steps.layout)
   ) {
-    return (await tree.prev(leaf)) ?? leaf;
+    return (await view.prev(leaf)) ?? leaf;
   }
   return leaf;
 };
 
 /** Re-chunk the leaf level around every mutation. */
 const leafPass = async (
-  tree: CapturedTree,
+  view: TreeView,
   mutations: readonly TreeMutation[],
   steps: PlanSteps,
   delta: Totals,
-): Promise<Splice<PlannedLeaf>[]> => {
-  const splices: Splice<PlannedLeaf>[] = [];
+  adopt: Adopt,
+): Promise<Splice[]> => {
+  const splices: Splice[] = [];
   let mi = 0;
-  let restart = mutations.length > 0 ? await leafRestart(tree, mutations[0]!.id, steps) : null;
+  let restart = mutations.length > 0 ? await leafRestart(view, mutations[0]!.id, steps) : null;
   while (restart !== null) {
     const first = restart;
     const fresh: PlannedLeaf[] = [];
     const chunker = new LeafChunker(steps, fresh);
     let leaf = first;
     let count = 0;
+    let freshReplaced = 0;
     restart = null;
     for (;;) {
-      const docs = await tree.docs(leaf);
+      const docs = await view.docs(leaf);
       count += 1;
-      const next = await tree.next(leaf);
+      freshReplaced += leaf.child.kind === "fresh" ? 1 : 0;
+      const next = await view.next(leaf);
       // This leaf takes every pending mutation up to its `hi`; the last
       // leaf takes the rest, since the level's end is not a cut.
       let end = mutations.length;
       if (next !== null) {
         end = mi;
-        while (end < mutations.length && compareDocIds(mutations[end]!.id, leaf.entry!.hi) <= 0) {
+        while (end < mutations.length && compareDocIds(mutations[end]!.id, leaf.summary.hi) <= 0) {
           end += 1;
         }
       }
-      await mergeInto(docs, mutations.slice(mi, end), delta, (doc) => chunker.push(doc));
+      for (const doc of merged(docs, mutations.slice(mi, end), delta)) {
+        await chunker.push(doc);
+      }
       mi = end;
       if (next === null) {
         chunker.flush();
         break;
       }
       const pending =
-        mi < mutations.length ? await leafRestart(tree, mutations[mi]!.id, steps) : null;
+        mi < mutations.length ? await leafRestart(view, mutations[mi]!.id, steps) : null;
       if (pending === null || compareNodes(pending, next) > 0) {
         if (steps.resyncStops(chunker.empty)) {
           chunker.flush();
@@ -517,22 +601,23 @@ const leafPass = async (
       }
       leaf = next;
     }
-    splices.push({ first, last: leaf, count, fresh });
+    splices.push({ first, last: leaf, count, freshReplaced, out: fresh.map(adopt) });
   }
   return splices;
 };
 
 /**
- * Re-chunk branch `level`, which the old tree chunked, around every
+ * Re-chunk branch `level`, which is content-chunked, around every
  * splice of the level below.
  */
 const branchPass = async (
-  tree: CapturedTree,
+  view: TreeView,
   level: number,
-  below: readonly Splice<PlannedNode>[],
+  below: readonly Splice[],
   steps: PlanSteps,
-): Promise<Splice<PlannedBranch>[]> => {
-  const splices: Splice<PlannedBranch>[] = [];
+  adopt: Adopt,
+): Promise<Splice[]> => {
+  const splices: Splice[] = [];
   let si = 0;
   while (si < below.length) {
     const first = below[si]!.first.parent!;
@@ -540,14 +625,20 @@ const branchPass = async (
     const chunker = new BranchChunker(level, steps, fresh);
     let parent = first;
     let count = 1;
-    let cur: OldNode | null = first.children![0]!;
+    let freshReplaced = first.child.kind === "fresh" ? 1 : 0;
+    const enter = (node: ViewNode): void => {
+      parent = node;
+      count += 1;
+      freshReplaced += node.child.kind === "fresh" ? 1 : 0;
+    };
+    let cur: ViewNode | null = first.children![0]!;
     for (;;) {
       if (cur === null) {
         chunker.flush();
         break;
       }
       if (cur.parent !== parent) {
-        // At the start of the next old node of this level.
+        // At the start of the next node of this level.
         const pending = below[si];
         if (pending === undefined || compareNodes(pending.first.parent!, cur.parent!) > 0) {
           if (steps.resyncStops(chunker.empty)) {
@@ -555,58 +646,133 @@ const branchPass = async (
             break;
           }
         }
-        parent = cur.parent!;
-        count += 1;
+        enter(cur.parent!);
       }
       const splice = below[si];
       if (splice !== undefined && cur === splice.first) {
-        for (const node of splice.fresh) {
-          await chunker.push({ kind: "fresh", node });
+        for (const child of splice.out) {
+          await chunker.push(child);
         }
         si += 1;
         while (parent !== splice.last.parent) {
-          parent = (await tree.next(parent))!;
-          count += 1;
+          enter((await view.next(parent))!);
         }
-        cur = await tree.next(splice.last);
+        cur = await view.next(splice.last);
         continue;
       }
-      await chunker.push({ kind: "reused", entry: cur.entry! });
-      cur = await tree.next(cur);
+      await chunker.push(cur.child);
+      cur = await view.next(cur);
     }
-    splices.push({ first, last: parent, count, fresh });
+    splices.push({ first, last: parent, count, freshReplaced, out: fresh.map(adopt) });
   }
   return splices;
 };
 
-// ---------------------------------------------------------------------
-// Plan
-// ---------------------------------------------------------------------
+/** What the level passes plan: the new tree and the fresh nodes at each level below its root. */
+interface LevelPlan {
+  readonly tree: PlannedTree;
+  readonly fresh: readonly number[];
+}
 
-/** Every document of the old tree, read leaf by leaf. */
-const allDocs = async (tree: CapturedTree): Promise<CanonicalDocument[]> => {
+/**
+ * Carry the leaf splices `below` up the levels of `view` whose node
+ * counts are `counts` (fresh nodes `fresh`), applying the root rule.
+ * `mismatch` reports a regrouped level whose nodes disagree with the
+ * counts.
+ */
+const planLevels = async (
+  view: TreeView,
+  leafSplices: readonly Splice[],
+  counts: readonly number[],
+  fresh: readonly number[],
+  steps: PlanSteps,
+  adopt: Adopt,
+  mismatch: (level: number, holds: number, gives: number) => never,
+): Promise<LevelPlan> => {
+  const depth = view.root.level;
+  const newCounts: number[] = [];
+  const newFresh: number[] = [];
+  let below = leafSplices;
+  for (let level = 0; ; level++) {
+    // The new node count of `level`: the count before, less the nodes
+    // replaced there, plus the new ones. The root level holds one node.
+    const count = below.reduce(
+      (total, splice) => total + splice.out.length - splice.count,
+      level < depth ? counts[level]! : 1,
+    );
+    // Below the root's children the level held more than
+    // branchFanoutMax nodes and was chunked; it stays chunked while the
+    // new level does too.
+    if (level + 1 < depth && count > steps.layout.branchFanoutMax) {
+      newCounts.push(count);
+      newFresh.push(
+        below.reduce(
+          (total, splice) => total + freshIn(splice.out) - splice.freshReplaced,
+          fresh[level]!,
+        ),
+      );
+      below = await branchPass(view, level + 1, below, steps, adopt);
+      continue;
+    }
+    // Otherwise the new level is regrouped from all its nodes.
+    const items = await view.levelItems(level, below);
+    if (items.length !== count) {
+      mismatch(level, items.length, count);
+    }
+    const chunked: number[] = [];
+    const { top, levelNodes } = await assembleLevels(items, level, steps, (node) => {
+      const child = adopt(node);
+      if (child.kind === "fresh") {
+        chunked[node.level] = (chunked[node.level] ?? 0) + 1;
+      }
+      return child;
+    });
+    const root = await view.materialize(top, level + levelNodes.length);
+    return {
+      tree: { root, levelNodes: [...newCounts, ...levelNodes] },
+      fresh: [
+        ...newFresh,
+        ...levelNodes.map((_, i) => (i === 0 ? freshIn(items) : (chunked[level + i] ?? 0))),
+      ],
+    };
+  }
+};
+
+/** Every document of the tree, read leaf by leaf. */
+const allDocs = async (view: TreeView): Promise<CanonicalDocument[]> => {
   const docs: CanonicalDocument[] = [];
   for (
-    let leaf: OldNode | null = await tree.first(0);
+    let leaf: ViewNode | null = await view.first(0);
     leaf !== null;
-    leaf = await tree.next(leaf)
+    leaf = await view.next(leaf)
   ) {
-    docs.push(...(await tree.docs(leaf)));
+    docs.push(...(await view.docs(leaf)));
   }
   return docs;
 };
 
-/** The documents of `docs` with `mutations` applied. */
-const merged = async (
-  docs: readonly CanonicalDocument[],
-  mutations: readonly TreeMutation[],
-): Promise<CanonicalDocument[]> => {
-  const out: CanonicalDocument[] = [];
-  await mergeInto(docs, mutations, { rows: 0, bytes: 0 }, (doc) => {
-    out.push(doc);
-  });
-  return out;
-};
+/** The captured root branch as a planned node that reuses every child. */
+const capturedBranch = (captured: DecodedTreeNode): PlannedNode =>
+  captured.node.kind === "branch"
+    ? plannedBranch(
+        captured.node.level,
+        captured.node.children.map((entry) => ({ kind: "reused", entry })),
+      )
+    : internal(`captured node ${JSON.stringify(captured.key)} is not a branch`);
+
+/** A thrower for a regrouped level whose nodes disagree with the counts the captured root started from. */
+const countsMismatch =
+  (captured: DecodedTreeNode, stored: readonly number[]) =>
+  (level: number, holds: number, gives: number): never => {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `tree fold plan: captured root ${JSON.stringify(captured.key)} records level_nodes ${JSON.stringify(stored)}, but level ${level} holds ${holds} nodes where those counts give ${gives}`,
+    );
+  };
+
+// ---------------------------------------------------------------------
+// Plan
+// ---------------------------------------------------------------------
 
 /** Plan `mutations` against the captured root, reading nodes through `loadNode`. */
 const planTree = async (
@@ -619,70 +785,41 @@ const planTree = async (
   loadNode: NodeLoader,
 ): Promise<PlannedFold> => {
   if (captured === null) {
-    return { tree: await buildTree(await merged([], mutations), key, config), read: [] };
+    return { tree: await buildTree(merged([], mutations), key, config), read: [] };
   }
   const totals = captured.node.root;
   if (totals === null) {
     return internal(`captured node ${JSON.stringify(captured.key)} is not a root`);
   }
   if (captured.node.kind === "leaf") {
-    const docs = await merged(captured.node.docs.map(canonicalOf), mutations);
+    const docs = merged(captured.node.docs.map(canonicalOf), mutations);
     return { tree: await buildTree(docs, key, config), read: [] };
   }
   const oldCounts = (totals as { readonly levelNodes: readonly number[] }).levelNodes;
 
-  const tree = new CapturedTree(prefix, captured, loadNode);
-  const depth = tree.root.level;
+  const view = new TreeView(prefix, capturedBranch(captured), loadNode, new WeakMap());
   const delta: Totals = { rows: 0, bytes: 0 };
-  let below: readonly Splice<PlannedNode>[] = await leafPass(tree, mutations, steps, delta);
+  const below = await leafPass(view, mutations, steps, delta, freshChild);
 
   const rows = totals.rows + delta.rows;
   if (rows === 0) {
-    return { tree: null, read: tree.read };
+    return { tree: null, read: view.read };
   }
   if (steps.singleLeaf(rows, totals.bytes + delta.bytes, steps.layout)) {
     // Crossing the depth-0 limits downward rebuilds the whole leaf level.
-    const docs = await merged(await allDocs(tree), mutations);
-    return { tree: await buildTree(docs, key, config), read: tree.read };
+    const docs = merged(await allDocs(view), mutations);
+    return { tree: await buildTree(docs, key, config), read: view.read };
   }
-
-  const newCounts: number[] = [];
-  for (let level = 0; ; level++) {
-    // The new node count of `level`: the captured count, less the old
-    // nodes replaced there, plus the fresh ones.
-    const count = below.reduce(
-      (total, splice) => total + splice.fresh.length - splice.count,
-      oldCounts[level]!,
-    );
-    // Below the root's children the old level held more than
-    // branchFanoutMax nodes and was chunked; it stays chunked while the
-    // new level does too.
-    if (level + 1 < depth && count > steps.layout.branchFanoutMax) {
-      newCounts.push(count);
-      below = await branchPass(tree, level + 1, below, steps);
-      continue;
-    }
-    // Otherwise the new level is regrouped from all its nodes.
-    const items = await tree.levelItems(level, below);
-    if (items.length !== count) {
-      // The captured root's level_nodes disagree with the nodes it routes to.
-      throw new BaerlyError(
-        "InvalidResponse",
-        `tree fold plan: captured root ${JSON.stringify(captured.key)} records level_nodes ${JSON.stringify(oldCounts)}, but level ${level} holds ${items.length} nodes where those counts give ${count}`,
-      );
-    }
-    const { top, levelNodes } = await assembleLevels(
-      items.map((item) => item.child),
-      level,
-      steps,
-    );
-    const counts = [...newCounts, ...levelNodes];
-    if (top.kind === "fresh") {
-      return { tree: { root: top.node, levelNodes: counts }, read: tree.read };
-    }
-    const old = items.find((item) => item.child === top)!.old!;
-    return { tree: { root: await tree.materialize(old), levelNodes: counts }, read: tree.read };
-  }
+  const { tree } = await planLevels(
+    view,
+    below,
+    oldCounts,
+    oldCounts.map(() => 0),
+    steps,
+    freshChild,
+    countsMismatch(captured, oldCounts),
+  );
+  return { tree, read: view.read };
 };
 
 /** {@link planTree}, tied to the captured root's key and the chunk key it planned under. */
@@ -743,6 +880,12 @@ export const planFold = async (input: PlanFoldInput): Promise<TreeFoldPlan> => {
 // Charged, change-by-change planning
 // ---------------------------------------------------------------------
 
+/** Calls reserved to publish a tree of `freshNodes` fresh nodes; see {@link publicationReserve}. */
+const reserveFor = (freshNodes: number): number =>
+  freshNodes * (TREE_RETRIED_CALL_CHARGE + TREE_RETRIED_CALL_CHARGE) +
+  TREE_HEAD_CAS_CHARGE +
+  TREE_RETRIED_CALL_CHARGE;
+
 /**
  * Calls reserved to publish `tree`: per fresh node, its create PUT and
  * the GET that adopts it when the create's acknowledgement was lost and
@@ -750,44 +893,7 @@ export const planFold = async (input: PlanFoldInput): Promise<TreeFoldPlan> => {
  * resolves its fate.
  */
 export const publicationReserve = (tree: PlannedTree | null): number =>
-  (tree === null ? 0 : freshNodeCount(tree.root)) *
-    (TREE_RETRIED_CALL_CHARGE + TREE_RETRIED_CALL_CHARGE) +
-  TREE_HEAD_CAS_CHARGE +
-  TREE_RETRIED_CALL_CHARGE;
-
-/**
- * `config` with its chunk hash memoised for one {@link FoldPlanner}, so
- * re-planning the accepted changes does not re-hash unchanged IDs. The
- * cache is keyed by chunk key, then level, then `_id`, so hashes under
- * different salts or levels never mix. The hashes are unchanged.
- */
-const memoizedHashConfig = (config: TreeConfig): TreeConfig => {
-  const hash = config.steps.chunkHash ?? chunkHash;
-  const memo = new Map<ChunkKey, Map<number, Map<string, number>>>();
-  const memoized = async (key: ChunkKey, level: number, id: string): Promise<number> => {
-    let byLevel = memo.get(key);
-    if (byLevel === undefined) {
-      byLevel = new Map();
-      memo.set(key, byLevel);
-    }
-    let byId = byLevel.get(level);
-    if (byId === undefined) {
-      byId = new Map();
-      byLevel.set(level, byId);
-    }
-    const cached = byId.get(id);
-    if (cached !== undefined) {
-      return cached;
-    }
-    const value = await hash(key, level, id);
-    byId.set(id, value);
-    return value;
-  };
-  return Object.freeze({
-    layout: config.layout,
-    steps: Object.freeze({ ...config.steps, chunkHash: memoized }),
-  });
-};
+  reserveFor(tree === null ? 0 : freshNodeCount(tree.root));
 
 /** Input to {@link FoldPlanner}. */
 export interface FoldPlannerInput extends Omit<PlanFoldInput, "mutations"> {
@@ -798,7 +904,7 @@ export interface FoldPlannerInput extends Omit<PlanFoldInput, "mutations"> {
 }
 
 /**
- * Thrown inside a re-plan when its next node GET would not fit, and
+ * Thrown inside a change when its next node GET would not fit, and
  * caught by {@link FoldPlanner.add}; it never escapes the planner.
  */
 class OverBudget extends Error {
@@ -808,45 +914,143 @@ class OverBudget extends Error {
 }
 
 /**
+ * The tree of the accepted changes.
+ *
+ * - `single`: the depth-0 rule holds (or no row is left), so the tree is
+ *   one leaf of every row. Only the totals are kept per change: the
+ *   rows are `base` with the accepted changes `[start, end)` applied,
+ *   and the leaf is built when a plan is read.
+ * - `tree`: a content-chunked tree whose root is `root`, with the node
+ *   count and the fresh node count of every level below it.
+ */
+type PlannerState =
+  | {
+      readonly kind: "single";
+      readonly base: readonly CanonicalDocument[];
+      readonly index: ReadonlyMap<string, CanonicalDocument>;
+      readonly start: number;
+      readonly end: number;
+      readonly rows: number;
+      readonly bytes: number;
+    }
+  | {
+      readonly kind: "tree";
+      readonly root: PlannedNode;
+      readonly counts: readonly number[];
+      readonly fresh: readonly number[];
+      readonly rows: number;
+      readonly bytes: number;
+    };
+
+/** The plan after an accepted seq, with the reserve its GETs were admitted against. */
+interface Checkpoint {
+  readonly state: PlannerState;
+  readonly reserve: number;
+  /** Nodes fetched when it was taken: its plan's `read`. */
+  readonly fetched: number;
+  /** Its plan, built on first read. */
+  plan?: TreeFoldPlan;
+}
+
+/** A node of the captured tree the planner has read, keyed by level and `lo`. */
+interface ReadNode {
+  readonly entry: TreeChildEntry;
+  readonly decoded: DecodedTreeNode;
+}
+
+/**
  * Plans a fold one change at a time, in seq order, against a request
- * ledger. Each {@link FoldPlanner.add} re-plans every change accepted so
- * far plus the new one, reusing the nodes already fetched, so only
- * nodes no earlier plan needed cost a GET. Before each node GET it checks
- * that the GET and the last accepted plan's {@link publicationReserve}
- * still fit; after the plan it checks that every GET issued so far plus
- * the new plan's reserve fits. A change that fails either check is
- * rejected: the fold ends before its seq and publishes the last accepted
- * plan, and the GETs issued for it stay charged.
+ * ledger.
+ *
+ * Each {@link FoldPlanner.add} applies one change to the tree of the
+ * changes accepted so far, re-planning only the region it touches: its
+ * leaf's resync region and the path above it, plus a level's nodes when
+ * the root rule regroups that level, and every row when the change
+ * crosses the depth-0 limits. Hashing and encoding per change are
+ * therefore bounded by that region, not by how many changes the tick
+ * has accepted. A rebuilt node equal to a captured node the planner has
+ * read (same level, `lo` and content) reuses that node, so a change
+ * that is undone, or a no-op, publishes no copy of an existing node.
+ * An absent delete or an identical upsert changes nothing once its leaf
+ * is read.
+ *
+ * **Charging.** Every node GET is charged as it is issued, and every
+ * call the caller issues between changes (the fold's log GETs) is
+ * charged through {@link FoldPlanner.spend}, all against one budget.
+ * Before each node GET the planner checks that the GET and the reserve
+ * of the last accepted plan ({@link publicationReserve}) still fit;
+ * after the change it checks that the new plan's reserve fits. A change
+ * that fails either check is rejected: the fold ends before its seq and
+ * publishes the last accepted plan, and the GETs issued for it stay
+ * charged. Rejection is prefix-only: after it, every later change is
+ * refused.
+ *
+ * **Checkpoints.** The planner keeps a checkpoint, a plan and its
+ * reserve, at every accepted seq. A fold whose look-ahead passes an
+ * entry it cannot publish yet (an invalid survivor a later entry may
+ * supersede) calls {@link FoldPlanner.pin} at that entry. While a
+ * checkpoint is pinned, every GET is admitted against the larger of the
+ * current reserve and the pinned checkpoint's, so
+ * {@link FoldPlanner.rollback} to it always fits the budget.
  */
 export class FoldPlanner {
   readonly #input: FoldPlannerInput;
   readonly #config: TreeConfig;
   readonly #steps: PlanSteps;
+  readonly #decode: NodeLoader;
   readonly #fetched = new Map<string, DecodedTreeNode>();
-  readonly #survivors = new Map<string, TreeMutation>();
+  readonly #read: DecodedTreeNode[] = [];
+  readonly #docs: DocsCache = new WeakMap();
+  readonly #readNodes = new Map<number, Map<string, ReadNode>>();
+  /** Every accepted change that a `single` state replays. */
+  readonly #log: TreeMutation[] = [];
+  /** The rows the current `single` state changed, by `_id`. */
+  #overlay = new Map<string, CanonicalDocument | null>();
+  readonly #checkpoints: Checkpoint[];
   #gets = 0;
-  #accepted: TreeFoldPlan | null = null;
-  #acceptedReserve = 0;
+  #spentBetween = 0;
+  #pinned: number | null = null;
   #rejected = false;
 
+  /**
+   * @throws BaerlyError code="Internal" — `input.root` is not a root node.
+   */
   constructor(input: FoldPlannerInput) {
     this.#input = input;
-    this.#config = memoizedHashConfig(input.config ?? DEFAULT_TREE_CONFIG);
+    this.#config = input.config ?? DEFAULT_TREE_CONFIG;
     this.#steps = planSteps(this.#config, input.chunkKey);
+    this.#decode = decodingLoader(input.get, this.#config);
+    this.#checkpoints = [{ state: this.#initialState(input.root), reserve: 0, fetched: 0 }];
   }
 
   /** The last accepted plan, or `null` while no change has been accepted. */
   get plan(): TreeFoldPlan | null {
-    return this.#accepted;
+    if (this.#checkpoints.length === 1) {
+      return null;
+    }
+    const checkpoint = this.#current;
+    checkpoint.plan ??= {
+      tree: this.#treeOf(checkpoint.state),
+      read: this.#read.slice(0, checkpoint.fetched),
+      base: this.#input.root?.key ?? null,
+      chunkKey: this.#input.chunkKey,
+    };
+    return checkpoint.plan;
+  }
+
+  /** How many changes have been accepted: the fold ends after that many entries. */
+  get accepted(): number {
+    return this.#checkpoints.length - 1;
   }
 
   /**
    * Calls charged so far: those charged before planning, every node GET
-   * issued (rejected changes included) and the reserve to publish the
-   * last accepted plan.
+   * issued (rejected changes included), every call charged through
+   * {@link FoldPlanner.spend} and the reserve to publish the last
+   * accepted plan.
    */
   get charge(): number {
-    return this.#input.spent + this.#gets * TREE_RETRIED_CALL_CHARGE + this.#acceptedReserve;
+    return this.#spent(0) + this.#current.reserve;
   }
 
   /** Node GETs issued so far. */
@@ -866,20 +1070,12 @@ export class FoldPlanner {
     if (this.#rejected) {
       return false;
     }
-    const survivors = new Map(this.#survivors).set(mutation.id, mutation);
-    let plan: TreeFoldPlan;
-    let reserve: number;
+    const current = this.#current;
+    let change: TreeMutation | undefined;
+    let next: PlannerState;
     try {
-      plan = await planWith(
-        this.#input.prefix,
-        this.#input.root,
-        orderedMutations([...survivors.values()], this.#steps),
-        this.#steps,
-        this.#input.chunkKey,
-        this.#config,
-        this.#chargedLoader(),
-      );
-      reserve = publicationReserve(plan.tree);
+      [change] = orderedMutations([mutation], this.#steps);
+      next = change === undefined ? current.state : await this.#apply(current.state, change);
     } catch (error) {
       // A change that throws is rejected too, so a caller that catches
       // and keeps adding can never extend the accepted prefix past it.
@@ -889,34 +1085,313 @@ export class FoldPlanner {
       }
       throw error;
     }
-    if (this.#input.spent + this.#gets * TREE_RETRIED_CALL_CHARGE + reserve > this.#input.budget) {
+    const reserve = this.#reserveOf(next);
+    if (!this.#fits(0, reserve)) {
       this.#rejected = true;
       return false;
     }
-    for (const [id, change] of survivors) {
-      this.#survivors.set(id, change);
+    if (change !== undefined) {
+      this.#log.push(change);
+      if (next.kind === "single") {
+        if (current.state.kind === "single") {
+          this.#overlay.set(change.id, change.doc);
+        } else {
+          this.#overlay = new Map();
+        }
+      }
     }
-    this.#accepted = plan;
-    this.#acceptedReserve = reserve;
+    this.#checkpoints.push({ state: next, reserve, fetched: this.#read.length });
     return true;
   }
 
-  #chargedLoader(): NodeLoader {
-    const decode = decodingLoader(this.#input.get, this.#config);
-    return async (key, expected) => {
-      const cached = this.#fetched.get(key);
-      if (cached !== undefined) {
-        return cached;
-      }
-      const charged =
-        this.#input.spent + (this.#gets + 1) * TREE_RETRIED_CALL_CHARGE + this.#acceptedReserve;
-      if (charged > this.#input.budget) {
-        throw new OverBudget();
-      }
-      this.#gets += 1;
-      const decoded = await decode(key, expected);
-      this.#fetched.set(key, decoded);
-      return decoded;
+  /**
+   * Charge `calls` the fold issues outside the planner before the next
+   * change, such as its log GETs, against the same budget. Returns
+   * whether they fit with the reserve; when they do not, nothing is
+   * charged and every later change is refused, so the fold ends here.
+   *
+   * @throws BaerlyError code="Internal" — `calls` is not a non-negative
+   *   safe integer.
+   */
+  spend(calls: number): boolean {
+    if (!Number.isSafeInteger(calls) || calls < 0) {
+      return internal(`spend ${calls} calls`);
+    }
+    if (this.#rejected || !this.#fits(calls, this.#current.reserve)) {
+      this.#rejected = true;
+      return false;
+    }
+    this.#spentBetween += calls;
+    return true;
+  }
+
+  /**
+   * Pin the current checkpoint as the one a pending look-ahead falls
+   * back to, and return its count of accepted changes. Until
+   * {@link FoldPlanner.unpin}, every GET and every accepted change must
+   * also fit the pinned checkpoint's reserve. While a checkpoint is
+   * already pinned, the earlier pin stays.
+   */
+  pin(): number {
+    this.#pinned ??= this.#checkpoints.length - 1;
+    return this.#pinned;
+  }
+
+  /** Release the pin: the look-ahead it guarded is resolved. */
+  unpin(): void {
+    this.#pinned = null;
+  }
+
+  /**
+   * Fall back to the pinned checkpoint: its plan and reserve become the
+   * planner's, the GETs and calls charged since stay charged, and every
+   * later change is refused. The charge then fits the budget.
+   *
+   * @throws BaerlyError code="Internal" — no checkpoint is pinned.
+   */
+  rollback(): void {
+    const pinned = this.#pinned ?? internal("rollback without a pinned checkpoint");
+    this.#checkpoints.length = pinned + 1;
+    this.#pinned = null;
+    this.#rejected = true;
+  }
+
+  get #current(): Checkpoint {
+    return this.#checkpoints.at(-1)!;
+  }
+
+  /** Calls charged so far, without any reserve, plus `calls` more. */
+  #spent(calls: number): number {
+    return this.#input.spent + this.#spentBetween + this.#gets * TREE_RETRIED_CALL_CHARGE + calls;
+  }
+
+  /** Whether `calls` more fit the budget with `reserve` held, and the pinned reserve while one is pinned. */
+  #fits(calls: number, reserve: number): boolean {
+    const pinned = this.#pinned === null ? 0 : this.#checkpoints[this.#pinned]!.reserve;
+    return this.#spent(calls) + Math.max(reserve, pinned) <= this.#input.budget;
+  }
+
+  #reserveOf(state: PlannerState): number {
+    if (state.kind === "single") {
+      return reserveFor(state.rows === 0 ? 0 : 1);
+    }
+    return reserveFor(state.fresh.reduce((total, n) => total + n, 1));
+  }
+
+  #initialState(root: DecodedTreeNode | null): PlannerState {
+    if (root === null) {
+      return this.#single([], 0);
+    }
+    const totals = root.node.root;
+    if (totals === null) {
+      return internal(`captured node ${JSON.stringify(root.key)} is not a root`);
+    }
+    if (root.node.kind === "branch") {
+      const counts = root.node.root!.levelNodes;
+      return {
+        kind: "tree",
+        root: capturedBranch(root),
+        counts,
+        fresh: counts.map(() => 0),
+        rows: totals.rows,
+        bytes: totals.bytes,
+      };
+    }
+    const docs = root.node.docs.map(canonicalOf);
+    if (this.#steps.singleLeaf(totals.rows, totals.bytes, this.#steps.layout)) {
+      return this.#single(docs, 0);
+    }
+    return {
+      kind: "tree",
+      root: plannedLeaf(docs),
+      counts: [],
+      fresh: [],
+      rows: totals.rows,
+      bytes: totals.bytes,
     };
+  }
+
+  /** A `single` state over `docs` (sorted), replaying changes from log index `start`. */
+  #single(docs: readonly CanonicalDocument[], start: number): PlannerState {
+    return {
+      kind: "single",
+      base: docs,
+      index: new Map(docs.map((doc) => [doc.id, doc])),
+      start,
+      end: start,
+      rows: docs.length,
+      bytes: docs.reduce((total, doc) => total + doc.bytes, 0),
+    };
+  }
+
+  /** The rows of a `single` state, with `extra` applied after its changes. */
+  #singleDocs(
+    state: PlannerState & { readonly kind: "single" },
+    extra?: TreeMutation,
+  ): CanonicalDocument[] {
+    const survivors = new Map<string, TreeMutation>();
+    for (const change of this.#log.slice(state.start, state.end)) {
+      survivors.set(change.id, change);
+    }
+    if (extra !== undefined) {
+      survivors.set(extra.id, extra);
+    }
+    return merged(state.base, orderedMutations([...survivors.values()], this.#steps));
+  }
+
+  #treeOf(state: PlannerState): PlannedTree | null {
+    if (state.kind === "tree") {
+      return { root: state.root, levelNodes: state.counts };
+    }
+    return state.rows === 0 ? null : { root: plannedLeaf(this.#singleDocs(state)), levelNodes: [] };
+  }
+
+  /** The state after `change`. */
+  async #apply(state: PlannerState, change: TreeMutation): Promise<PlannerState> {
+    const { layout } = this.#steps;
+    if (state.kind === "single") {
+      const before = this.#overlay.has(change.id)
+        ? this.#overlay.get(change.id)!
+        : (state.index.get(change.id) ?? null);
+      const rows = state.rows - (before === null ? 0 : 1) + (change.doc === null ? 0 : 1);
+      const bytes = state.bytes - (before?.bytes ?? 0) + (change.doc?.bytes ?? 0);
+      if (rows === 0 || this.#steps.singleLeaf(rows, bytes, layout)) {
+        return { ...state, end: state.end + 1, rows, bytes };
+      }
+      // Crossing the depth-0 limits upward chunks every row.
+      const built = await buildTree(
+        this.#singleDocs(state, change),
+        this.#input.chunkKey,
+        this.#config,
+      );
+      return this.#adoptBuilt(built!, rows, bytes);
+    }
+
+    const view = new TreeView(this.#input.prefix, state.root, this.#load, this.#docs, this.#record);
+    const leaf = await view.seekLeaf(change.id);
+    const docs = await view.docs(leaf);
+    const present = docs.find((doc) => doc.id === change.id);
+    if (
+      change.doc === null
+        ? present === undefined
+        : present !== undefined && sameDocument(present, change.doc)
+    ) {
+      return state;
+    }
+    const delta: Totals = { rows: 0, bytes: 0 };
+    const below = await leafPass(view, [change], this.#steps, delta, this.#adopt);
+    const rows = state.rows + delta.rows;
+    const bytes = state.bytes + delta.bytes;
+    // The change is logged next, so a `single` state starts after it.
+    const start = this.#log.length + 1;
+    if (rows === 0) {
+      return this.#single([], start);
+    }
+    if (this.#steps.singleLeaf(rows, bytes, layout)) {
+      // Crossing the depth-0 limits downward reads every leaf.
+      return this.#single(merged(await allDocs(view), [change]), start);
+    }
+    const { tree, fresh } = await planLevels(
+      view,
+      below,
+      state.counts,
+      state.fresh,
+      this.#steps,
+      this.#adopt,
+      this.#mismatch,
+    );
+    return { kind: "tree", root: tree.root, counts: tree.levelNodes, fresh, rows, bytes };
+  }
+
+  /** A freshly built tree as a `tree` state, reusing every read captured node it equals. */
+  #adoptBuilt(tree: PlannedTree, rows: number, bytes: number): PlannerState {
+    const fresh = tree.levelNodes.map(() => 0);
+    const walk = (node: PlannedNode): PlannedNode => {
+      if (node.kind === "leaf") {
+        return node;
+      }
+      const children = node.children.map((child) => {
+        if (child.kind !== "fresh") {
+          return child;
+        }
+        const adopted = this.#adopt(walk(child.node));
+        if (adopted.kind === "fresh") {
+          fresh[node.level - 1] = fresh[node.level - 1]! + 1;
+        }
+        return adopted;
+      });
+      return plannedBranch(node.level, children);
+    };
+    return { kind: "tree", root: walk(tree.root), counts: tree.levelNodes, fresh, rows, bytes };
+  }
+
+  /**
+   * A regrouped level whose nodes disagree with the counts the planner
+   * carried from the captured root's `level_nodes`.
+   */
+  readonly #mismatch = (level: number, holds: number, gives: number): never => {
+    const root = this.#input.root;
+    const stored =
+      root?.node.kind === "branch" && root.node.root !== null ? root.node.root.levelNodes : [];
+    return root === null
+      ? internal(`level ${level} holds ${holds} nodes where the planned counts give ${gives}`)
+      : countsMismatch(root, stored)(level, holds, gives);
+  };
+
+  /** Read a node through `get`, once, charging the GET if it fits. */
+  readonly #load: NodeLoader = async (key, expected) => {
+    const cached = this.#fetched.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (!this.#fits(TREE_RETRIED_CALL_CHARGE, this.#current.reserve)) {
+      throw new OverBudget();
+    }
+    this.#gets += 1;
+    const decoded = await this.#decode(key, expected);
+    this.#fetched.set(key, decoded);
+    this.#read.push(decoded);
+    return decoded;
+  };
+
+  readonly #record: OnRead = (level, entry, decoded) => {
+    let byLo = this.#readNodes.get(level);
+    if (byLo === undefined) {
+      byLo = new Map();
+      this.#readNodes.set(level, byLo);
+    }
+    byLo.set(entry.lo, { entry, decoded });
+  };
+
+  /** Reuse the read captured node at `node`'s level and `lo` when `node` equals it. */
+  readonly #adopt: Adopt = (node) => {
+    const old = this.#readNodes.get(node.level)?.get(node.summary.lo);
+    if (old !== undefined && this.#equalsRead(node, old)) {
+      return { kind: "reused", entry: old.entry };
+    }
+    return { kind: "fresh", node };
+  };
+
+  #equalsRead(node: PlannedNode, old: ReadNode): boolean {
+    const { summary } = node;
+    const { entry } = old;
+    if (summary.hi !== entry.hi || summary.rows !== entry.rows || summary.bytes !== entry.bytes) {
+      return false;
+    }
+    const body = old.decoded.node;
+    if (node.kind === "leaf") {
+      if (body.kind !== "leaf") {
+        return false;
+      }
+      const docs = leafDocs(old.decoded, this.#docs);
+      return (
+        node.docs.length === docs.length && node.docs.every((doc, i) => sameDocument(doc, docs[i]!))
+      );
+    }
+    return (
+      body.kind === "branch" &&
+      node.children.length === body.children.length &&
+      node.children.every((child, i) => child.kind === "reused" && child.entry === body.children[i])
+    );
   }
 }

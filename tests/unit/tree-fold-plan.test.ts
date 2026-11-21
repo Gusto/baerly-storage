@@ -11,7 +11,9 @@
  *   parameters, and locality (an in-place update rewrites one node per
  *   level).
  *
- * The exhaustive small-scope suite is `tree-fold-plan-exhaustive.test.ts`.
+ * The exhaustive small-scope suite is `tree-fold-plan-exhaustive.test.ts`;
+ * the incremental planner's equivalence with the batch plan, its
+ * per-change work and its checkpoints are in `tree-fold-planner.test.ts`.
  *
  * The expected rows come from the logical oracle, and the published tree
  * is strictly decoded entry by entry (`tests/fixtures/tree-fold-harness.ts`).
@@ -378,21 +380,6 @@ describe("charged, change-by-change planning", () => {
     value: { _id: `k${i}` },
   }));
   const UNBOUNDED = Number.MAX_SAFE_INTEGER;
-
-  fcTest.prop({
-    ticks: ticksOver(smallIds, fc.integer({ min: 11, max: 60 }), { ticks: 5, perTick: 10 }),
-  })("with an unbounded ledger it publishes exactly the batch plan's tree", async ({ ticks }) => {
-    const batch = await FoldRun.open(config);
-    const charged = await FoldRun.open(config);
-    for (const tick of [base, ...ticks]) {
-      await batch.fold(tick);
-      const { folded } = await charged.fold(tick, UNBOUNDED);
-      expect(folded).toBe(tick.length);
-      // Attempts are numbered per run, so equal plans publish equal keys.
-      expect(charged.rootKey).toBe(batch.rootKey);
-    }
-    await expect(charged.check()).resolves.toBeUndefined();
-  });
 
   fcTest.prop({
     ticks: fc.array(
