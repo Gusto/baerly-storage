@@ -239,6 +239,8 @@ describe("whole-level crossings at the small-scope layout", () => {
       config,
     });
     expect(plan.read).toEqual([]);
+    expect(plan.base).toBe(root!.key);
+    expect(plan.chunkKey).toBe(chunkKey);
     expect(plan.tree!.root.kind).toBe("branch");
     const children = root!.node.kind === "branch" ? root!.node.children : [];
     expect(plan.tree!.root.kind === "branch" && plan.tree!.root.children).toEqual(
@@ -599,6 +601,8 @@ describe("planner input", () => {
       await expect(planFold({ ...input, root: null, mutations: [bad] })).resolves.toEqual({
         tree: null,
         read: [],
+        base: null,
+        chunkKey,
       });
       const planner = new FoldPlanner({ ...input, budget: Number.MAX_SAFE_INTEGER, spent: 0 });
       await expect(planner.add(valid)).resolves.toBe(true);
