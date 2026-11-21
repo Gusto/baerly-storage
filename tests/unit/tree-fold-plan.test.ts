@@ -33,6 +33,7 @@ import { buildTree } from "../../packages/server/src/tree/build.ts";
 import { canonicalDocument, decodeNode } from "../../packages/server/src/tree/node-codec.ts";
 import {
   FoldPlanner,
+  levelCountsMismatch,
   planFold,
   publicationReserve,
   type TreeMutation,
@@ -598,7 +599,7 @@ describe("planner input", () => {
     }
   });
 
-  test("captured level_nodes that disagree with a regrouped level are InvalidResponse", async () => {
+  test("captured level_nodes that disagree with a regrouped level are InvalidResponse; the planner's own are Internal", async () => {
     const run = await FoldRun.open(config);
     await run.fold(
       Array.from({ length: 20 }, (_, i) => ({ id: `k${i}`, value: { _id: `k${i}` } })),
@@ -634,6 +635,23 @@ describe("planner input", () => {
       code: "InvalidResponse",
       message: expect.stringContaining("level_nodes [3,3]"),
     });
+    // The incremental planner carries the stored counts the same way.
+    const planner = new FoldPlanner({
+      prefix: FOLD_PREFIX,
+      root: corrupt,
+      chunkKey,
+      get: read,
+      config,
+      budget: Number.MAX_SAFE_INTEGER,
+      spent: 0,
+    });
+    await expect(
+      planner.add({ id: "k3", doc: canonicalDocument({ _id: "k3", p: "y" }, "row") }),
+    ).rejects.toMatchObject({ code: "InvalidResponse" });
+    // Counts the planner listed or built itself can disagree only through
+    // a planner bug.
+    expect(levelCountsMismatch(corrupt, 0, 7, 3).code).toBe("InvalidResponse");
+    expect(levelCountsMismatch(null, 0, 7, 3).code).toBe("Internal");
   });
 
   test("a non-root captured node is an Internal error, and a missing node is InvalidResponse", async () => {

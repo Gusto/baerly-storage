@@ -235,6 +235,35 @@ describe("with an unbounded ledger the planner matches the batch plan", () => {
   });
 });
 
+describe("a rebuilt level reuses the captured nodes it equals", () => {
+  test("deleting and restoring rows in one tick publishes only the root, across root-rule changes", async () => {
+    // At 30 rows the small-scope tree has depth 3. Deleting a run of six
+    // rows lets a level fall to branchFanoutMax nodes and be regrouped;
+    // restoring them chunks it again, and those nodes equal the captured
+    // ones.
+    const config = configOf(SMALL_LAYOUT);
+    const k = (i: number) => `k${String(i).padStart(3, "0")}`;
+    const base: RowChange[] = Array.from({ length: 30 }, (_, i) => ({
+      id: k(i),
+      value: { _id: k(i) },
+    }));
+    const run = await FoldRun.open(config);
+    await run.fold(base);
+    expect((await run.captured())!.node.level).toBe(3);
+    for (let start = 0; start < base.length; start++) {
+      for (const span of [1, 3, 6]) {
+        const rows = base.slice(start, start + span);
+        const fork = run.fork();
+        const { written } = await fork.fold(
+          [...rows.map((r) => ({ id: r.id, value: null })), ...rows],
+          UNBOUNDED,
+        );
+        expect(written, `rows ${start}..${start + span - 1}`).toBe(1);
+      }
+    }
+  });
+});
+
 // ---------------------------------------------------------------------
 // CPU bound
 // ---------------------------------------------------------------------
@@ -338,8 +367,7 @@ describe("checkpoints and the look-ahead fallback", () => {
       if (!(await planner.add(first))) {
         continue;
       }
-      const reserve = () =>
-        planner.charge - FOLD_SPENT_BEFORE_PLANNING - planner.gets * TREE_RETRIED_CALL_CHARGE;
+      const reserve = () => publicationReserve(planner.plan!.tree);
       const pinnedReserve = reserve();
       expect(planner.pin()).toBe(1);
       let rejected = false;
@@ -419,6 +447,72 @@ describe("checkpoints and the look-ahead fallback", () => {
     await expect(refused.add({ id: "k5", doc: row("k5") })).resolves.toBe(false);
     expect(refused.accepted).toBe(1);
     expect(() => refused.spend(-1)).toThrow(expect.objectContaining({ code: "Internal" }));
+  });
+
+  test("while pinned, calls spent between changes must also fit the pinned reserve", async () => {
+    const { input } = await open();
+    const probe = new FoldPlanner({ ...input, budget: UNBOUNDED });
+    await probe.add(first);
+    const pinnedReserve = publicationReserve(probe.plan!.tree);
+    probe.pin();
+    await probe.add(lookAhead[0]!);
+    const currentReserve = publicationReserve(probe.plan!.tree);
+    expect(currentReserve).toBeLessThan(pinnedReserve);
+    // Exactly room for a rollback to the pinned checkpoint.
+    const budget =
+      FOLD_SPENT_BEFORE_PLANNING + probe.gets * TREE_RETRIED_CALL_CHARGE + pinnedReserve;
+
+    const planner = new FoldPlanner({ ...input, budget });
+    await expect(planner.add(first)).resolves.toBe(true);
+    planner.pin();
+    await expect(planner.add(lookAhead[0]!)).resolves.toBe(true);
+    // The charge holds the pinned reserve, so nothing is left.
+    expect(planner.charge).toBe(budget);
+    expect(planner.spend(pinnedReserve - currentReserve)).toBe(false);
+    planner.rollback();
+    expect(planner.accepted).toBe(1);
+    expect(planner.charge).toBeLessThanOrEqual(budget);
+  });
+
+  test("the charge holds the pinned reserve until the pin is released", async () => {
+    const { input } = await open();
+    const planner = new FoldPlanner({ ...input, budget: UNBOUNDED });
+    await planner.add(first);
+    const pinnedReserve = publicationReserve(planner.plan!.tree);
+    planner.pin();
+    await planner.add(lookAhead[0]!);
+    const spent = FOLD_SPENT_BEFORE_PLANNING + planner.gets * TREE_RETRIED_CALL_CHARGE;
+    expect(planner.charge).toBe(spent + pinnedReserve);
+    planner.unpin();
+    expect(planner.charge).toBe(spent + publicationReserve(planner.plan!.tree));
+  });
+
+  test("a rollback that no rejection preceded still ends the fold", async () => {
+    const { input } = await open();
+    const planner = new FoldPlanner({ ...input, budget: UNBOUNDED });
+    await planner.add(first);
+    planner.pin();
+    await expect(planner.add(lookAhead[0]!)).resolves.toBe(true);
+    planner.rollback();
+    await expect(planner.add(lookAhead[1]!)).resolves.toBe(false);
+    expect(planner.spend(0)).toBe(false);
+    expect(planner.accepted).toBe(1);
+  });
+
+  test("budget and spent must be non-negative safe integers; spent above budget folds nothing", async () => {
+    const { input } = await open();
+    for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => new FoldPlanner({ ...input, budget: bad })).toThrow(
+        expect.objectContaining({ code: "Internal" }),
+      );
+      expect(() => new FoldPlanner({ ...input, budget: UNBOUNDED, spent: bad })).toThrow(
+        expect.objectContaining({ code: "Internal" }),
+      );
+    }
+    const planner = new FoldPlanner({ ...input, budget: 0 });
+    await expect(planner.add(first)).resolves.toBe(false);
+    expect(planner.plan).toBeNull();
+    expect(planner.gets).toBe(0);
   });
 });
 
