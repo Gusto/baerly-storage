@@ -8,6 +8,7 @@ import { compareDocIds } from "../snapshot-doc-id.ts";
 import {
   branchHashCuts,
   chunkHash,
+  chunkKeyIsOf,
   type ChunkKey,
   chunkPreimage,
   cutLeaf,
@@ -121,6 +122,22 @@ describe("chunk hash", () => {
   test("the key handle holds no salt bytes", () => {
     expect(JSON.stringify(KEY)).toBe('{"kind":"tree-chunk-key"}');
     expect(Object.getOwnPropertySymbols(KEY)).toEqual([]);
+  });
+
+  test("a key is of the salt it was imported from, and of no other", async () => {
+    const salt = Uint8Array.fromHex(TREE_TEST_CHUNK_SALT);
+    await expect(chunkKeyIsOf(KEY, salt)).resolves.toBe(true);
+    const imported = await importChunkKey(salt);
+    salt.fill(0);
+    await expect(chunkKeyIsOf(imported, Uint8Array.fromHex(TREE_TEST_CHUNK_SALT))).resolves.toBe(
+      true,
+    );
+    await expect(chunkKeyIsOf(KEY, Uint8Array.fromHex(TREE_SECOND_TEST_CHUNK_SALT))).resolves.toBe(
+      false,
+    );
+    await expect(
+      chunkKeyIsOf({ kind: "tree-chunk-key" }, Uint8Array.fromHex(TREE_TEST_CHUNK_SALT)),
+    ).resolves.toBe(false);
   });
 
   test("a key not made by importChunkKey is refused", async () => {

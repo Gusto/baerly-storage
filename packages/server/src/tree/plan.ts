@@ -109,7 +109,20 @@ export interface TreeFoldPlan {
   readonly tree: PlannedTree | null;
   /** Every node read below the captured root, strictly decoded, in read order. */
   readonly read: readonly DecodedTreeNode[];
+  /**
+   * The key of the captured root the plan was built on, or `null` for an
+   * empty collection. The plan is valid only over that root.
+   */
+  readonly base: string | null;
+  /**
+   * The chunk key every cut of the plan was computed under. The plan is
+   * valid only under the salt behind it (`chunkKeyIsOf`).
+   */
+  readonly chunkKey: ChunkKey;
 }
+
+/** A plan before it is tied to its base root and chunk key. */
+type PlannedFold = Pick<TreeFoldPlan, "tree" | "read">;
 
 // ---------------------------------------------------------------------
 // Steps
@@ -596,7 +609,7 @@ const merged = async (
 };
 
 /** Plan `mutations` against the captured root, reading nodes through `loadNode`. */
-const planWith = async (
+const planTree = async (
   prefix: string,
   captured: DecodedTreeNode | null,
   mutations: readonly TreeMutation[],
@@ -604,7 +617,7 @@ const planWith = async (
   key: ChunkKey,
   config: TreeConfig,
   loadNode: NodeLoader,
-): Promise<TreeFoldPlan> => {
+): Promise<PlannedFold> => {
   if (captured === null) {
     return { tree: await buildTree(await merged([], mutations), key, config), read: [] };
   }
@@ -671,6 +684,21 @@ const planWith = async (
     return { tree: { root: await tree.materialize(old), levelNodes: counts }, read: tree.read };
   }
 };
+
+/** {@link planTree}, tied to the captured root's key and the chunk key it planned under. */
+const planWith = async (
+  prefix: string,
+  captured: DecodedTreeNode | null,
+  mutations: readonly TreeMutation[],
+  steps: PlanSteps,
+  key: ChunkKey,
+  config: TreeConfig,
+  loadNode: NodeLoader,
+): Promise<TreeFoldPlan> => ({
+  ...(await planTree(prefix, captured, mutations, steps, key, config, loadNode)),
+  base: captured?.key ?? null,
+  chunkKey: key,
+});
 
 /** Read a node through `get` and strictly decode it. */
 const decodingLoader =

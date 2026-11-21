@@ -65,6 +65,11 @@ export interface ChunkKey {
 }
 
 const HMAC_KEYS = new WeakMap<ChunkKey, CryptoKey>();
+/** The SHA-256 of each handle's salt: it identifies the salt without holding it. */
+const SALT_DIGESTS = new WeakMap<ChunkKey, Uint8Array>();
+
+const saltDigest = async (salt: Uint8Array): Promise<Uint8Array> =>
+  new Uint8Array(await crypto.subtle.digest("SHA-256", Uint8Array.from(salt)));
 
 /**
  * Import the 16-byte chunk salt `salt` as the key of {@link chunkHash}.
@@ -86,16 +91,31 @@ export const importChunkKey = async (salt: Uint8Array): Promise<ChunkKey> => {
       `chunk hash: the chunk salt is ${salt.byteLength} bytes, not ${TREE_CHUNK_SALT_BYTES}`,
     );
   }
+  const bytes = Uint8Array.from(salt);
   const key = await crypto.subtle.importKey(
     "raw",
-    Uint8Array.from(salt),
+    bytes,
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
   );
   const handle: ChunkKey = Object.freeze({ kind: "tree-chunk-key" });
   HMAC_KEYS.set(handle, key);
+  SALT_DIGESTS.set(handle, await saltDigest(bytes));
   return handle;
+};
+
+/**
+ * Whether `key` was imported from the salt `salt`. A handle not made by
+ * {@link importChunkKey} matches no salt.
+ */
+export const chunkKeyIsOf = async (key: ChunkKey, salt: Uint8Array): Promise<boolean> => {
+  const digest = SALT_DIGESTS.get(key);
+  if (digest === undefined) {
+    return false;
+  }
+  const other = await saltDigest(salt);
+  return other.byteLength === digest.byteLength && other.every((byte, i) => byte === digest[i]);
 };
 
 /**
