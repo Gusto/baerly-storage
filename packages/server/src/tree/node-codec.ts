@@ -193,25 +193,6 @@ const preview = (value: unknown): string => {
 // Canonical documents
 // ---------------------------------------------------------------------
 
-const ARRAY_INDEX_PATTERN = /^(?:0|[1-9][0-9]{0,9})$/;
-/** The largest array index, 2^32 − 2. `"4294967295"` is an ordinary key. */
-const MAX_ARRAY_INDEX = 4_294_967_294;
-
-const isArrayIndexName = (key: string): boolean =>
-  ARRAY_INDEX_PATTERN.test(key) && Number(key) <= MAX_ARRAY_INDEX;
-
-/**
- * UTF-16 code-unit order, used for object keys only (never for `_id`s,
- * which use `compareDocIds`). It is the order a default string `sort()`
- * gives, spelled out so the comparator is explicit.
- */
-const compareCodeUnits = (a: string, b: string): number => {
-  if (a === b) {
-    return 0;
-  }
-  return a < b ? -1 : 1;
-};
-
 /**
  * `canon(value)` at nesting `depth` (the document itself is level 1, and
  * each object or array is one level). Depth is an explicit counter, so a
@@ -259,8 +240,12 @@ const canonValue = (value: unknown, depth: number, fail: Fail): TreeValue => {
   if (proto !== Object.prototype && proto !== null) {
     fail("document value is not a plain object");
   }
-  const indexKeys: string[] = [];
-  const otherKeys: string[] = [];
+  // Keys keep their own-property order (`Reflect.ownKeys`): array-index
+  // names ascending, as every JS object forces, then every other key in
+  // insertion order. That is the order `JSON.stringify` of the post-image
+  // writes, so a document reads back exactly as it was written whether or
+  // not a fold has moved it into the tree.
+  const keys: string[] = [];
   const values = new Map<string, unknown>();
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== "string") {
@@ -274,12 +259,10 @@ const canonValue = (value: unknown, depth: number, fail: Fail): TreeValue => {
       fail(`document key ${preview(key)} is an accessor`);
     }
     values.set(key, descriptor.value);
-    (isArrayIndexName(key) ? indexKeys : otherKeys).push(key);
+    keys.push(key);
   }
-  indexKeys.sort((a, b) => Number(a) - Number(b));
-  otherKeys.sort(compareCodeUnits);
   const out: Record<string, TreeValue> = {};
-  for (const key of [...indexKeys, ...otherKeys]) {
+  for (const key of keys) {
     // defineProperty, not assignment, so an own "__proto__" stays a key.
     Object.defineProperty(out, key, {
       value: canonValue(values.get(key), depth + 1, fail),
@@ -337,10 +320,12 @@ const failWith =
 
 /**
  * Validate and canonicalize a stored document (a log post-image, say).
- * The canonical form orders keys as array-index names (`"0"`, `"1"`, …
- * up to 4,294,967,294) in numeric order, then every other key in UTF-16
- * code-unit order. Nothing is normalized: strings other than `_id` may
- * hold any UTF-16, including unpaired surrogates.
+ * The canonical form keeps the value's own-property order: array-index
+ * names (`"0"`, `"1"`, … up to 4,294,967,294) in numeric order, then
+ * every other key in insertion order, exactly as `JSON.stringify` writes
+ * it. Nothing is normalized or reordered: strings other than `_id` may
+ * hold any UTF-16, including unpaired surrogates, and two documents that
+ * differ only in key order are different canonical documents.
  *
  * @param where  names the stored object for the message (for example
  *   `log seq 12`).

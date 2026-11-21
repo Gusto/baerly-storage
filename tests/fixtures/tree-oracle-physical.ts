@@ -291,8 +291,6 @@ export const idViolation = (id: unknown): string | undefined => {
 class DomainError extends Error {}
 
 const ARRAY_INDEX = /^(?:0|[1-9][0-9]*)$/;
-const isArrayIndexName = (key: string): boolean =>
-  ARRAY_INDEX.test(key) && Number(key) <= 4_294_967_294;
 
 /**
  * The canonical form of a document value. Strings (any UTF-16, nothing
@@ -301,9 +299,9 @@ const isArrayIndexName = (key: string): boolean =>
  * properties) are in the domain; `null`, `undefined`, functions, symbols,
  * bigints, accessors, array holes, own array properties other than the
  * indices and `length`, and every other object are not. Object keys
- * are reordered: array-index names (`"0"`…`"4294967294"`, canonical decimal)
- * ascending by value, then every other key in UTF-16 code-unit order. A
- * container at depth over 100 (the document is depth 1) is refused before it
+ * keep their own-property order (`Reflect.ownKeys`: array-index names
+ * ascending, then insertion order), which is what `JSON.stringify` writes;
+ * nothing is sorted. A container at depth over 100 (the document is depth 1) is refused before it
  * is entered, so the recursion is bounded.
  */
 const canonValue = (value: unknown, depth: number): unknown => {
@@ -368,10 +366,8 @@ const canonValue = (value: unknown, depth: number): unknown => {
         }
         names.push(key);
       }
-      const indices = names.filter(isArrayIndexName).toSorted((a, b) => Number(a) - Number(b));
-      const others = names.filter((name) => !isArrayIndexName(name)).toSorted();
       const out: Record<string, unknown> = {};
-      for (const key of [...indices, ...others]) {
+      for (const key of names) {
         const child = (value as Record<string, unknown>)[key];
         Object.defineProperty(out, key, {
           value: canonValue(child, depth + 1),

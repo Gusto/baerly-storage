@@ -622,3 +622,36 @@ describe("sealed trees", () => {
     },
   );
 });
+
+describe("document key order", () => {
+  test("a writer's key order survives build, encode and decode byte for byte", async () => {
+    // Each body's key order differs from sorted order, with an own
+    // __proto__ and a non-index numeric name. Only array-index names
+    // move, because every JS object lists them first; `c` shows that.
+    const written: [body: string, readBack: string][] = [
+      ['{"z":1,"_id":"a","b":{"y":2,"x":[{"q":0,"p":1}]}}', ""],
+      ['{"_id":"b","__proto__":{"m":1},"A":true,"01":"s"}', ""],
+      ['{"n":"v","_id":"c","2":0,"10":1}', '{"2":0,"10":1,"n":"v","_id":"c"}'],
+      ['{"_id":"d","é":1,"e":2}', ""],
+    ];
+    const rows = written.map(([body]) => doc(JSON.parse(body) as Record<string, unknown>));
+    const expected = new Map(rows.map((row, i) => [row.id, written[i]![1] || written[i]![0]]));
+    const plan = await buildTree(rows, KEYS.test, SMALL);
+    expect(plan!.root.level).toBeGreaterThan(0);
+    const { store } = await sealAndWalk(plan, SMALL, ATTEMPT_A);
+    const decoded = new Map<string, string>();
+    for (const [key, bytes] of store) {
+      const node = await decodeNode(key, bytes, { prefix: PREFIX, root: "either" }, SMALL);
+      if (node.node.kind === "leaf") {
+        const body = new TextDecoder().decode(bytes);
+        for (const d of node.node.docs) {
+          const text = JSON.stringify(d);
+          // The stored body holds the document's bytes verbatim.
+          expect(body).toContain(text);
+          decoded.set(d._id, text);
+        }
+      }
+    }
+    expect(decoded).toEqual(expected);
+  });
+});

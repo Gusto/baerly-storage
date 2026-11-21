@@ -77,7 +77,7 @@ type Invariant =
   | "folded-seq"
   | "beyond-target-invisible"
   | "absent-delete-invisible"
-  | "insertion-order-invisible"
+  | "input-order-invisible"
   | "no-aliasing"
   | "prefix-split"
   | "scan-read"
@@ -99,20 +99,11 @@ class Violation extends Error {
   }
 }
 
-/** Order-insensitive to property insertion; arrays keep their order. */
-const stable = (value: unknown): string => {
-  if (Array.isArray(value)) {
-    return `[${value.map(stable).join(",")}]`;
-  }
-  if (typeof value === "object" && value !== null) {
-    const record = value as Record<string, unknown>;
-    const fields = Object.keys(record)
-      .toSorted()
-      .map((key) => `${JSON.stringify(key)}:${stable(record[key])}`);
-    return `{${fields.join(",")}}`;
-  }
-  return JSON.stringify(value);
-};
+/**
+ * The JSON text of a value. Property order counts: a row must read back
+ * in the writer's key order, as the production folds return it.
+ */
+const stable = (value: unknown): string => JSON.stringify(value) ?? "undefined";
 
 const sortedRows = (rows: ReadonlyMap<string, DocumentData>): [string, DocumentData][] =>
   [...rows].toSorted(([a], [b]) => compareDocIds(a, b));
@@ -395,13 +386,13 @@ const orderCaseArb: fc.Arbitrary<OrderCase> = fc
 const reverseProperties = (fields: Record<string, unknown>): Record<string, unknown> =>
   Object.fromEntries(Object.entries(fields).toReversed());
 
-const checkInsertionOrderInvisible = (fold: Fold, c: OrderCase): void => {
-  const run = (base: FoldCase["base"], ops: readonly Op[], reorder: boolean): string => {
+const checkInputOrderInvisible = (fold: Fold, c: OrderCase): void => {
+  const run = (base: FoldCase["base"], ops: readonly Op[], reorder: boolean) => {
     const shape = (id: string, fields: Record<string, unknown>): DocumentData => {
       const body = bodyOf(id, fields);
       return reorder ? (reverseProperties(body) as DocumentData) : body;
     };
-    const view = fold({
+    return fold({
       collection: COLLECTION,
       base: new Map(base.map(([id, fields]) => [id, shape(id, fields)])),
       baseSeq: 0,
@@ -410,20 +401,26 @@ const checkInsertionOrderInvisible = (fold: Fold, c: OrderCase): void => {
         ...(op.kind === "D" ? {} : { after: shape(op.id, op.fields) }),
       })),
       targetSeq: ops.length,
-    });
-    // Order-sensitive on purpose: map iteration order and property order.
-    return JSON.stringify([...view.rows]);
+    }).rows;
   };
-  const given = run(c.base, c.ops, false);
-  const permuted = run(
-    c.baseOrder.map((i) => c.base[i]!),
-    c.opOrder.map((i) => c.ops[i]!),
-    true,
+  // Base and log array order are invisible, and every row keeps its
+  // post-image's property order: reversing each body's properties
+  // reverses them in the output and changes nothing else.
+  // Order-sensitive on purpose: map iteration order and property order.
+  const expected = JSON.stringify(
+    [...run(c.base, c.ops, false)].map(([id, row]) => [id, reverseProperties(row)]),
   );
-  if (given !== permuted) {
+  const permuted = JSON.stringify([
+    ...run(
+      c.baseOrder.map((i) => c.base[i]!),
+      c.opOrder.map((i) => c.ops[i]!),
+      true,
+    ),
+  ]);
+  if (expected !== permuted) {
     throw new Violation(
-      "insertion-order-invisible",
-      `base, log or property order leaked: ${given} vs ${permuted}`,
+      "input-order-invisible",
+      `base or log order leaked, or property order was not kept: ${expected} vs ${permuted}`,
     );
   }
 };
@@ -452,9 +449,9 @@ describe("logical fold properties", () => {
   });
 
   fcTest.prop({ c: orderCaseArb })(
-    "base, independent-log and property insertion order are invisible",
+    "base and independent-log order are invisible, and property order is kept",
     ({ c }) => {
-      checkInsertionOrderInvisible(foldLogical, c);
+      checkInputOrderInvisible(foldLogical, c);
     },
   );
 
@@ -892,12 +889,12 @@ describe("logical fold domain", () => {
     expect(view.foldedSeq).toBe(2);
   });
 
-  test("output properties are in canonical order", () => {
+  test("output properties keep the post-image's order", () => {
     const view = foldEntries([
       entry(0, "I", "a", { z: 1, _id: "a", 10: 0, 2: 0, b: { y: 1, x: 2 } }),
     ]);
     expect(JSON.stringify(view.rows.get("a"))).toBe(
-      '{"2":0,"10":0,"_id":"a","b":{"x":2,"y":1},"z":1}',
+      '{"2":0,"10":0,"z":1,"_id":"a","b":{"y":1,"x":2}}',
     );
   });
 });
@@ -1085,8 +1082,7 @@ describe("mutation", () => {
       run(foldCaseArb, (c) => checkBeyondTargetInvisible(fold, c)),
     "absent-delete-invisible": (fold) =>
       run(foldCaseArb, (c) => checkAbsentDeleteInvisible(fold, c)),
-    "insertion-order-invisible": (fold) =>
-      run(orderCaseArb, (c) => checkInsertionOrderInvisible(fold, c)),
+    "input-order-invisible": (fold) => run(orderCaseArb, (c) => checkInputOrderInvisible(fold, c)),
     "no-aliasing": (fold) => run(foldCaseArb, (c) => checkNoAliasing(fold, c)),
     "prefix-split": (fold) => run(foldCaseArb, (c) => checkPrefixSplit(fold, c)),
   };
@@ -1102,7 +1098,8 @@ describe("mutation", () => {
     "absent-delete-creates-row": ["absent-delete-invisible", "last-write-wins"],
     "merge-instead-of-replace": ["last-write-wins"],
     "wrong-folded-seq": ["empty-identity", "folded-seq"],
-    "aliased-bodies": ["no-aliasing", "insertion-order-invisible"],
+    "aliased-bodies": ["no-aliasing"],
+    "sorted-keys": ["input-order-invisible"],
   };
 
   const readCatchers: Record<ReadInvariant, (reads: Reads) => CheckOutcome> = {

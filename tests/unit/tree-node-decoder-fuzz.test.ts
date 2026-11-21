@@ -15,7 +15,7 @@
  * encoding of what it decoded to, both by `encodeNode` and by a
  * re-derivation from the raw `JSON.parse` output that shares no code
  * with the codec (no `null`, finite numbers, at most 100 levels,
- * canonical key order), and the decoded node must satisfy the node rules
+ * keys in the order parsed), and the decoded node must satisfy the node rules
  * as checked here independently (byte-order comparison with
  * `TextEncoder`, not `compareDocIds`). Boundary values (depth 99 to
  * 6,000, sizes at every ceiling, 256 and 257 entries, unpaired-surrogate
@@ -739,15 +739,6 @@ const NODE_FIELD_LISTS: readonly (readonly string[])[] = [
 ];
 const ENTRY_FIELD_LIST = ["lo", "hi", "rows", "bytes", "attempt", "sha256"];
 
-const isIndexKey = (key: string): boolean =>
-  /^(?:0|[1-9][0-9]*)$/.test(key) && Number(key) <= 4_294_967_294;
-
-/** Array-index names in numeric order, then the rest in UTF-16 order. */
-const canonicalKeyOrder = (keys: readonly string[]): string[] => [
-  ...keys.filter(isIndexKey).toSorted((a, b) => Number(a) - Number(b)),
-  ...keys.filter((k) => !isIndexKey(k)).toSorted(),
-];
-
 class OracleRefusal extends Error {}
 const refuse = (detail: string): never => {
   throw new OracleRefusal(detail);
@@ -756,7 +747,7 @@ const refuse = (detail: string): never => {
 /**
  * The canonical text of a document value, written without the codec:
  * no `null`, finite numbers only, at most 100 levels (the document is
- * level 1), object keys in canonical order.
+ * level 1), object keys in their parsed order.
  */
 const writeCanonical = (value: unknown, depth: number): string => {
   if (value === null) {
@@ -775,10 +766,10 @@ const writeCanonical = (value: unknown, depth: number): string => {
     return `[${value.map((item) => writeCanonical(item, depth + 1)).join(",")}]`;
   }
   const record = value as Record<string, unknown>;
+  // Keys stay in the parsed order: canonical documents keep the writer's
+  // key order, and an index name the parse moved first no longer matches
+  // the body's bytes.
   const keys = Object.keys(record);
-  if (!sameList(keys, canonicalKeyOrder(keys))) {
-    refuse("object keys out of canonical order");
-  }
   return `{${keys.map((k) => `${JSON.stringify(k)}:${writeCanonical(record[k], depth + 1)}`).join(",")}}`;
 };
 
