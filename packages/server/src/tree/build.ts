@@ -298,6 +298,10 @@ const internal = (detail: string): never => {
  * remaining child, which is `items[0]` itself when there is only one,
  * and the node count of every level from `level` up to below it.
  *
+ * `adopt` turns each node a branch-chunked level emits into the child
+ * its parent holds; the default holds it as a fresh node. The parent
+ * grouped by the root rule is always fresh.
+ *
  * @throws BaerlyError code="Internal" — `items` is empty, or the tree
  *   would exceed `TREE_MAX_LEVEL`.
  */
@@ -305,6 +309,7 @@ export const assembleLevels = async (
   items: readonly PlannedChild[],
   level: number,
   steps: ChunkSteps,
+  adopt: (node: PlannedBranch) => PlannedChild = (node) => ({ kind: "fresh", node }),
 ): Promise<{ readonly top: PlannedChild; readonly levelNodes: readonly number[] }> => {
   if (items.length === 0) {
     internal("no nodes to assemble");
@@ -328,7 +333,7 @@ export const assembleLevels = async (
       await chunker.push(item);
     }
     chunker.flush();
-    current = nodes.map((node) => ({ kind: "fresh", node }));
+    current = nodes.map(adopt);
   }
   return { top: current[0]!, levelNodes };
 };
