@@ -10,11 +10,14 @@
  * 1. the head GET, validated as a tree head (`./head.ts`);
  * 2. the root GET (none for an empty tree), strictly decoded as a root
  *    against the head's floor and totals;
- * 3. the tail: the strict walk `[log_seq_start, tail_hint)` and the
+ * 3. the snapshot read path's head check on the log alone
+ *    (`read-admission.ts`), without its snapshot bounds;
+ * 4. the tail: the strict walk `[log_seq_start, tail_hint)` and the
  *    forward probe past it, charged by the read envelope's staged tail
- *    charging exactly as on the snapshot read path (`read-admission.ts`);
- * 4. for a range, count or complete scan, the scan admission check;
- * 5. the base GETs, each node strictly decoded against the parent entry
+ *    charging exactly as on the snapshot read path;
+ * 5. for a range, count or complete scan, the materialization and scan
+ *    admission checks;
+ * 6. the base GETs, each node strictly decoded against the parent entry
  *    that routed to it before any of its rows or entries are used.
  *
  * Routing uses only `lo` and `hi`: a read descends into the entries
@@ -43,9 +46,17 @@
  * authenticated root metadata, so two buckets with the same root and the
  * same ledger left decide alike, and an admitted scan cannot run out of
  * ledger partway through its base. Being an upper bound, it may refuse a
- * scan whose leaves are fuller than the minimum. A point read has no
- * admission check: its bound is at most `2 + TREE_MAX_LEVEL` GETs, which
- * every host's ledger covers at every attempt.
+ * scan whose leaves are fuller than the minimum.
+ *
+ * The bound holds for canonical trees, which every writer of this format
+ * builds. The decoder checks each node against its parent entry but not a
+ * leaf's minimum fill, which needs the leaf's neighbours, so a
+ * non-canonical tree of underfilled leaves can be admitted and then run
+ * out of ledger partway through its base. That read still fails with
+ * `CapacityExceeded`, from the request ledger rather than up front, and
+ * returns no rows. A point read has no scan admission check: its bound is
+ * at most `2 + TREE_MAX_LEVEL` GETs, which every host's ledger covers at
+ * every attempt.
  *
  * Reads are pure: they never PUT or DELETE, run maintenance or repair
  * anything, and a refusal writes nothing.
@@ -53,7 +64,12 @@
 import { BaerlyError, type DocumentData, type LogEntry, type Storage } from "@baerly/protocol";
 import { foldLogEntriesOnto, walkLogRange } from "../log-walk.ts";
 import { probeReadTail } from "../log-tail.ts";
-import { ReadBudget, remainingStorageCalls } from "../read-admission.ts";
+import {
+  currentReadEnvelope,
+  ReadBudget,
+  type ReadEnvelope,
+  remainingStorageCalls,
+} from "../read-admission.ts";
 import { assertSnapshotDocId, compareDocIds } from "../snapshot-doc-id.ts";
 import { TREE_READ_PARALLEL_GETS, TREE_RETRIED_CALL_CHARGE } from "./constants.ts";
 import { readTreeHead, readTreeRoot, type TreeHead } from "./head.ts";
@@ -169,6 +185,8 @@ export interface TreeTailRead {
 export interface TreeTail {
   /** The first empty log slot the probe found. */
   readonly tail: number;
+  /** Log entries the tail read loaded, strict range and probe together. */
+  readonly entries: number;
   /**
    * The last write per `_id` in `[log_seq_start, tail)`: its post-image,
    * or `null` for a delete. An `_id` the tail does not touch is absent.
@@ -182,6 +200,16 @@ export interface TreeTail {
  */
 const UNTOUCHED: DocumentData = Object.freeze({ _id: "" });
 
+/** Whether `id` is inside the document-ID domain (`assertSnapshotDocId`). */
+const isDocId = (id: string): boolean => {
+  try {
+    assertSnapshotDocId(id);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /**
  * The last write per `_id` of `entries`, by the read path's own fold
  * (`foldLogEntriesOnto`), so the tail skips exactly what it skips:
@@ -189,6 +217,14 @@ const UNTOUCHED: DocumentData = Object.freeze({ _id: "" });
  * with no `after`. Every `_id` is seeded with {@link UNTOUCHED} first, so
  * after the fold an `_id` still holding it has no applied entry, one
  * the fold removed was last deleted, and any other holds its post-image.
+ *
+ * Each surviving `_id` must be in the document-ID domain, as a tree fold
+ * requires of the post-images it stores: a surviving post-image outside
+ * it is stored data this kernel never writes, and a delete of one changes
+ * nothing, since no base row can carry that `_id`, so it is dropped.
+ *
+ * @throws BaerlyError code="InvalidResponse" — a surviving post-image's
+ *   `_id` is outside the document-ID domain.
  */
 const overlayOf = (
   entries: readonly LogEntry[],
@@ -205,9 +241,21 @@ const overlayOf = (
   const overlay = new Map<string, DocumentData | null>();
   for (const id of ids) {
     const doc = folded.get(id);
-    if (doc !== UNTOUCHED) {
-      overlay.set(id, doc ?? null);
+    if (doc === UNTOUCHED) {
+      continue;
     }
+    if (!isDocId(id)) {
+      if (doc === undefined) {
+        continue;
+      }
+      const seq = entries.findLast((entry) => entry.after === doc)?.seq;
+      throw new BaerlyError(
+        "InvalidResponse",
+        `log seq ${seq}: the post-image's _id ${JSON.stringify(id)} is outside the document-ID ` +
+          `domain; this kernel never writes one, so the read was refused.`,
+      );
+    }
+    overlay.set(id, doc ?? null);
   }
   return overlay;
 };
@@ -235,7 +283,8 @@ export const readTreeTail = async (read: TreeTailRead): Promise<TreeTail> => {
     onBody: budget.chargeTailBody,
     refusal: budget.probeRefusal,
   });
-  return { tail: probe.tail, overlay: overlayOf([...strict, ...probe.entries], collection) };
+  const entries = [...strict, ...probe.entries];
+  return { tail: probe.tail, entries: entries.length, overlay: overlayOf(entries, collection) };
 };
 
 // ---------------------------------------------------------------------
@@ -265,6 +314,7 @@ export class TreeView {
   readonly #storage: Storage;
   readonly #config: TreeConfig;
   readonly #collection: string;
+  readonly #envelope: ReadEnvelope;
   readonly #budget: ReadBudget;
   /** The tree head, or `null` when the collection has no `current.json`. */
   readonly head: TreeHead | null;
@@ -275,6 +325,7 @@ export class TreeView {
   private constructor(
     target: TreeReadTarget,
     collection: string,
+    envelope: ReadEnvelope,
     budget: ReadBudget,
     head: TreeHead | null,
     root: DecodedTreeNode | null,
@@ -283,6 +334,7 @@ export class TreeView {
     this.#storage = target.storage;
     this.#config = target.config ?? DEFAULT_TREE_CONFIG;
     this.#collection = collection;
+    this.#envelope = envelope;
     this.#budget = budget;
     this.head = head;
     this.root = root;
@@ -291,7 +343,17 @@ export class TreeView {
 
   /**
    * Open a read: GET and validate the head, GET and strictly decode its
-   * root, then read the tail.
+   * root, run the snapshot read path's head check on the log alone, then
+   * read the tail.
+   *
+   * The head check (`ReadBudget.admitHead`) refuses from the head when
+   * the strict log range `[log_seq_start, tail_hint)` alone is over the
+   * tail or materialization bound, or when that range and the probe's
+   * closing empty slot are more storage calls than the request has left.
+   * It runs after the root GET, so the root is already charged and is
+   * not counted again. Its snapshot bounds do not apply: a tree read loads
+   * no monolithic snapshot, and only a range, count or scan materializes
+   * the base, which {@link range} admits.
    *
    * @throws BaerlyError code="InvalidResponse" — a malformed head, root
    *   or log entry.
@@ -301,18 +363,23 @@ export class TreeView {
   static async open(target: TreeReadTarget): Promise<TreeView> {
     const config = target.config ?? DEFAULT_TREE_CONFIG;
     const collection = collectionOfPrefix(target.prefix);
-    const budget = new ReadBudget(collection);
+    const envelope = currentReadEnvelope();
+    const budget = new ReadBudget(collection, envelope);
     const head = await readTreeHead(target.storage, target.prefix);
     if (head === null) {
-      return new TreeView(target, collection, budget, null, null, {
+      return new TreeView(target, collection, envelope, budget, null, null, {
         tail: 0,
+        entries: 0,
         overlay: new Map(),
       });
     }
     const root = await readTreeRoot(target.storage, head, config);
+    // A tree head's `snapshot` is null, so the call count is the strict
+    // range plus the probe's closing slot.
+    budget.admitHead({ ...head.json, snapshot_rows: 0, snapshot_bytes: 0 });
     const readTail = config.steps.readTail ?? readTreeTail;
     const tail = await readTail({ storage: target.storage, head, collection, budget });
-    return new TreeView(target, collection, budget, head, root, tail);
+    return new TreeView(target, collection, envelope, budget, head, root, tail);
   }
 
   /** The tree's depth (the root's level), or `null` for an empty tree. */
@@ -341,15 +408,39 @@ export class TreeView {
 
   /**
    * The rows whose `_id` lies in `range`, in `utf8-scalar-v1` order,
-   * after scan admission.
+   * after scan admission. An answer over the read envelope's output bound
+   * is refused whole.
    *
    * @throws BaerlyError code="InvalidConfig" — a malformed range.
-   * @throws BaerlyError code="CapacityExceeded" — the scan bound is over
-   *   what the request has left; nothing below the root was fetched.
+   * @throws BaerlyError code="CapacityExceeded" — the base rows and tail
+   *   entries are over the materialization bound, or the scan bound is
+   *   over what the request has left, and nothing below the root was
+   *   fetched; or the answer is over the output bound.
    * @throws BaerlyError code="InvalidResponse" — a fetched node fails
    *   strict decode.
    */
   async range(range: TreeRange): Promise<DocumentData[]> {
+    const rows = await this.#rows(range);
+    this.#budget.admitOutput(rows.length);
+    return rows;
+  }
+
+  /** Every row, in `utf8-scalar-v1` order: {@link range} with no bounds. */
+  scan(): Promise<DocumentData[]> {
+    return this.range({});
+  }
+
+  /**
+   * How many rows lie in `range` (the whole collection by default), after
+   * scan admission. The answer is one number, so it has no output bound.
+   */
+  async count(range: TreeRange = {}): Promise<number> {
+    const rows = await this.#rows(range);
+    return rows.length;
+  }
+
+  /** The rows of {@link range}, before the output bound. */
+  async #rows(range: TreeRange): Promise<DocumentData[]> {
     assertRange(range);
     this.#admitScan();
     const overlay = this.tail.overlay;
@@ -372,22 +463,23 @@ export class TreeView {
     return rows.map(([, doc]) => doc);
   }
 
-  /** Every row, in `utf8-scalar-v1` order: {@link range} with no bounds. */
-  scan(): Promise<DocumentData[]> {
-    return this.range({});
-  }
-
-  /** How many rows lie in `range` (the whole collection by default), after scan admission. */
-  async count(range: TreeRange = {}): Promise<number> {
-    const rows = await this.range(range);
-    return rows.length;
-  }
-
   /**
-   * @throws BaerlyError code="CapacityExceeded" — the base GETs a complete
-   *   scan may issue, at every attempt, are more than the request has left.
+   * Admit a range, count or scan before its first base GET: its base rows
+   * (the head's `snapshot_rows`) plus the tail entries it loaded against
+   * the materialization bound, then the scan bound against the ledger.
+   *
+   * @throws BaerlyError code="CapacityExceeded" — over the
+   *   materialization bound, or the base GETs a complete scan may issue,
+   *   at every attempt, are more than the request has left.
    */
   #admitScan(): void {
+    if (this.head !== null) {
+      // A budget bounded by materialization alone, so the snapshot bounds
+      // the head check skips stay skipped here too.
+      new ReadBudget(this.#collection, {
+        maxMaterializedRows: this.#envelope.maxMaterializedRows,
+      }).admitSnapshot({ ...this.head.json, snapshot_bytes: 0 }, this.tail.entries);
+    }
     const root = this.root;
     const charged =
       root === null
