@@ -64,6 +64,7 @@
 import { BaerlyError, type DocumentData, type LogEntry, type Storage } from "@baerly/protocol";
 import { foldLogEntriesOnto, walkLogRange } from "../log-walk.ts";
 import { probeReadTail } from "../log-tail.ts";
+import { assertPostImageIdentity } from "../post-image-identity.ts";
 import {
   currentReadEnvelope,
   ReadBudget,
@@ -223,8 +224,9 @@ const isDocId = (id: string): boolean => {
  * it is stored data this kernel never writes, and a delete of one changes
  * nothing, since no base row can carry that `_id`, so it is dropped.
  *
- * @throws BaerlyError code="InvalidResponse" — a surviving post-image's
- *   `_id` is outside the document-ID domain.
+ * @throws BaerlyError code="InvalidResponse" — a surviving post-image is
+ *   not a document with its own matching `_id`, or that `_id` is outside
+ *   the document-ID domain.
  */
 const overlayOf = (
   entries: readonly LogEntry[],
@@ -254,6 +256,9 @@ const overlayOf = (
         `log seq ${seq}: the post-image's _id ${JSON.stringify(id)} is outside the document-ID ` +
           `domain; this kernel never writes one, so the read was refused.`,
       );
+    }
+    if (doc !== undefined) {
+      assertPostImageIdentity(id, doc, "InvalidResponse");
     }
     overlay.set(id, doc ?? null);
   }
