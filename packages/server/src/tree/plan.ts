@@ -672,6 +672,8 @@ const branchPass = async (
 interface LevelPlan {
   readonly tree: PlannedTree;
   readonly fresh: readonly number[];
+  /** How many low levels kept a carried count; the levels above were listed or built. */
+  readonly carried: number;
 }
 
 /**
@@ -734,6 +736,7 @@ const planLevels = async (
         ...newFresh,
         ...levelNodes.map((_, i) => (i === 0 ? freshIn(items) : (chunked[level + i] ?? 0))),
       ],
+      carried: newCounts.length,
     };
   }
 };
@@ -760,15 +763,35 @@ const capturedBranch = (captured: DecodedTreeNode): PlannedNode =>
       )
     : internal(`captured node ${JSON.stringify(captured.key)} is not a branch`);
 
-/** A thrower for a regrouped level whose nodes disagree with the counts the captured root started from. */
-const countsMismatch =
-  (captured: DecodedTreeNode, stored: readonly number[]) =>
-  (level: number, holds: number, gives: number): never => {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `tree fold plan: captured root ${JSON.stringify(captured.key)} records level_nodes ${JSON.stringify(stored)}, but level ${level} holds ${holds} nodes where those counts give ${gives}`,
+/**
+ * The error for a regrouped `level` that holds `holds` nodes where the
+ * counts give `gives`. When the counts descend from the `level_nodes` of
+ * the captured root `captured`, the stored tree is inconsistent:
+ * `InvalidResponse`. When `captured` is `null` the counts are the
+ * planner's own (it listed or built that level), so only a planner bug
+ * reaches here: `Internal`.
+ */
+export const levelCountsMismatch = (
+  captured: DecodedTreeNode | null,
+  level: number,
+  holds: number,
+  gives: number,
+): BaerlyError => {
+  if (captured === null) {
+    return new BaerlyError(
+      "Internal",
+      `tree fold plan: level ${level} holds ${holds} nodes where the planner's own counts give ${gives}`,
     );
-  };
+  }
+  const stored =
+    captured.node.kind === "branch" && captured.node.root !== null
+      ? captured.node.root.levelNodes
+      : [];
+  return new BaerlyError(
+    "InvalidResponse",
+    `tree fold plan: captured root ${JSON.stringify(captured.key)} records level_nodes ${JSON.stringify(stored)}, but level ${level} holds ${holds} nodes where those counts give ${gives}`,
+  );
+};
 
 // ---------------------------------------------------------------------
 // Plan
@@ -817,7 +840,9 @@ const planTree = async (
     oldCounts.map(() => 0),
     steps,
     freshChild,
-    countsMismatch(captured, oldCounts),
+    (level, holds, gives) => {
+      throw levelCountsMismatch(captured, level, holds, gives);
+    },
   );
   return { tree, read: view.read };
 };
@@ -921,7 +946,8 @@ class OverBudget extends Error {
  *   rows are `base` with the accepted changes `[start, end)` applied,
  *   and the leaf is built when a plan is read.
  * - `tree`: a content-chunked tree whose root is `root`, with the node
- *   count and the fresh node count of every level below it.
+ *   count and the fresh node count of every level below it, and how many
+ *   of those counts are still carried from the captured root.
  */
 type PlannerState =
   | {
@@ -938,6 +964,12 @@ type PlannerState =
       readonly root: PlannedNode;
       readonly counts: readonly number[];
       readonly fresh: readonly number[];
+      /**
+       * How many low levels have counts that descend from the captured
+       * root's `level_nodes`, never listed since. The others are the
+       * planner's own.
+       */
+      readonly storedLevels: number;
       readonly rows: number;
       readonly bytes: number;
     };
@@ -1013,9 +1045,19 @@ export class FoldPlanner {
   #rejected = false;
 
   /**
-   * @throws BaerlyError code="Internal" — `input.root` is not a root node.
+   * A `spent` above `budget` is allowed: no change fits, so every
+   * {@link FoldPlanner.add} is refused and the fold folds nothing.
+   *
+   * @throws BaerlyError code="Internal" — `budget` or `spent` is not a
+   *   non-negative safe integer, or `input.root` is not a root node.
    */
   constructor(input: FoldPlannerInput) {
+    for (const field of ["budget", "spent"] as const) {
+      const value = input[field];
+      if (!Number.isSafeInteger(value) || value < 0) {
+        internal(`${field} ${value} is not a non-negative safe integer`);
+      }
+    }
     this.#input = input;
     this.#config = input.config ?? DEFAULT_TREE_CONFIG;
     this.#steps = planSteps(this.#config, input.chunkKey);
@@ -1044,13 +1086,16 @@ export class FoldPlanner {
   }
 
   /**
-   * Calls charged so far: those charged before planning, every node GET
-   * issued (rejected changes included), every call charged through
-   * {@link FoldPlanner.spend} and the reserve to publish the last
-   * accepted plan.
+   * Calls held against the budget: those charged before planning, every
+   * node GET issued (rejected changes included), every call charged
+   * through {@link FoldPlanner.spend}, and the reserve to publish the
+   * last accepted plan, or the pinned checkpoint's reserve while a pin is
+   * held and it is the larger. `budget − charge` is what is left for the
+   * fold's next calls; after {@link FoldPlanner.rollback} it holds the
+   * pinned plan's reserve.
    */
   get charge(): number {
-    return this.#spent(0) + this.#current.reserve;
+    return this.#spent(0) + this.#heldReserve(this.#current.reserve);
   }
 
   /** Node GETs issued so far. */
@@ -1165,10 +1210,15 @@ export class FoldPlanner {
     return this.#input.spent + this.#spentBetween + this.#gets * TREE_RETRIED_CALL_CHARGE + calls;
   }
 
+  /** `reserve`, or the pinned checkpoint's reserve while a pin is held and it is larger. */
+  #heldReserve(reserve: number): number {
+    const pinned = this.#pinned === null ? 0 : this.#checkpoints[this.#pinned]!.reserve;
+    return Math.max(reserve, pinned);
+  }
+
   /** Whether `calls` more fit the budget with `reserve` held, and the pinned reserve while one is pinned. */
   #fits(calls: number, reserve: number): boolean {
-    const pinned = this.#pinned === null ? 0 : this.#checkpoints[this.#pinned]!.reserve;
-    return this.#spent(calls) + Math.max(reserve, pinned) <= this.#input.budget;
+    return this.#spent(calls) + this.#heldReserve(reserve) <= this.#input.budget;
   }
 
   #reserveOf(state: PlannerState): number {
@@ -1193,6 +1243,7 @@ export class FoldPlanner {
         root: capturedBranch(root),
         counts,
         fresh: counts.map(() => 0),
+        storedLevels: counts.length,
         rows: totals.rows,
         bytes: totals.bytes,
       };
@@ -1206,6 +1257,7 @@ export class FoldPlanner {
       root: plannedLeaf(docs),
       counts: [],
       fresh: [],
+      storedLevels: 0,
       rows: totals.rows,
       bytes: totals.bytes,
     };
@@ -1291,16 +1343,31 @@ export class FoldPlanner {
       // Crossing the depth-0 limits downward reads every leaf.
       return this.#single(merged(await allDocs(view), [change]), start);
     }
-    const { tree, fresh } = await planLevels(
+    const { tree, fresh, carried } = await planLevels(
       view,
       below,
       state.counts,
       state.fresh,
       this.#steps,
       this.#adopt,
-      this.#mismatch,
+      (level, holds, gives) => {
+        throw levelCountsMismatch(
+          level < state.storedLevels ? this.#input.root : null,
+          level,
+          holds,
+          gives,
+        );
+      },
     );
-    return { kind: "tree", root: tree.root, counts: tree.levelNodes, fresh, rows, bytes };
+    return {
+      kind: "tree",
+      root: tree.root,
+      counts: tree.levelNodes,
+      fresh,
+      storedLevels: Math.min(state.storedLevels, carried),
+      rows,
+      bytes,
+    };
   }
 
   /** A freshly built tree as a `tree` state, reusing every read captured node it equals. */
@@ -1322,21 +1389,16 @@ export class FoldPlanner {
       });
       return plannedBranch(node.level, children);
     };
-    return { kind: "tree", root: walk(tree.root), counts: tree.levelNodes, fresh, rows, bytes };
+    return {
+      kind: "tree",
+      root: walk(tree.root),
+      counts: tree.levelNodes,
+      fresh,
+      storedLevels: 0,
+      rows,
+      bytes,
+    };
   }
-
-  /**
-   * A regrouped level whose nodes disagree with the counts the planner
-   * carried from the captured root's `level_nodes`.
-   */
-  readonly #mismatch = (level: number, holds: number, gives: number): never => {
-    const root = this.#input.root;
-    const stored =
-      root?.node.kind === "branch" && root.node.root !== null ? root.node.root.levelNodes : [];
-    return root === null
-      ? internal(`level ${level} holds ${holds} nodes where the planned counts give ${gives}`)
-      : countsMismatch(root, stored)(level, holds, gives);
-  };
 
   /** Read a node through `get`, once, charging the GET if it fits. */
   readonly #load: NodeLoader = async (key, expected) => {
