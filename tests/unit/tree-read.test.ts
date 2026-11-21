@@ -1108,6 +1108,52 @@ const putRawEntry = async (
 };
 
 describe("stored data", () => {
+  test.each([
+    { name: "null", after: null },
+    { name: "an array", after: [] },
+    { name: "a missing _id", after: {} },
+    { name: "another _id", after: { _id: "n06" } },
+    { name: "an invalid _id", after: { _id: "\uD800" } },
+  ])("a surviving tail post-image with $name refuses every read", async ({ after }) => {
+    for (const strict of [false, true]) {
+      const bucket = await deepBucket();
+      await putRawEntry(bucket, bucket.tail, { op: "U", doc_id: "n05", after });
+      if (strict) {
+        const key = treeHeadKey(bucket.prefix);
+        const head = JSON.parse(new TextDecoder().decode((await bucket.storage.get(key))!.body));
+        head.tail_hint = bucket.tail + 1;
+        await bucket.storage.put(key, encodeJsonBytes(head));
+      }
+      const target = instrument(bucket, SMALL).target();
+      for (const [, read] of READ_SHAPES) {
+        await expect(read(target)).rejects.toMatchObject({ code: "InvalidResponse" });
+      }
+    }
+  });
+
+  test.each(["U", "D"])("a later %s supersedes a malformed tail post-image", async (op) => {
+    const bucket = await deepBucket();
+    const before = readScan(bucket.view());
+    await putRawEntry(bucket, bucket.tail, { op: "U", doc_id: "n05", after: null });
+    const replacement = { _id: "n05", value: "replaced" };
+    await putRawEntry(bucket, bucket.tail + 1, {
+      op,
+      doc_id: "n05",
+      ...(op === "U" && { after: replacement }),
+    });
+    const expected = before.flatMap((doc) => {
+      if (doc["_id"] !== "n05") {
+        return [doc];
+      }
+      return op === "U" ? [replacement] : [];
+    });
+    const target = instrument(bucket, SMALL).target();
+    await expect(readTreeScan(target)).resolves.toEqual(expected);
+    await expect(readTreePoint(target, "n05")).resolves.toEqual(
+      op === "U" ? replacement : undefined,
+    );
+  });
+
   test("the tail skips another collection's entries, an I or U without after, and an entry without doc_id", async () => {
     const bucket = await deepBucket();
     const before = readScan(bucket.view());
