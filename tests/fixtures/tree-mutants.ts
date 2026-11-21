@@ -276,7 +276,7 @@ export const READ_IGNORES_TAIL_DELETES: TreeMutant = {
       readTail: async (read) => {
         const tail = await readTreeTail(read);
         return {
-          tail: tail.tail,
+          ...tail,
           overlay: new Map([...tail.overlay].filter(([, doc]) => doc !== null)),
         };
       },
