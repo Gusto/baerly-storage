@@ -3,7 +3,9 @@
  *
  * The canonical tree is a pure function of the row set, the layout and
  * the collection's chunk salt, through its chunk key. It never depends
- * on fold history, attempt identity, the collection name or the host:
+ * on fold history, attempt identity, the collection name or the host.
+ * A row is its canonical document bytes, which keep the writer's key
+ * order, so two rows that differ only in key order are different rows.
  *
  * 1. Sort the documents by `_id` in `utf8-scalar-v1` order.
  * 2. Depth-0 rule: while the row count is at most `singleLeafMaxRows`

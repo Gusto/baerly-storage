@@ -79,20 +79,24 @@ const holey: unknown[] = [1];
 holey[2] = 3;
 
 describe("canonical document encoding", () => {
-  test("mixed keys: array-index names numerically, then UTF-16 order; numbers re-spelled", () => {
+  test("mixed keys: array-index names numerically, then insertion order; numbers re-spelled", async () => {
     const parsed: unknown = JSON.parse(
       '{"b":1,"_id":"x","A":[true,{"z":"é","y":2.50}],"10":0,"2":"n"}',
     );
     const { doc, id, bytes } = canonicalDocument(parsed, "test");
     const encoded = JSON.stringify(doc);
-    expect(encoded).toBe('{"2":"n","10":0,"A":[true,{"y":2.5,"z":"é"}],"_id":"x","b":1}');
+    expect(encoded).toBe('{"2":"n","10":0,"b":1,"_id":"x","A":[true,{"z":"é","y":2.5}]}');
     expect(bytes).toBe(62);
     expect(utf8.encode(encoded).byteLength).toBe(62);
+    await expect(sha256Hex(utf8.encode(encoded))).resolves.toBe(
+      "e4b799c033a27ea3134bbe00fad2d5d398cc28c631d8e10156b543c75ab651fc",
+    );
     expect(id).toBe("x");
   });
 
-  test("key-order edge: index range ends at 4294967294; astral keys sort before U+FFFF", async () => {
-    // `é` is U+00E9 and the last key the single code unit U+FFFF.
+  test("key-order edge: index range ends at 4294967294; other keys keep insertion order", async () => {
+    // The U+FFFF key is a single code unit and `é` is U+00E9; the last
+    // three are in neither UTF-16 nor UTF-8 order.
     const insertion = [
       "b",
       "4294967295",
@@ -102,9 +106,9 @@ describe("canonical document encoding", () => {
       "9",
       "-1",
       "__proto__",
-      "\u00e9",
-      "😀",
       "\uFFFF",
+      "😀",
+      "\u00e9",
     ];
     const value: Record<string, number> = {};
     for (const key of insertion) {
@@ -119,13 +123,13 @@ describe("canonical document encoding", () => {
     const { doc } = canonicalDocument({ _id: "x", v: value }, "test");
     const encoded = utf8.encode(JSON.stringify(doc["v"]));
     expect(text.decode(encoded)).toBe(
-      '{"9":1,"10":1,"4294967294":1,"-1":1,"01":1,"4294967295":1,"__proto__":1,"b":1,"\u00e9":1,"😀":1,"\uFFFF":1}',
+      '{"9":1,"10":1,"4294967294":1,"b":1,"4294967295":1,"01":1,"-1":1,"__proto__":1,"\uFFFF":1,"😀":1,"\u00e9":1}',
     );
     // JSON.stringify writes U+FFFF raw, as the bytes EF BF BF.
-    expect([...encoded.subarray(-7, -4)]).toEqual([0xef, 0xbf, 0xbf]);
+    expect([...encoded.subarray(-23, -20)]).toEqual([0xef, 0xbf, 0xbf]);
     expect(encoded.byteLength).toBe(102);
     await expect(sha256Hex(encoded)).resolves.toBe(
-      "2a1edb698b61dde828980a9c064d6315ba2de8477f8d74953d0fec12e8936c4a",
+      "dfae1ae1d4a8faa24de23b27130d5123f5642e1a086b8167bab3ece62403ed50",
     );
   });
 
@@ -133,12 +137,12 @@ describe("canonical document encoding", () => {
     const { doc } = canonicalDocument(JSON.parse('{"_id":"x","__proto__":{"y":1}}'), "test");
     expect(Object.hasOwn(doc, "__proto__")).toBe(true);
     expect(Object.getPrototypeOf(doc)).toBe(Object.prototype);
-    expect(JSON.stringify(doc)).toBe('{"__proto__":{"y":1},"_id":"x"}');
+    expect(JSON.stringify(doc)).toBe('{"_id":"x","__proto__":{"y":1}}');
   });
 
   test("strings other than _id are not normalized, and an unpaired surrogate is spelled \\udxxx", () => {
     const { doc } = canonicalDocument({ _id: "x", nfd: "e\u0301", lone: "\ud800" }, "test");
-    expect(JSON.stringify(doc)).toBe('{"_id":"x","lone":"\\ud800","nfd":"e\u0301"}');
+    expect(JSON.stringify(doc)).toBe('{"_id":"x","nfd":"e\u0301","lone":"\\ud800"}');
   });
 
   test("NFC and NFD _id are distinct IDs, ordered by UTF-8 bytes", () => {
@@ -717,11 +721,26 @@ describe("strict decode", () => {
     ["an escaped slash", leafBody('{"_id":"a","s":"\\/"}')],
     ["uppercase escape hex", leafBody('{"_id":"a","s":"\\uD800"}')],
     ["an exponent spelling", BASELINE.replace('"n":1', '"n":1e0')],
-    ["a non-canonical document key order", leafBody('{"n":1,"_id":"a"}')],
     ["index keys out of numeric order", leafBody('{"10":1,"9":1,"_id":"a"}')],
+    ["an index key after a non-index key", leafBody('{"_id":"a","9":1}')],
+    ["a nested index key after a non-index key", leafBody('{"_id":"a","o":{"b":1,"0":1}}')],
     ["a duplicate envelope member", BASELINE.replace('"level":0', '"level":0,"level":0')],
   ])("canonical-bytes: %s", async (_label, body) => {
     await expectDecodeFailure(decodeBody(body), "canonical-bytes");
+  });
+
+  test.each<[string, string]>([
+    ["_id after another key", '{"n":1,"_id":"a"}'],
+    ["non-index keys in reverse sorted order", '{"_id":"a","z":1,"b":{"y":1,"x":2}}'],
+    ["an own __proto__ between keys", '{"_id":"a","__proto__":1,"A":2}'],
+    ["a non-index numeric name after a letter", '{"_id":"a","b":1,"01":2,"4294967295":3}'],
+  ])("canonical-bytes: keys in writer order decode as written (%s)", async (_label, doc) => {
+    // Any order of non-index keys is canonical, so reordering them after
+    // encoding gives another canonical body (of a different document),
+    // which only the content hash in the key ties to one document.
+    const decoded = await decodeBody(leafBody(doc));
+    expect(decoded.node.kind).toBe("leaf");
+    expect(JSON.stringify((decoded.node as TreeLeafNode).docs[0])).toBe(doc);
   });
 
   test("context: a level other than the parent's level − 1", async () => {
@@ -898,7 +917,7 @@ describe("check tags", () => {
 describe("encodeNode", () => {
   test("canonicalizes documents and keeps exactly the six entry fields", () => {
     const bytes = encodeNode(leaf([JSON.parse('{"n":2.50,"_id":"a"}') as TreeDocument]));
-    expect(text.decode(bytes)).toContain('"docs":[{"_id":"a","n":2.5}]');
+    expect(text.decode(bytes)).toContain('"docs":[{"n":2.5,"_id":"a"}]');
     const withExtra = {
       ...ROOT_BRANCH_A1,
       children: ROOT_BRANCH_A1.children.map((e) => ({ ...e, node: "ignored" })),

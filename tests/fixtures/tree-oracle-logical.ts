@@ -107,11 +107,12 @@
  * mutation that addresses nothing. Misuse of the oracle itself (a gap, a
  * duplicate seq, `targetSeq < baseSeq`) throws a plain `Error`.
  *
- * Output rows are fresh deep copies with properties in canonical order (array
- * indices ascending, then other names in UTF-16 code-unit order), and the
- * result `Map` iterates in `utf8-scalar-v1` order. Neither input bodies nor
- * the base map's or bodies' property insertion order can leak into the
- * result. Reads return fresh copies too.
+ * Output rows are fresh deep copies that keep each post-image's property
+ * order (array indices ascending, then insertion order, as `JSON.stringify`
+ * writes it), so a row reads back exactly as written. The result `Map`
+ * iterates in `utf8-scalar-v1` order; neither input bodies nor the base
+ * map's or the log's array order can leak into the result. Reads return
+ * fresh copies too.
  *
  * ## Mutant seam
  *
@@ -124,7 +125,8 @@
  * with "skip first/last mutation" split into two, plus two the list misses:
  * `absent-delete-creates-row` (the only one the absent-delete property can
  * catch) and `array-order-not-seq-order` (applies entries in input array
- * order instead of seq order). It exists so the
+ * order instead of seq order), plus `sorted-keys` (sorts each row's
+ * properties instead of keeping the writer's order). It exists so the
  * test suite can prove each property goes red; nothing else should call it.
  */
 
@@ -170,6 +172,7 @@ export const LOGICAL_FOLD_MUTANTS = [
   "merge-instead-of-replace",
   "wrong-folded-seq",
   "aliased-bodies",
+  "sorted-keys",
 ] as const;
 
 export type LogicalFoldMutant = (typeof LOGICAL_FOLD_MUTANTS)[number];
@@ -403,7 +406,7 @@ const foldWith = (input: LogicalFoldInput, mutant: LogicalFoldMutant | undefined
   const rows = new Map<string, DocumentData>();
   for (const id of [...survivors.keys()].toSorted(compareUtf8)) {
     const body = survivors.get(id)!;
-    rows.set(id, mutant === "aliased-bodies" ? body : copyDocument(body));
+    rows.set(id, mutant === "aliased-bodies" ? body : copyDocument(body, mutant === "sorted-keys"));
   }
   return {
     collection,
@@ -534,21 +537,26 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return proto === Object.prototype || proto === null;
 };
 
-/** Deep copy with properties inserted in canonical order. Input is already validated. */
-const copyDocument = (body: DocumentData): DocumentData => copyValue(body) as DocumentData;
+/**
+ * Deep copy that keeps the input's property order. `sortKeys` is the
+ * `sorted-keys` mutant. Input is already validated.
+ */
+const copyDocument = (body: DocumentData, sortKeys = false): DocumentData =>
+  copyValue(body, sortKeys) as DocumentData;
 
-const copyValue = (value: DocumentValue): DocumentValue => {
+const copyValue = (value: DocumentValue, sortKeys: boolean): DocumentValue => {
   if (Array.isArray(value)) {
-    return value.map(copyValue);
+    return value.map((item) => copyValue(item, sortKeys));
   }
   if (typeof value === "object") {
     const out: DocumentData = {};
-    // Default sort is UTF-16 code-unit order; inserting in that order makes
-    // the engine list array-index names first, ascending. `defineProperty`
+    // Inserting in `Object.keys` order reproduces the input's order (the
+    // engine lists array-index names first either way). `defineProperty`
     // keeps a `__proto__` key an own property.
-    for (const key of Object.keys(value).toSorted()) {
+    const keys = Object.keys(value);
+    for (const key of sortKeys ? keys.toSorted() : keys) {
       Object.defineProperty(out, key, {
-        value: copyValue(value[key]!),
+        value: copyValue(value[key]!, sortKeys),
         enumerable: true,
         writable: true,
         configurable: true,

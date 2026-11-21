@@ -277,22 +277,25 @@ describe("branch predicate at the production layout (Fmin 4, Ft 32, Fmax 128)", 
 // ── Canonical encoding and node body vectors ───────────────────────────────
 
 describe("canonical encoding and node body vectors", () => {
-  test("mixed keys canonicalize to array indices, then UTF-16 order (62 bytes)", () => {
+  test("mixed keys canonicalize to array indices, then insertion order (62 bytes)", () => {
     const got = canonDocument(
       JSON.parse('{"b":1,"_id":"x","A":[true,{"z":"é","y":2.50}],"10":0,"2":"n"}'),
     );
     expect("invalid" in got).toBe(false);
     const doc = got as Exclude<typeof got, { invalid: string }>;
     expect(JSON.stringify(doc.doc)).toBe(
-      '{"2":"n","10":0,"A":[true,{"y":2.5,"z":"é"}],"_id":"x","b":1}',
+      '{"2":"n","10":0,"b":1,"_id":"x","A":[true,{"z":"é","y":2.5}]}',
     );
     expect(doc.bytes).toBe(62);
+    expect(sha256(utf8(JSON.stringify(doc.doc)))).toBe(
+      "e4b799c033a27ea3134bbe00fad2d5d398cc28c631d8e10156b543c75ab651fc",
+    );
   });
 
-  test("key-order edge: 4294967295 is not an array index, and 😀 sorts before U+FFFF", () => {
+  test("key-order edge: 4294967295 is not an array index, and other keys keep insertion order", () => {
     const value: Record<string, number> = {};
     const inserted = ["b", "4294967295", "4294967294", "01", "10", "9", "-1", "__proto__"];
-    for (const key of [...inserted, "\u00e9", "\u{1F600}", "\uFFFF"]) {
+    for (const key of [...inserted, "\uFFFF", "\u{1F600}", "\u00e9"]) {
       Object.defineProperty(value, key, {
         value: 1,
         enumerable: true,
@@ -302,13 +305,13 @@ describe("canonical encoding and node body vectors", () => {
     }
     const text = canonicalJson(value);
     expect(text).toBe(
-      '{"9":1,"10":1,"4294967294":1,"-1":1,"01":1,"4294967295":1,"__proto__":1,"b":1,"\u00e9":1,"\u{1F600}":1,"\uFFFF":1}',
+      '{"9":1,"10":1,"4294967294":1,"b":1,"4294967295":1,"01":1,"-1":1,"__proto__":1,"\uFFFF":1,"\u{1F600}":1,"\u00e9":1}',
     );
     // JSON.stringify writes U+FFFF raw, as the bytes EF BF BF.
     const bytes = utf8(text);
-    expect(hex(bytes.slice(-7, -4))).toBe("efbfbf");
+    expect(hex(bytes.slice(-23, -20))).toBe("efbfbf");
     expect(bytes.byteLength).toBe(102);
-    expect(sha256(bytes)).toBe("2a1edb698b61dde828980a9c064d6315ba2de8477f8d74953d0fec12e8936c4a");
+    expect(sha256(bytes)).toBe("dfae1ae1d4a8faa24de23b27130d5123f5642e1a086b8167bab3ece62403ed50");
   });
 
   const withAccessor = (target: object, key: string): object =>
