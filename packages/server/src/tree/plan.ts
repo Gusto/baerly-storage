@@ -1150,6 +1150,25 @@ export class FoldPlanner {
   }
 
   /**
+   * Accept the next entry in seq order as one that changes no row: an
+   * entry the read path's fold skips, or one a pinned look-ahead holds
+   * back. It takes a checkpoint equal to the current one, so the fold
+   * still ends after {@link FoldPlanner.accepted} entries. It issues no
+   * GET and leaves the charge as it is, so it fits whenever the planner
+   * still accepts changes. Returns whether it was accepted: after a
+   * rejection or a {@link FoldPlanner.rollback}, it is refused like every
+   * later change.
+   */
+  skip(): boolean {
+    if (this.#rejected) {
+      return false;
+    }
+    const { state, reserve } = this.#current;
+    this.#checkpoints.push({ state, reserve, fetched: this.#read.length });
+    return true;
+  }
+
+  /**
    * Charge `calls` the fold issues outside the planner before the next
    * change, such as its log GETs, against the same budget. Returns
    * whether they fit with the reserve; when they do not, nothing is
