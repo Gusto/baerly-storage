@@ -54,9 +54,11 @@
  * tree already past either ceiling folds nothing. Each refuses as a
  * `deferred` stop the caller reports.
  *
- * **Stuck entry.** When not even the first entry of a fresh tick fits
- * the budget, the fold publishes nothing, keeps the floor and emits a
- * counted structured warning naming the seq.
+ * **Stuck entry.** When not even the first entry fits this tick's
+ * budget, the fold publishes nothing, keeps the floor and emits a
+ * counted structured warning naming the seq. The check uses the budget
+ * this tick has left, not a fresh tick's, so a fold that starts late in
+ * an invocation can warn about an entry a fresh tick would fold.
  *
  * Not wired into the `Writer` or any route.
  */
@@ -141,7 +143,7 @@ export type TreeFoldStop =
     }
   /** The entry at `seq` is an invalid survivor; `error` is the `InvalidResponse` to report. */
   | { readonly reason: "invalid-entry"; readonly seq: number; readonly error: BaerlyError }
-  /** Not even the first entry, at `seq`, fits a fresh tick's budget. */
+  /** Not even the first entry, at `seq`, fits this tick's budget. */
   | { readonly reason: "stuck-entry"; readonly seq: number };
 
 /** What a fold tick did. */
