@@ -11,7 +11,7 @@
  *   the number of changes the tick has accepted.
  * - **Checkpoints.** A pinned look-ahead falls back to the pinned
  *   checkpoint, within the budget. A skipped entry takes a checkpoint
- *   that changes nothing and charges nothing.
+ *   that changes no rows and reserves publication calls.
  * - **Prefix split.** One tick of ten changes and ticks of three, three
  *   and four land on the same shape.
  *
@@ -500,14 +500,16 @@ describe("checkpoints and the look-ahead fallback", () => {
     expect(planner.accepted).toBe(1);
   });
 
-  test("a skipped entry is accepted with no GET and no charge, and the plan is unchanged", async () => {
+  test("a skipped entry issues no GET and preserves the current tree", async () => {
     const { run, input } = await open();
     const planner = new FoldPlanner({ ...input, budget: UNBOUNDED });
     // Before any change: a skip-only fold ends after the skipped entries.
     expect(planner.skip()).toBe(true);
     expect(planner.accepted).toBe(1);
     expect(planner.gets).toBe(0);
-    expect(planner.charge).toBe(FOLD_SPENT_BEFORE_PLANNING);
+    expect(planner.charge).toBe(
+      FOLD_SPENT_BEFORE_PLANNING + publicationReserve(planner.plan!.tree),
+    );
     await planner.add(first);
     const { charge, gets } = planner;
     const expected = await planShape(run, planner.plan!, config);
@@ -523,6 +525,32 @@ describe("checkpoints and the look-ahead fallback", () => {
     await expect(planShape(run, planner.plan!, config)).resolves.toBe(
       await planShape(run, batch, config),
     );
+  });
+
+  test("a skip-only prefix reserves publication and refuses an unaffordable first skip", async () => {
+    const { input } = await open();
+    for (const root of [null, input.root]) {
+      const candidate = { ...input, root };
+      const baseline = new FoldPlanner({ ...candidate, budget: UNBOUNDED });
+      expect(baseline.skip()).toBe(true);
+      const required = input.spent + publicationReserve(baseline.plan!.tree);
+      expect(baseline.charge).toBe(required);
+
+      const tight = new FoldPlanner({ ...candidate, budget: required - 1 });
+      expect(tight.skip()).toBe(false);
+      expect(tight.accepted).toBe(0);
+      expect(tight.plan).toBeNull();
+      expect(tight.skip()).toBe(false);
+      await expect(tight.add(first)).resolves.toBe(false);
+
+      const exact = new FoldPlanner({ ...candidate, budget: required });
+      expect(exact.skip()).toBe(true);
+      expect(exact.skip()).toBe(true);
+      expect(exact.accepted).toBe(2);
+      expect(exact.gets).toBe(0);
+      expect(exact.charge).toBe(required);
+      expect(exact.spend(1)).toBe(false);
+    }
   });
 
   test("a skip past the pin is rolled back, and a skip after a rejection or a rollback is refused", async () => {
