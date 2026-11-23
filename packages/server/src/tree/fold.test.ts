@@ -13,6 +13,7 @@
  *   on the same canonical root.
  * - The fold end never passes a missing log slot: past the tail hint the
  *   first missing slot is the tail; below it, a missing slot is `Internal`.
+ *   A log body that is not a JSON object is `InvalidResponse` on both sides.
  * - A depth-0 limit publishes only a root leaf within its ceilings, and on
  *   the byte axis folds the longest prefix whose end state fits.
  * - An invalid survivor is folded past only once a later entry supersedes
@@ -25,6 +26,7 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import {
+  BaerlyError,
   casUpdateCurrentJson,
   type DocumentData,
   decodeJsonBytes,
@@ -267,6 +269,33 @@ describe("contiguous prefix", () => {
     const before = b.counted.calls.put;
     await expect(fold(b, SMALL, { knownTail: 10 })).rejects.toMatchObject({ code: "Internal" });
     expect(b.counted.calls.put).toBe(before);
+  });
+
+  describe.each(["null", "5", '"s"', "[]"])("a log body %s", (body) => {
+    const withBody = async (): Promise<Bucket> => {
+      const b = openBucket();
+      await b.writer.commit([row("a", 1)]);
+      await b.bucket.put(logObjectKey(PREFIX, 1), new TextEncoder().encode(body), {
+        ifNoneMatch: "*",
+      });
+      await b.writer.commit([row("b", 2)]);
+      return b;
+    };
+
+    test.each([
+      ["past the tail hint", {}],
+      ["below the tail hint", { knownTail: 3 }],
+    ])("%s is InvalidResponse and nothing is written", async (_, extra) => {
+      const b = await withBody();
+      const before = b.counted.calls.put;
+      const error: unknown = await fold(b, SMALL, extra).then(
+        () => undefined,
+        (error_: unknown) => error_,
+      );
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect(error).toMatchObject({ code: "InvalidResponse" });
+      expect(b.counted.calls.put).toBe(before);
+    });
   });
 
   fcTest.prop(
