@@ -27,7 +27,8 @@
  * valid stored document whose `_id` is its `doc_id`; a `D` whose `doc_id`
  * is outside the document-ID domain changes nothing. Entries supersede
  * one another by their raw `doc_id`, as the read path's fold keys its
- * rows, so the number `5` and the string `"5"` are different rows.
+ * rows, so the number `5` and the string `"5"` are different rows. Every
+ * log body must be a JSON object, past the tail hint as below it.
  *
  * **Invalid survivors.** An `I`/`U` that is not valid is not published,
  * but a later entry for the same `_id` may supersede it. The fold pins
@@ -61,6 +62,7 @@ import {
   currentRequestLedger,
   encodeJsonBytes,
   type LogEntry,
+  logObjectKey,
   MAX_PARALLEL_LOG_READS,
   type Storage,
 } from "@baerly/protocol";
@@ -333,6 +335,22 @@ const depthZeroBreak = (
   return undefined;
 };
 
+/**
+ * `entry` as a log entry: a log body must be a JSON object, as
+ * `walkLogRange` requires below the tail hint.
+ *
+ * @throws BaerlyError code="InvalidResponse" — it is not.
+ */
+const asLogEntry = (entry: unknown, prefix: string, seq: number): LogEntry => {
+  if (!isPlainObject(entry)) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `tree fold: log entry at ${logObjectKey(prefix, seq)} is not a JSON object`,
+    );
+  }
+  return entry as unknown as LogEntry;
+};
+
 /** Log GETs the next batch may charge: the planner's headroom, pinned reserve included. */
 const batchRoom = (planner: FoldPlanner, budget: number): number =>
   Math.floor((budget - planner.charge) / GET_CHARGE);
@@ -530,7 +548,11 @@ export const prepareTreeFold = async (
         },
       });
       atTail = probe.kind === "exact";
-      batch = probe.entries.map((entry) => ({ seq: next, entry, bytes }));
+      batch = probe.entries.map((entry) => ({
+        seq: next,
+        entry: asLogEntry(entry, prefix, next),
+        bytes,
+      }));
     }
     for (const item of batch) {
       if (!(await addEntry(item))) {
