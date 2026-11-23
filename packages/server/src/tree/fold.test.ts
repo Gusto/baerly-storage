@@ -19,6 +19,8 @@
  * - An invalid survivor is folded past only once a later entry supersedes
  *   it within the budget; otherwise the valid prefix before it publishes.
  *   No tick charges more storage calls than its budget.
+ * - No tick charges more than its budget even when every retried call
+ *   takes all its attempts.
  * - A fold whose head changed under it reports `cas-lost`, deletes
  *   nothing, and a re-run folds correctly.
  * - An entry no fresh tick can fold is refused with a counted warning.
@@ -271,6 +273,19 @@ describe("contiguous prefix", () => {
     expect(b.counted.calls.put).toBe(before);
   });
 
+  test("below a stored tail hint past the floor, a missing slot is Internal", async () => {
+    const b = openBucket();
+    await b.writer.commit(changes(10));
+    await casUpdateCurrentJson(b.storage, treeHeadKey(PREFIX), (head) => ({
+      ...head,
+      tail_hint: 10,
+    }));
+    await b.bucket.delete(logObjectKey(PREFIX, 5));
+    const before = b.counted.calls.put;
+    await expect(fold(b, SMALL)).rejects.toMatchObject({ code: "Internal" });
+    expect(b.counted.calls.put).toBe(before);
+  });
+
   describe.each(["null", "5", '"s"', "[]"])("a log body %s", (body) => {
     const withBody = async (): Promise<Bucket> => {
       const b = openBucket();
@@ -296,6 +311,24 @@ describe("contiguous prefix", () => {
       expect(error).toMatchObject({ code: "InvalidResponse" });
       expect(b.counted.calls.put).toBe(before);
     });
+  });
+
+  test("the first dense batch reads one entry, so the first entry fits as on the probe path", async () => {
+    let compared = 0;
+    for (let budget = 6; budget <= 90; budget++) {
+      const ends = [];
+      for (const extra of [{}, { knownTail: 30 }]) {
+        const b = openBucket();
+        await b.writer.commit(changes(20));
+        expectPublished(await fold(b, SMALL), 20);
+        await b.writer.commit(changes(30).slice(20));
+        const outcome = await fold(b, SMALL, { budget, ...extra });
+        ends.push(outcome.kind === "refused" ? `refused/${outcome.stop.reason}` : `folded`);
+      }
+      expect(ends[1], `budget ${budget}`).toBe(ends[0]);
+      compared += ends[0] === "folded" ? 1 : 0;
+    }
+    expect(compared).toBeGreaterThan(0);
   });
 
   fcTest.prop(
@@ -574,26 +607,58 @@ describe("invalid survivors and the look-ahead fallback", () => {
     [
       "an _id that breaks the key-segment rule",
       { op: "I", doc_id: "_bad", after: { _id: "_bad" } },
+      "an operator must supersede the entry from the operator CLI",
     ],
-    ["an unpaired surrogate", { op: "I", doc_id: "a\ud800", after: { _id: "a\ud800" } }],
-    ["a post-image with another _id", { op: "U", doc_id: "c", after: { _id: "d" } }],
+    [
+      "an unpaired surrogate",
+      { op: "I", doc_id: "a\ud800", after: { _id: "a\ud800" } },
+      "Delete that row; only a delete can supersede the entry.",
+    ],
+    [
+      "a post-image with another _id",
+      { op: "U", doc_id: "c", after: { _id: "d" } },
+      "replace(id, doc)",
+    ],
     [
       "a post-image that is not stored data",
       { op: "U", doc_id: "c", after: { _id: "c", v: null } },
+      "Replace or delete that row.",
     ],
-  ])("%s at the floor is refused with InvalidResponse naming the seq", async (_, fields) => {
+  ])(
+    "%s at the floor is refused with InvalidResponse naming the seq and the remedy",
+    async (_, fields, remedy) => {
+      const b = openBucket();
+      await b.writer.appendRaw(fields as Partial<LogEntry>);
+      const outcome = await fold(b, SMALL);
+      expect(outcome).toMatchObject({
+        kind: "refused",
+        floor: 0,
+        stop: { reason: "invalid-entry", seq: 0, error: { code: "InvalidResponse" } },
+      });
+      if (outcome.kind === "refused" && outcome.stop.reason === "invalid-entry") {
+        expect(outcome.stop.error.message).toContain("seq 0");
+        expect(outcome.stop.error.message).toContain(JSON.stringify(fields.doc_id));
+        expect(outcome.stop.error.message).toContain(remedy);
+      }
+    },
+  );
+
+  test("with two invalid survivors, superseding one still holds the fold before the first", async () => {
     const b = openBucket();
-    await b.writer.appendRaw(fields as Partial<LogEntry>);
+    await b.writer.commit([row("a", 1)]);
+    await b.writer.appendRaw({ op: "I", doc_id: "c", after: { _id: "x" } });
+    await b.writer.appendRaw({ op: "I", doc_id: "d", after: { _id: "y" } });
+    await b.writer.commit([row("c", 3), row("e", 4)]);
     const outcome = await fold(b, SMALL);
     expect(outcome).toMatchObject({
-      kind: "refused",
-      floor: 0,
-      stop: { reason: "invalid-entry", seq: 0, error: { code: "InvalidResponse" } },
+      kind: "published",
+      foldEnd: 1,
+      stop: { reason: "invalid-entry", seq: 1, error: { code: "InvalidResponse" } },
     });
-    if (outcome.kind === "refused" && outcome.stop.reason === "invalid-entry") {
-      expect(outcome.stop.error.message).toContain("seq 0");
-      expect(outcome.stop.error.message).toContain(JSON.stringify(fields.doc_id));
+    if (outcome.kind === "published" && outcome.stop?.reason === "invalid-entry") {
+      expect(outcome.stop.error.message).toContain("seq 1 ");
     }
+    await judge(b.storage, SMALL_LAYOUT, 1);
   });
 
   /** The bucket's tree holds exactly `rows`, at `floor`. */
@@ -741,6 +806,103 @@ describe("stuck entry", () => {
       kind: "refused",
       stop: { reason: "budget", seq: 0 },
     });
+  });
+});
+
+describe("budgets", () => {
+  /**
+   * Every attempt reaching `inner`, counted. While `worst` is on, every
+   * call the adapter retries fails twice before it succeeds, so it takes
+   * all three attempts; the head CAS, which is not retried, takes one.
+   */
+  const worstCase = (inner: Storage) => {
+    const failures = new Map<string, number>();
+    const self = {
+      attempts: 0,
+      worst: false,
+      storage: undefined as unknown as Storage,
+    };
+    const attempt = (key: string, retried: boolean): void => {
+      self.attempts += 1;
+      if (!self.worst || !retried) {
+        return;
+      }
+      const n = failures.get(key) ?? 0;
+      if (n < 2) {
+        failures.set(key, n + 1);
+        throw new BaerlyError("NetworkError", "injected transient fault");
+      }
+      failures.delete(key);
+    };
+    self.storage = {
+      get: async (key, opts) => {
+        attempt(`get ${key}`, true);
+        return inner.get(key, opts);
+      },
+      put: async (key, body, opts) => {
+        attempt(`put ${key}`, opts?.ifMatch === undefined);
+        return inner.put(key, body, opts);
+      },
+      delete: async (key, opts) => {
+        attempt(`delete ${key}`, true);
+        return inner.delete(key, opts);
+      },
+      list: (prefix, opts) => inner.list(prefix, opts),
+    };
+    return self;
+  };
+
+  for (const [name, config] of [
+    ["small layout", SMALL],
+    ["production layout", PRODUCTION],
+  ] as const) {
+    for (const existing of [false, true]) {
+      test(`${name}, ${existing ? "over an existing tree" : "a fresh tree"}: worst-case retries never overrun the budget`, async () => {
+        const over: string[] = [];
+        for (let budget = 6; budget <= 400; budget += 2) {
+          const faulty = worstCase(new MemoryStorage());
+          const storage = adapterRetry(faulty.storage);
+          const writer = new TreeWriter(storage, PREFIX);
+          const b: Bucket = {
+            bucket: new MemoryStorage(),
+            counted: counted(storage),
+            storage,
+            writer,
+          };
+          if (existing) {
+            await writer.commit(
+              Array.from({ length: 14 }, (_, i) => row(`k${String(i * 3).padStart(2, "0")}`, i)),
+            );
+            await fold(b, config);
+          }
+          await writer.commit(
+            Array.from({ length: 12 }, (_, i) => row(`k${String(i * 2 + 1).padStart(2, "0")}`, i)),
+          );
+          faulty.worst = true;
+          const before = faulty.attempts;
+          await fold(b, config, { budget }).catch((error: unknown) => {
+            over.push(`budget ${budget}: threw ${String(error)}`);
+          });
+          faulty.worst = false;
+          if (faulty.attempts - before > budget) {
+            over.push(`budget ${budget}: ${faulty.attempts - before} attempts`);
+          }
+        }
+        expect(over).toEqual([]);
+      });
+    }
+  }
+
+  test("the head stamps the mean stored size of the folded entries", async () => {
+    const b = openBucket();
+    await b.writer.commit([row("a", 1), row("b", 2, "x".repeat(40)), { id: "a", value: null }]);
+    expectPublished(await fold(b, SMALL), 3);
+    let total = 0;
+    for (let seq = 0; seq < 3; seq++) {
+      total += (await b.bucket.get(logObjectKey(PREFIX, seq)))!.body.byteLength;
+    }
+    const head = await readTreeHead(b.storage, PREFIX);
+    expect(head?.json.mean_entry_bytes).toBe(Math.round(total / 3));
   });
 });
 
