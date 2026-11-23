@@ -407,9 +407,13 @@ export const prepareTreeFold = async (
   const ledgerRoom =
     input.budget === undefined ? currentRequestLedger()?.storageRemaining() : undefined;
   const budget = Math.max(0, Math.min(input.budget ?? ledgerRoom ?? UNBOUNDED, UNBOUNDED));
-  const root = await readTreeRoot(storage, head, config, opts);
   const floor = head.json.log_seq_start;
   const refused = (stop: TreeFoldStop) => ({ kind: "refused" as const, floor, stop });
+  const headCharge = input.budget === undefined ? 0 : GET_CHARGE;
+  if (head.root !== null && headCharge + GET_CHARGE > budget) {
+    return refused({ reason: "budget", seq: floor });
+  }
+  const root = await readTreeRoot(storage, head, config, opts);
 
   if (input.depthZero !== undefined) {
     const totals = new DepthZeroTotals(root);
@@ -445,7 +449,7 @@ export const prepareTreeFold = async (
     },
     config,
     budget,
-    spent: (input.budget === undefined ? 0 : GET_CHARGE) + (root === null ? 0 : GET_CHARGE),
+    spent: headCharge + (root === null ? 0 : GET_CHARGE),
   });
   const totals = input.depthZero === undefined ? null : new DepthZeroTotals(root);
 
