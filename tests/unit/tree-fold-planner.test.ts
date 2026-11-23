@@ -10,7 +10,8 @@
  * - **CPU bound.** The chunk hashes one change computes do not grow with
  *   the number of changes the tick has accepted.
  * - **Checkpoints.** A pinned look-ahead falls back to the pinned
- *   checkpoint, within the budget.
+ *   checkpoint, within the budget. A skipped entry takes a checkpoint
+ *   that changes nothing and charges nothing.
  * - **Prefix split.** One tick of ten changes and ticks of three, three
  *   and four land on the same shape.
  *
@@ -497,6 +498,50 @@ describe("checkpoints and the look-ahead fallback", () => {
     await expect(planner.add(lookAhead[1]!)).resolves.toBe(false);
     expect(planner.spend(0)).toBe(false);
     expect(planner.accepted).toBe(1);
+  });
+
+  test("a skipped entry is accepted with no GET and no charge, and the plan is unchanged", async () => {
+    const { run, input } = await open();
+    const planner = new FoldPlanner({ ...input, budget: UNBOUNDED });
+    // Before any change: a skip-only fold ends after the skipped entries.
+    expect(planner.skip()).toBe(true);
+    expect(planner.accepted).toBe(1);
+    expect(planner.gets).toBe(0);
+    expect(planner.charge).toBe(FOLD_SPENT_BEFORE_PLANNING);
+    await planner.add(first);
+    const { charge, gets } = planner;
+    const expected = await planShape(run, planner.plan!, config);
+    expect(planner.skip()).toBe(true);
+    expect(planner.skip()).toBe(true);
+    expect(planner.accepted).toBe(4);
+    expect(planner.gets).toBe(gets);
+    expect(planner.charge).toBe(charge);
+    await expect(planShape(run, planner.plan!, config)).resolves.toBe(expected);
+    // A change after skips lands as if the skips were not there.
+    await expect(planner.add(lookAhead[1]!)).resolves.toBe(true);
+    const batch = await planFold({ ...input, mutations: [first, lookAhead[1]!] });
+    await expect(planShape(run, planner.plan!, config)).resolves.toBe(
+      await planShape(run, batch, config),
+    );
+  });
+
+  test("a skip past the pin is rolled back, and a skip after a rejection or a rollback is refused", async () => {
+    const { input } = await open();
+    const pinned = new FoldPlanner({ ...input, budget: UNBOUNDED });
+    await pinned.add(first);
+    pinned.pin();
+    expect(pinned.skip()).toBe(true);
+    expect(pinned.accepted).toBe(2);
+    pinned.rollback();
+    expect(pinned.accepted).toBe(1);
+    expect(pinned.skip()).toBe(false);
+    expect(pinned.accepted).toBe(1);
+
+    const rejected = new FoldPlanner({ ...input, budget: FOLD_SPENT_BEFORE_PLANNING });
+    await expect(rejected.add(first)).resolves.toBe(false);
+    expect(rejected.skip()).toBe(false);
+    expect(rejected.accepted).toBe(0);
+    expect(rejected.plan).toBeNull();
   });
 
   test("budget and spent must be non-negative safe integers; spent above budget folds nothing", async () => {
