@@ -5,6 +5,7 @@ import {
   GC_MARK_LIST_PAGE_KEYS,
   MAINTENANCE_FOLD_BASE_REQUESTS,
   MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS,
+  MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS,
   STORAGE_RETRY_MAX_ATTEMPTS,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   WRITE_TICK_GC_MAX_SWEEPS,
@@ -221,6 +222,29 @@ describe("path sharing", () => {
     // 4 changed + 4 neighbors = 8 leaves under 8 parents + the root.
     expect(calls.gets).toBe(3 + 20 + 9 + 8);
     expect(calls.creates).toBe(2 * (9 + 8));
+  });
+});
+
+describe("a lost head CAS", () => {
+  test("pays the publisher's fate re-read and the closing tail_hint refresh", () => {
+    const tick = (headCasLost: boolean) =>
+      foldTickCalls({
+        shape: DEPTH_0,
+        changedLeaves: 1,
+        sharing: "distinct",
+        entriesFolded: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+        emptyBase: false,
+        concurrentCommits: 0,
+        headCasLost,
+        assumptions: DEFAULT_ASSUMPTIONS,
+      });
+    const won = tick(false);
+    // One retried head GET (the fate re-read), then the refresh's
+    // unretried GET and CAS PUT.
+    expect(tick(true)).toEqual(sumCalls(won, { gets: 1, unretriedGets: 1, casPuts: 1 }));
+    expect(chargedRequests(tick(true), ALL_ATTEMPTS) - chargedRequests(won, ALL_ATTEMPTS)).toBe(
+      STORAGE_RETRY_MAX_ATTEMPTS + MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS,
+    );
   });
 });
 

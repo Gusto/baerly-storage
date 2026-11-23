@@ -421,8 +421,11 @@ export interface FoldTickInput {
    */
   readonly concurrentCommits: number;
   /**
-   * Worst case for the head CAS: it is lost, so the tick also pays the
-   * closing best-effort `tail_hint` refresh (one non-retrying GET + CAS PUT,
+   * Worst case for the head CAS: it is lost. The tree's publisher then
+   * re-reads the head once to resolve the CAS's fate (one retried GET,
+   * `packages/server/src/tree/publish.ts`; main's `compact()` has no such
+   * read), and the tick also pays the closing best-effort `tail_hint`
+   * refresh (one non-retrying GET + CAS PUT,
    * `MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS`).
    */
   readonly headCasLost: boolean;
@@ -448,7 +451,8 @@ export const leavesTouched = (input: FoldTickInput): number => {
  * - one GET per folded log entry;
  * - internal node GETs on the union of changed paths, and the touched leaves;
  * - node creates: every touched leaf and every union node, plus splits;
- * - the head CAS (1), and on a lost CAS the closing `tail_hint` refresh.
+ * - the head CAS (1), and on a lost CAS the fate re-read of the head and
+ *   the closing `tail_hint` refresh.
  *
  * At depth 0 with one leaf that is `MAINTENANCE_FOLD_BASE_REQUESTS + 1 + e`
  * (26 at e = 20), the `tick:fold` cells of `request-counts.json`.
@@ -463,7 +467,7 @@ export const foldTickCalls = (input: FoldTickInput): Calls => {
     { gets: 1 + 1 + 1 + input.concurrentCommits + input.entriesFolded },
     input.emptyBase ? {} : { gets: union + leaves },
     { creates: rewritten + splits, casPuts: 1 },
-    input.headCasLost ? { unretriedGets: 1, casPuts: 1 } : {},
+    input.headCasLost ? { gets: 1, unretriedGets: 1, casPuts: 1 } : {},
   );
 };
 
