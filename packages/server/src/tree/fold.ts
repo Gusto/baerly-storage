@@ -41,15 +41,18 @@
  *
  * **Budgets.** Every host charges the fold against its request ledger
  * through the planner: a change whose GETs or publication would not fit
- * ends the fold before its seq. A host with a depth-0 limit (Cloudflare
- * Free) also publishes only a root leaf within its document-byte and row
- * ceilings, as the compactor's ceilings do. A change that would add a
- * row past the row ceiling ends the fold before its seq. On the byte
- * axis the fold takes the longest prefix whose end state fits: an entry
- * that takes the totals past it pins the checkpoint before it, and a
- * later delete or shrink that brings them back within it releases the
- * pin. A captured tree already past either ceiling folds nothing. Each
- * refuses as a `deferred` stop the caller reports.
+ * ends the fold before its seq. The default budget is what the ledger
+ * has left after the head GET: before any storage call has charged it,
+ * the ledger cannot tell which pool the storage draws on and reports no
+ * limit. A host with a depth-0 limit (Cloudflare Free) also publishes
+ * only a root leaf within its document-byte and row ceilings, as the
+ * compactor's ceilings do. A change that would add a row past the row
+ * ceiling ends the fold before its seq. On the byte axis the fold takes
+ * the longest prefix whose end state fits: an entry that takes the
+ * totals past it pins the checkpoint before it, and a later delete or
+ * shrink that brings them back within it releases the pin. A captured
+ * tree already past either ceiling folds nothing. Each refuses as a
+ * `deferred` stop the caller reports.
  *
  * **Stuck entry.** When not even the first entry of a fresh tick fits
  * the budget, the fold publishes nothing, keeps the floor and emits a
@@ -98,8 +101,9 @@ export interface TreeFoldInput {
   /** The collection prefix `P`. */
   readonly prefix: string;
   /**
-   * Storage calls this tick may charge, every attempt counted. Default:
-   * what the request ledger has left, or no limit without one.
+   * Storage calls this tick may charge, every attempt counted, the head
+   * GET included. Default: what the request ledger has left once the
+   * head GET has charged it, or no limit without one.
    */
   readonly budget?: number;
   /** The host's depth-0 limit; absent where the tree may grow past one leaf. */
@@ -390,15 +394,17 @@ export const prepareTreeFold = async (
   const config = input.config ?? DEFAULT_TREE_CONFIG;
   const collection = collectionOfPrefix(prefix);
   const opts = signal === undefined ? undefined : { signal };
-  const budget = Math.min(
-    input.budget ?? currentRequestLedger()?.storageRemaining() ?? UNBOUNDED,
-    UNBOUNDED,
-  );
 
   const head: TreeHead | null = await readTreeHead(storage, prefix, opts);
   if (head === null) {
     return { kind: "nothing-to-fold", floor: 0 };
   }
+  // Read after the head GET: until a storage call has charged it, the
+  // ledger reports no limit. What it has left is then net of the head
+  // GET, so only an explicit budget is charged for it below.
+  const ledgerRoom =
+    input.budget === undefined ? currentRequestLedger()?.storageRemaining() : undefined;
+  const budget = Math.max(0, Math.min(input.budget ?? ledgerRoom ?? UNBOUNDED, UNBOUNDED));
   const root = await readTreeRoot(storage, head, config, opts);
   const floor = head.json.log_seq_start;
   const refused = (stop: TreeFoldStop) => ({ kind: "refused" as const, floor, stop });
@@ -437,7 +443,7 @@ export const prepareTreeFold = async (
     },
     config,
     budget,
-    spent: GET_CHARGE * (root === null ? 1 : 2),
+    spent: (input.budget === undefined ? 0 : GET_CHARGE) + (root === null ? 0 : GET_CHARGE),
   });
   const totals = input.depthZero === undefined ? null : new DepthZeroTotals(root);
 
