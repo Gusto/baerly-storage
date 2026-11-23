@@ -25,7 +25,9 @@
  * (another collection, no `doc_id`, an `I`/`U` without `after`) is
  * accepted as a skip (`FoldPlanner.skip`). A surviving `I`/`U` must be a
  * valid stored document whose `_id` is its `doc_id`; a `D` whose `doc_id`
- * is outside the document-ID domain changes nothing.
+ * is outside the document-ID domain changes nothing. Entries supersede
+ * one another by their raw `doc_id`, as the read path's fold keys its
+ * rows, so the number `5` and the string `"5"` are different rows.
  *
  * **Invalid survivors.** An `I`/`U` that is not valid is not published,
  * but a later entry for the same `_id` may supersede it. The fold pins
@@ -178,11 +180,22 @@ interface WindowEntry {
   readonly bytes: number;
 }
 
-/** The planner change of one entry: a mutation, a skip, or an invalid survivor. */
+/**
+ * The planner change of one entry. `docId` is the raw `doc_id` the
+ * entry sets or deletes in the read path's fold, which keys rows by
+ * that value.
+ *
+ * - `change`: a mutation of the row `mutation.id`.
+ * - `skip`: the read path's fold skips the entry; it touches no row.
+ * - `drop`: a `D` whose `doc_id` is not a string. It supersedes earlier
+ *   entries for that `doc_id`, but no stored row can carry it.
+ * - `invalid`: an `I`/`U` that is not a valid survivor.
+ */
 type EntryChange =
   | { readonly kind: "change"; readonly mutation: TreeMutation }
   | { readonly kind: "skip" }
-  | { readonly kind: "invalid"; readonly id: string; readonly error: BaerlyError };
+  | { readonly kind: "drop"; readonly docId: unknown }
+  | { readonly kind: "invalid"; readonly docId: unknown; readonly error: BaerlyError };
 
 const passes = (check: () => void): boolean => {
   try {
@@ -209,18 +222,18 @@ const changeOf = ({ seq, entry }: WindowEntry, collection: string): EntryChange 
     return { kind: "skip" };
   }
   if (entry.op === "D") {
-    // A `D` outside the document-ID domain matches no row; the planner drops it.
+    // A `D` outside the document-ID domain matches no row; the planner
+    // drops a string one, and no row can carry any other.
     return typeof docId === "string"
       ? { kind: "change", mutation: { id: docId, doc: null } }
-      : { kind: "skip" };
+      : { kind: "drop", docId };
   }
   if ((entry.op !== "I" && entry.op !== "U") || entry.after === undefined) {
     return { kind: "skip" };
   }
-  const id = typeof docId === "string" ? docId : String(docId);
   const invalid = (state: string, remedy: string): EntryChange => ({
     kind: "invalid",
-    id,
+    docId,
     error: new BaerlyError(
       "InvalidResponse",
       `tree fold of collection ${JSON.stringify(collection)}: the log entry at seq ${seq} for doc_id ${JSON.stringify(docId)} ${state}, so the fold stops before it. ${remedy}`,
@@ -412,8 +425,8 @@ export const prepareTreeFold = async (
 
   const denseEnd = Math.max(floor, head.json.tail_hint, input.knownTail ?? 0);
   const entryBytes: number[] = [];
-  /** `_id`s whose latest entry so far is an invalid survivor. */
-  const pending = new Set<string>();
+  /** Raw `doc_id`s whose latest entry so far is an invalid survivor. */
+  const pending = new Set<unknown>();
   /** Whether the totals after the last accepted entry break the depth-0 byte ceiling. */
   let overBytes = false;
   /** While a checkpoint is pinned, the stop a fall back to it reports; its `seq` is the pinned end. */
@@ -451,11 +464,18 @@ export const prepareTreeFold = async (
     const change = changeOf(item, collection);
     if (change.kind === "invalid") {
       hold({ reason: "invalid-entry", seq: item.seq, error: change.error });
-      pending.add(change.id);
+      pending.add(change.docId);
       return skip(item);
     }
-    if (change.kind === "skip") {
-      return skip(item);
+    if (change.kind !== "change") {
+      if (!skip(item)) {
+        return false;
+      }
+      if (change.kind === "drop") {
+        pending.delete(change.docId);
+        release();
+      }
+      return true;
     }
     const { mutation } = change;
     if (totals !== null) {

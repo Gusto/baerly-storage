@@ -567,6 +567,49 @@ describe("invalid survivors and the look-ahead fallback", () => {
     }
   });
 
+  /** The bucket's tree holds exactly `rows`, at `floor`. */
+  const expectRows = async (b: Bucket, rows: DocumentData[], floor: number): Promise<void> => {
+    const report = checkTreeImage({
+      image: await captureTreeImage(b.storage, PREFIX),
+      prefix: PREFIX,
+      layout: SMALL_LAYOUT,
+      expectedRows: rows,
+      expectedFloor: floor,
+    });
+    expect(report.violations).toEqual([]);
+  };
+
+  test("a non-string doc_id is its own row: the string of it does not supersede it", async () => {
+    const b = openBucket();
+    await b.writer.commit([row("a", 1)]);
+    await b.writer.appendRaw({ op: "I", doc_id: 5 as unknown as string, after: { _id: 5 } });
+    await b.writer.commit([row("5", 2)]);
+    await expect(fold(b, SMALL)).resolves.toMatchObject({
+      kind: "published",
+      foldEnd: 1,
+      stop: { reason: "invalid-entry", seq: 1 },
+    });
+  });
+
+  test("a delete of a non-string doc_id supersedes its invalid insert and deletes no string row", async () => {
+    const b = openBucket();
+    await b.writer.commit([row("5", 1)]);
+    await b.writer.appendRaw({ op: "I", doc_id: 5 as unknown as string, after: { _id: 5 } });
+    await b.writer.appendRaw({ op: "D", doc_id: 5 as unknown as string });
+    await b.writer.commit([row("a", 2)]);
+    const outcome = await fold(b, SMALL);
+    expect(outcome).toMatchObject({ kind: "published", foldEnd: 4 });
+    expect(outcome.kind === "published" && outcome.stop).toBeFalsy();
+    await expectRows(
+      b,
+      [
+        { _id: "5", n: 1 },
+        { _id: "a", n: 2 },
+      ],
+      4,
+    );
+  });
+
   test("a delete supersedes an invalid insert under an _id outside the domain", async () => {
     const b = openBucket();
     await b.writer.appendRaw({ op: "I", doc_id: "a\ud800", after: { _id: "a\ud800" } });
