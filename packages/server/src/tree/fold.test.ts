@@ -855,6 +855,84 @@ describe("budgets", () => {
     return self;
   };
 
+  test.each([3, 4, 5])(
+    "budget %i captures the head without fetching an unaffordable root",
+    async (budget) => {
+      const faulty = worstCase(new MemoryStorage());
+      const storage = adapterRetry(faulty.storage);
+      const writer = new TreeWriter(storage, PREFIX);
+      await writer.commit([row("a", 1)]);
+      await foldTree({ storage, prefix: PREFIX });
+      await writer.commit([row("b", 2)]);
+      faulty.worst = true;
+      const before = faulty.attempts;
+      await expect(foldTree({ storage, prefix: PREFIX, budget })).resolves.toMatchObject({
+        kind: "refused",
+        floor: 1,
+        stop: { reason: "budget", seq: 1 },
+      });
+      expect(faulty.attempts - before).toBe(3);
+    },
+  );
+
+  test.each([1, 2])(
+    "a ledger with %i calls left refuses before the root GET",
+    async (remaining) => {
+      const bucket = new MemoryStorage();
+      const writer = new TreeWriter(bucket, PREFIX);
+      await writer.commit([row("a", 1)]);
+      await foldTree({ storage: bucket, prefix: PREFIX });
+      await writer.commit([row("b", 2)]);
+      const ledger = new RequestLedger({ internal: remaining, external: remaining });
+      const storage = counted(ledgeredStorage(bucket, "internal"));
+      await expect(
+        runWithContext(createObservabilityContext({ ledger }), () =>
+          foldTree({ storage, prefix: PREFIX }),
+        ),
+      ).resolves.toMatchObject({
+        kind: "refused",
+        floor: 1,
+        stop: { reason: "budget", seq: 1 },
+      });
+      expect(storage.calls).toEqual({ get: 1, put: 0, delete: 0 });
+      expect(ledger.charged.internal).toBe(1);
+    },
+  );
+
+  test.each([false, true])(
+    "a skip-only prefix stays within budget with existing tree %s",
+    async (existing) => {
+      for (let budget = 6; budget <= 36; budget += 3) {
+        const bucket = new MemoryStorage();
+        const faulty = worstCase(bucket);
+        const storage = adapterRetry(faulty.storage);
+        const writer = new TreeWriter(storage, PREFIX);
+        if (existing) {
+          await writer.commit([row("a", 1)]);
+          await foldTree({ storage, prefix: PREFIX });
+        }
+        await writer.appendRaw({ op: "I", doc_id: "skip" });
+        faulty.worst = true;
+        const before = faulty.attempts;
+        const outcome = await foldTree({ storage, prefix: PREFIX, budget });
+        const floor = existing ? 1 : 0;
+        if (budget === 36) {
+          expectPublished(outcome, floor + 1);
+        }
+        expect(faulty.attempts - before).toBeLessThanOrEqual(budget);
+        faulty.worst = false;
+        const report = checkTreeImage({
+          image: await captureTreeImage(storage, PREFIX),
+          prefix: PREFIX,
+          layout: TREE_LAYOUT,
+          expectedRows: existing ? [{ _id: "a", n: 1 }] : [],
+          expectedFloor: outcome.kind === "published" ? floor + 1 : floor,
+        });
+        expect(report.violations).toEqual([]);
+      }
+    },
+  );
+
   for (const [name, config] of [
     ["small layout", SMALL],
     ["production layout", PRODUCTION],
