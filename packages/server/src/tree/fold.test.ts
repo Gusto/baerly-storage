@@ -20,7 +20,8 @@
  *   it within the budget; otherwise the valid prefix before it publishes.
  *   No tick charges more storage calls than its budget.
  * - No tick charges more than its budget even when every retried call
- *   takes all its attempts.
+ *   takes all its attempts, and the default budget is the request
+ *   ledger's room, even when the fold is the invocation's first caller.
  * - A fold whose head changed under it reports `cas-lost`, deletes
  *   nothing, and a re-run folds correctly.
  * - An entry no fresh tick can fold is refused with a counted warning.
@@ -36,9 +37,11 @@ import {
   type LogEntry,
   logObjectKey,
   MemoryStorage,
+  RequestLedger,
   retryStorageCall,
   type Storage,
 } from "@baerly/protocol";
+import { ledgeredStorage } from "../../../../tests/fixtures/ledgered-storage.ts";
 import { TREE_TEST_CHUNK_SALT } from "../../../../tests/fixtures/tree-chunk-salt.ts";
 import { SMALL_LAYOUT } from "../../../../tests/fixtures/tree-fold-harness.ts";
 import { foldLogical } from "../../../../tests/fixtures/tree-oracle-logical.ts";
@@ -892,6 +895,31 @@ describe("budgets", () => {
       });
     }
   }
+
+  test.each([
+    ["the invocation's first storage caller", false],
+    ["after another storage call", true],
+  ])("the default budget is the ledger's room when the fold is %s", async (_, warm) => {
+    const bucket = new MemoryStorage();
+    await new TreeWriter(adapterRetry(bucket), PREFIX).commit(changes(20));
+    const ledger = new RequestLedger({ internal: 30, external: 30 });
+    const storage = ledgeredStorage(bucket, "internal");
+    const b: Bucket = {
+      bucket,
+      counted: counted(storage),
+      storage,
+      writer: new TreeWriter(storage, PREFIX),
+    };
+    const outcome = await runWithContext(createObservabilityContext({ ledger }), async () => {
+      if (warm) {
+        await storage.get("warm");
+      }
+      return fold(b, SMALL);
+    });
+    expect(outcome).toMatchObject({ kind: "published", stop: { reason: "budget" } });
+    expect(ledger.charged.internal).toBeLessThanOrEqual(30);
+    await judge(storage, SMALL_LAYOUT, outcome.kind === "published" ? outcome.foldEnd : 0);
+  });
 
   test("the head stamps the mean stored size of the folded entries", async () => {
     const b = openBucket();
