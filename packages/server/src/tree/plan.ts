@@ -1154,16 +1154,21 @@ export class FoldPlanner {
    * entry the read path's fold skips, or one a pinned look-ahead holds
    * back. It takes a checkpoint equal to the current one, so the fold
    * still ends after {@link FoldPlanner.accepted} entries. It issues no
-   * GET and leaves the charge as it is, so it fits whenever the planner
-   * still accepts changes. Returns whether it was accepted: after a
-   * rejection or a {@link FoldPlanner.rollback}, it is refused like every
-   * later change.
+   * GET, but the first accepted entry must reserve publication of the
+   * unchanged tree. Returns whether that reserve fits: after a rejection
+   * or a {@link FoldPlanner.rollback}, it is refused like every later
+   * change.
    */
   skip(): boolean {
     if (this.#rejected) {
       return false;
     }
-    const { state, reserve } = this.#current;
+    const { state } = this.#current;
+    const reserve = this.#reserveOf(state);
+    if (!this.#fits(0, reserve)) {
+      this.#rejected = true;
+      return false;
+    }
     this.#checkpoints.push({ state, reserve, fetched: this.#read.length });
     return true;
   }
