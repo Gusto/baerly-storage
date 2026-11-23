@@ -20,30 +20,33 @@
  * GETs, in small batches between the changes they deliver. The probe
  * reads one slot per batch, so it never charges a slot past the tail.
  *
- * **Changes.** Every entry in the window is added to the planner in seq
+ * **Changes.** Every entry in the window is given to the planner in seq
  * order, so `F = floor + accepted`. An entry the read path's fold skips
- * (another collection, no `doc_id`, an `I`/`U` without `after`) is added
- * as a no-op change. A surviving `I`/`U` must be a valid stored document
- * whose `_id` is its `doc_id`; a `D` whose `doc_id` is outside the
- * document-ID domain changes nothing.
+ * (another collection, no `doc_id`, an `I`/`U` without `after`) is
+ * accepted as a skip (`FoldPlanner.skip`). A surviving `I`/`U` must be a
+ * valid stored document whose `_id` is its `doc_id`; a `D` whose `doc_id`
+ * is outside the document-ID domain changes nothing.
  *
  * **Invalid survivors.** An `I`/`U` that is not valid is not published,
  * but a later entry for the same `_id` may supersede it. The fold pins
- * the planner's checkpoint before it, adds a no-op in its place and reads
- * on; once every such `_id` has a valid later entry the pin is released.
- * If the window or the budget runs out first, the planner rolls back to
- * the pinned checkpoint, so the fold publishes only the valid prefix
- * before the invalid entry and reports `InvalidResponse` for it. The
- * message names the seq and the `doc_id`, and the remedy for its kind.
+ * the planner's checkpoint before it, skips it and reads on; once every
+ * such `_id` has a valid later entry the pin is released. If the window
+ * or the budget runs out first, the planner rolls back to the pinned
+ * checkpoint, so the fold publishes only the valid prefix before the
+ * invalid entry and reports `InvalidResponse` for it. The message names
+ * the seq and the `doc_id`, and the remedy for its kind.
  *
  * **Budgets.** Every host charges the fold against its request ledger
  * through the planner: a change whose GETs or publication would not fit
  * ends the fold before its seq. A host with a depth-0 limit (Cloudflare
  * Free) also publishes only a root leaf within its document-byte and row
- * ceilings: a change that would take the rows past them ends the fold
- * before its seq, and a captured tree already past them folds nothing.
- * Both refuse the way the compactor's ceilings do, as a `deferred` stop
- * the caller reports.
+ * ceilings, as the compactor's ceilings do. A change that would add a
+ * row past the row ceiling ends the fold before its seq. On the byte
+ * axis the fold takes the longest prefix whose end state fits: an entry
+ * that takes the totals past it pins the checkpoint before it, and a
+ * later delete or shrink that brings them back within it releases the
+ * pin. A captured tree already past either ceiling folds nothing. Each
+ * refuses as a `deferred` stop the caller reports.
  *
  * **Stuck entry.** When not even the first entry of a fresh tick fits
  * the budget, the fold publishes nothing, keeps the floor and emits a
@@ -116,8 +119,9 @@ export type TreeFoldStop =
   | { readonly reason: "budget"; readonly seq: number }
   /**
    * A depth-0 ceiling: the captured tree is past it (`gate: "pre-fold"`),
-   * or the entry at `seq` would take the rows past it (`gate: "rebuild"`).
-   * `rows` and `bytes` are the totals that broke it.
+   * or the entry at `seq` would take the totals past it and no later
+   * entry in the window brought them back (`gate: "rebuild"`). `rows` and
+   * `bytes` are the totals that broke it.
    */
   | {
       readonly reason: "deferred";
@@ -174,14 +178,11 @@ interface WindowEntry {
   readonly bytes: number;
 }
 
-/** The planner change of one entry: a mutation, a no-op, or an invalid survivor. */
+/** The planner change of one entry: a mutation, a skip, or an invalid survivor. */
 type EntryChange =
   | { readonly kind: "change"; readonly mutation: TreeMutation }
   | { readonly kind: "skip" }
   | { readonly kind: "invalid"; readonly id: string; readonly error: BaerlyError };
-
-/** A change that changes nothing: a delete the planner drops, since `""` is no document ID. */
-const NO_OP: TreeMutation = { id: "", doc: null };
 
 const passes = (check: () => void): boolean => {
   try {
@@ -413,34 +414,60 @@ export const prepareTreeFold = async (
   const entryBytes: number[] = [];
   /** `_id`s whose latest entry so far is an invalid survivor. */
   const pending = new Set<string>();
-  let pinned: { readonly seq: number; readonly error: BaerlyError } | null = null;
+  /** Whether the totals after the last accepted entry break the depth-0 byte ceiling. */
+  let overBytes = false;
+  /** While a checkpoint is pinned, the stop a fall back to it reports; its `seq` is the pinned end. */
+  let pinned: TreeFoldStop | null = null;
   let stop: TreeFoldStop | undefined;
   let next = floor;
   let atTail = false;
+
+  /** Pin the checkpoint before `held.seq`, unless an earlier one is pinned. */
+  const hold = (held: TreeFoldStop): void => {
+    if (pinned === null) {
+      planner.pin();
+      pinned = held;
+    }
+  };
+  /** Release the pin once the current checkpoint may publish. */
+  const release = (): void => {
+    if (pinned !== null && pending.size === 0 && !overBytes) {
+      planner.unpin();
+      pinned = null;
+    }
+  };
+  /** Accept an entry that changes no row; returns whether the fold reads on. */
+  const skip = (item: WindowEntry): boolean => {
+    if (!planner.skip()) {
+      stop = { reason: "budget", seq: item.seq };
+      return false;
+    }
+    entryBytes.push(item.bytes);
+    return true;
+  };
 
   /** Add one entry's change; returns whether the fold reads on. */
   const addEntry = async (item: WindowEntry): Promise<boolean> => {
     const change = changeOf(item, collection);
     if (change.kind === "invalid") {
-      if (pinned === null) {
-        planner.pin();
-        pinned = { seq: item.seq, error: change.error };
-      }
+      hold({ reason: "invalid-entry", seq: item.seq, error: change.error });
       pending.add(change.id);
-      if (!(await planner.add(NO_OP))) {
-        stop = { reason: "budget", seq: item.seq };
-        return false;
-      }
-      entryBytes.push(item.bytes);
-      return true;
+      return skip(item);
     }
-    const mutation = change.kind === "change" ? change.mutation : NO_OP;
-    if (totals !== null && change.kind === "change") {
+    if (change.kind === "skip") {
+      return skip(item);
+    }
+    const { mutation } = change;
+    if (totals !== null) {
       const after = totals.after(mutation);
       const broken = depthZeroBreak(after.rows, after.bytes, input.depthZero!, config);
-      if (broken !== undefined) {
-        stop = { reason: "deferred", seq: item.seq, gate: "rebuild", dimension: broken, ...after };
+      const deferred = { reason: "deferred", seq: item.seq, gate: "rebuild", ...after } as const;
+      if (broken === "rows") {
+        stop = { ...deferred, dimension: broken };
         return false;
+      }
+      if (broken === "bytes") {
+        hold({ ...deferred, dimension: broken });
       }
     }
     if (!(await planner.add(mutation))) {
@@ -450,12 +477,13 @@ export const prepareTreeFold = async (
           : { reason: "budget", seq: item.seq };
       return false;
     }
-    totals?.apply(mutation);
-    entryBytes.push(item.bytes);
-    if (change.kind === "change" && pending.delete(mutation.id) && pending.size === 0) {
-      planner.unpin();
-      pinned = null;
+    if (totals !== null) {
+      totals.apply(mutation);
+      overBytes = depthZeroBreak(totals.rows, totals.bytes, input.depthZero!, config) === "bytes";
     }
+    entryBytes.push(item.bytes);
+    pending.delete(mutation.id);
+    release();
     return true;
   };
 
@@ -493,11 +521,11 @@ export const prepareTreeFold = async (
   }
 
   if (pinned !== null) {
-    // The window or the budget ran out before a valid entry superseded
-    // every invalid survivor: fall back to the prefix before the first.
-    const { seq, error } = pinned;
+    // The window or the budget ran out before every invalid survivor was
+    // superseded and the totals were back within the byte ceiling: fall
+    // back to the prefix before the first entry that pinned.
     planner.rollback();
-    stop = { reason: "invalid-entry", seq, error };
+    stop = pinned;
   }
   const foldEnd = floor + planner.accepted;
   const plan = planner.plan;
