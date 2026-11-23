@@ -13,7 +13,8 @@
  *   on the same canonical root.
  * - The fold end never passes a missing log slot: past the tail hint the
  *   first missing slot is the tail; below it, a missing slot is `Internal`.
- * - A depth-0 limit publishes only a root leaf within its ceilings.
+ * - A depth-0 limit publishes only a root leaf within its ceilings, and on
+ *   the byte axis folds the longest prefix whose end state fits.
  * - An invalid survivor is folded past only once a later entry supersedes
  *   it within the budget; otherwise the valid prefix before it publishes.
  *   No tick charges more storage calls than its budget.
@@ -27,6 +28,7 @@ import {
   casUpdateCurrentJson,
   type DocumentData,
   decodeJsonBytes,
+  encodeJsonBytes,
   type LogEntry,
   logObjectKey,
   MemoryStorage,
@@ -346,6 +348,114 @@ describe("depth-0 limit", () => {
       stop: { reason: "deferred", dimension: "bytes", seq: 1 },
     });
   });
+
+  test("the byte ceiling folds the longest prefix whose end state fits", async () => {
+    const limit = { depthZero: { ...FREE, maxBytes: 150 } };
+    const b = openBucket();
+    await b.writer.commit([
+      row("a", 1, "x".repeat(100)),
+      row("b", 2, "x".repeat(100)),
+      { id: "a", value: null },
+    ]);
+    const outcome = await fold(b, PRODUCTION, limit);
+    expect(outcome).toMatchObject({ kind: "published", foldEnd: 3 });
+    expect(outcome.kind === "published" && outcome.stop).toBeFalsy();
+    await judge(b.storage, TREE_LAYOUT, 3);
+  });
+
+  test("an entry past the byte ceiling holds the floor until a later delete brings it back", async () => {
+    const limit = { depthZero: { ...FREE, maxBytes: 150 } };
+    const b = openBucket();
+    await b.writer.commit([row("a", 1, "x".repeat(100)), row("b", 2, "x".repeat(100))]);
+    await expect(fold(b, PRODUCTION, limit)).resolves.toMatchObject({
+      kind: "published",
+      foldEnd: 1,
+    });
+    await expect(fold(b, PRODUCTION, limit)).resolves.toMatchObject({
+      kind: "refused",
+      floor: 1,
+      stop: { reason: "deferred", gate: "rebuild", dimension: "bytes", seq: 1 },
+    });
+    await b.writer.commit([{ id: "a", value: null }, row("c", 3)]);
+    expectPublished(await fold(b, PRODUCTION, limit), 4);
+    await judge(b.storage, TREE_LAYOUT, 4);
+  });
+
+  test("the byte ceiling counts the captured leaf's bytes", async () => {
+    const limit = { depthZero: { ...FREE, maxBytes: 150 } };
+    const b = openBucket();
+    await b.writer.commit([row("a", 1, "x".repeat(100))]);
+    expectPublished(await fold(b, PRODUCTION, limit), 1);
+    await b.writer.commit([row("b", 2, "x".repeat(100))]);
+    await expect(fold(b, PRODUCTION, limit)).resolves.toMatchObject({
+      kind: "refused",
+      floor: 1,
+      stop: { reason: "deferred", gate: "rebuild", dimension: "bytes", seq: 1 },
+    });
+  });
+
+  fcTest.prop(
+    {
+      maxBytes: fc.integer({ min: 40, max: 600 }),
+      maxRows: fc.integer({ min: 1, max: 6 }),
+      ticks: fc.array(
+        fc.array(
+          fc.record({
+            id: fc.constantFrom("a", "b", "c", "d", "e", "f"),
+            del: fc.boolean(),
+            pad: fc.integer({ min: 0, max: 150 }),
+          }),
+          { maxLength: 6 },
+        ),
+        { minLength: 1, maxLength: 5 },
+      ),
+    },
+    { numRuns: 60 },
+  )(
+    "the fold end is the compactor's: rows stop at the ceiling, bytes take the longest fitting prefix",
+    async ({ maxBytes, maxRows, ticks }) => {
+      const limit = { depthZero: { maxBytes, maxRows } };
+      const b = openBucket();
+      let n = 0;
+      let floor = 0;
+      for (const writes of ticks) {
+        await b.writer.commit(
+          writes.map(({ id, del, pad }) =>
+            del ? { id, value: null } : row(id, n++, "x".repeat(pad)),
+          ),
+        );
+        const entries = await logEntries(b.storage);
+        // Replay the folded prefix, then walk the window as the compactor does.
+        const rows = new Map<string, number>();
+        const apply = (entry: LogEntry): void => {
+          if (entry.op === "D") {
+            rows.delete(entry.doc_id);
+          } else {
+            rows.set(entry.doc_id, encodeJsonBytes(entry.after).byteLength);
+          }
+        };
+        entries.slice(0, floor).forEach(apply);
+        let expected = floor;
+        for (const [i, entry] of entries.slice(floor).entries()) {
+          if (entry.op !== "D" && !rows.has(entry.doc_id) && rows.size >= maxRows) {
+            break;
+          }
+          apply(entry);
+          if ([...rows.values()].reduce((sum, bytes) => sum + bytes, 0) <= maxBytes) {
+            expected = floor + i + 1;
+          }
+        }
+        const outcome = await fold(b, PRODUCTION, limit);
+        if (expected === floor) {
+          expect(outcome.kind).not.toBe("published");
+        } else {
+          expect(outcome).toMatchObject({ kind: "published", foldEnd: expected });
+          floor = expected;
+        }
+        await judge(b.storage, TREE_LAYOUT, floor);
+      }
+    },
+  );
 
   test("a captured tree past the limit folds nothing", async () => {
     const b = openBucket();
