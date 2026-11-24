@@ -31,7 +31,12 @@
  * record can name only its own attempt's fresh nodes; no `superseded`
  * entry carries the record's attempt.
  */
-import { BaerlyError, encodeJsonBytes, sha256Hex } from "@baerly/protocol";
+import {
+  BaerlyError,
+  encodeJsonBytes,
+  sha256Hex,
+  unsupportedSchemaVersionMessage,
+} from "@baerly/protocol";
 import {
   TREE_FOLD_RECORD_FORMAT,
   TREE_FOLD_RECORD_SCHEMA_VERSION,
@@ -39,7 +44,13 @@ import {
   TREE_GC_RECORD_MAX_KEYS,
 } from "./constants.ts";
 import type { TreeHead } from "./head.ts";
-import { isTreeAttempt, isTreeSha256, parseTreeNodeKey, treeRecordKey } from "./key.ts";
+import {
+  isTreeAttempt,
+  isTreeSha256,
+  parseTreeNodeKey,
+  parseTreeRecordKey,
+  treeRecordKey,
+} from "./key.ts";
 import type { DecodedTreeNode, TreeChildEntry } from "./node-codec.ts";
 
 /** The head a fold record's attempt captured, and will CAS against. */
@@ -262,4 +273,112 @@ export const sealFoldRecord = async (
   }
   const sha256 = await sha256Hex(bytes);
   return { key: treeRecordKey(prefix, base.floor, attempt, sha256), bytes, sha256 };
+};
+
+const fatalUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isStringOrNull = (value: unknown): value is string | null =>
+  value === null || typeof value === "string";
+
+/**
+ * Strictly decode the fold record `bytes` read from `key`, a record key
+ * under `prefix`: the body ceiling, the key's hash against the exact
+ * bytes, fatal UTF-8, JSON, every field and rule `sealFoldRecord`
+ * enforces, and byte equality with the canonical re-encoding. So a
+ * decoded record is exactly what some publication sealed at that key.
+ *
+ * @throws BaerlyError code="InvalidResponse" — any check fails; the
+ *   message names the key and the failed check.
+ */
+export const decodeFoldRecord = async (
+  prefix: string,
+  key: string,
+  bytes: Uint8Array,
+): Promise<FoldRecord> => {
+  const fail: (detail: string) => never = (detail) => {
+    throw new BaerlyError("InvalidResponse", `tree fold record ${JSON.stringify(key)}: ${detail}`);
+  };
+  const parts = parseTreeRecordKey(prefix, key);
+  if (parts === null) {
+    fail("the key is not a fold-record key of this collection");
+  }
+  if (bytes.byteLength > TREE_GC_RECORD_MAX_BODY_BYTES) {
+    fail(`the body is ${bytes.byteLength} bytes, over its ceiling`);
+  }
+  if ((await sha256Hex(bytes)) !== parts.sha256) {
+    fail("the body does not hash to the key");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(fatalUtf8.decode(bytes));
+  } catch {
+    fail("the body is not UTF-8 JSON");
+  }
+  if (!isPlainObject(value)) {
+    fail("the body is not an object");
+  }
+  if (value["format"] !== TREE_FOLD_RECORD_FORMAT) {
+    fail("the format tag is not a fold record's");
+  }
+  if (value["schema_version"] !== TREE_FOLD_RECORD_SCHEMA_VERSION) {
+    fail(
+      unsupportedSchemaVersionMessage(
+        "fold record",
+        typeof value["schema_version"] === "number" ? value["schema_version"] : "a non-number",
+        TREE_FOLD_RECORD_SCHEMA_VERSION,
+      ),
+    );
+  }
+  const base = value["base"];
+  const result = value["result"];
+  const fresh = value["fresh"];
+  const superseded = value["superseded"];
+  if (
+    typeof value["attempt"] !== "string" ||
+    !isPlainObject(base) ||
+    typeof base["floor"] !== "number" ||
+    !isStringOrNull(base["root"]) ||
+    !isStringOrNull(base["attempt"]) ||
+    !isStringOrNull(base["generation"]) ||
+    !isPlainObject(result) ||
+    typeof result["floor"] !== "number" ||
+    !isStringOrNull(result["root"]) ||
+    !Array.isArray(fresh) ||
+    !fresh.every((entry) => typeof entry === "string") ||
+    !Array.isArray(superseded) ||
+    !superseded.every((entry) => typeof entry === "string")
+  ) {
+    fail("the body does not have the fields of a fold record");
+  }
+  const record: FoldRecord = {
+    attempt: value["attempt"],
+    base: {
+      floor: base["floor"],
+      root: base["root"],
+      attempt: base["attempt"],
+      generation: base["generation"],
+    },
+    result: { floor: result["floor"], root: result["root"] },
+    fresh: fresh as string[],
+    superseded: superseded as string[],
+  };
+  let sealed: SealedFoldRecord;
+  try {
+    sealed = await sealFoldRecord(prefix, record);
+  } catch (error) {
+    return fail(`the record breaks a record rule: ${(error as Error).message}`);
+  }
+  if (sealed.key !== key) {
+    fail("the body's attempt or base floor is not the key's");
+  }
+  if (
+    sealed.bytes.byteLength !== bytes.byteLength ||
+    !sealed.bytes.every((b, i) => b === bytes[i])
+  ) {
+    fail("the body is not the canonical encoding of its value");
+  }
+  return record;
 };
