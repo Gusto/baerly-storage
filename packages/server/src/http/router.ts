@@ -119,6 +119,16 @@ export function createRouter(options: CreateRouterOptions): Hono {
   // `@baerly/server`. Either way, one unit-of-work → exactly one
   // canonical line.
 
+  // Every `/v1/*` response, success or error, is `no-store`. An
+  // `Authorization` header keeps shared caches off a response by
+  // default, but a cookie-authenticated session does not, and one
+  // user's data must never be served to another. Set before `next()`
+  // so the header rides along on `onError` and not-found responses.
+  app.use("/v1/*", async (c, next) => {
+    c.header("Cache-Control", "no-store");
+    await next();
+  });
+
   // Read one — GET /v1/c/:collection/:id
   app.get("/v1/c/:collection/:id", async (c) => {
     const { collection, id } = c.req.param();

@@ -853,3 +853,41 @@ describe("request Content-Type", () => {
     expect(body.error.message).toBe("POST bodies must be sent as application/json; got text/plain");
   });
 });
+
+describe("Cache-Control on /v1/*", () => {
+  test("a success response is no-store", async () => {
+    const app = buildApp();
+    const res = await app.request("/v1/c/notes");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  test("a mapped error response is no-store", async () => {
+    const app = buildApp();
+    const res = await app.request("/v1/c/notes/missing-id");
+    expect(res.status).toBe(404);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  test("an unmatched /v1 path is no-store", async () => {
+    const app = buildApp();
+    const res = await app.request("/v1/nope");
+    expect(res.status).toBe(404);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  test("a /v1/since response is no-store", async () => {
+    const db = Db.create({ storage: new MemoryStorage(), app: "router-test", tenant: "t1" });
+    const app = createRouter({ db, sinceTimeoutMs: 50, sincePollIntervalMs: 10 });
+    const res = await app.request("/v1/since?collection=notes&cursor=");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  test("a /v1/since error response is no-store", async () => {
+    const app = buildApp();
+    const res = await app.request("/v1/since?collection=..");
+    expect(res.status).toBe(400);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+});
