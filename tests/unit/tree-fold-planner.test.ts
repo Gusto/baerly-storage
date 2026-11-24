@@ -640,6 +640,91 @@ describe("checkpoints and the look-ahead fallback", () => {
 // Prefix split
 // ---------------------------------------------------------------------
 
+describe("the publication's fresh nodes by level", () => {
+  /** Fresh nodes publishing `plan` creates, by level from the leaves up, as the publication groups them. */
+  const levelsOf = async (plan: TreeFoldPlan | null, floor: number): Promise<number[]> => {
+    if (plan === null) {
+      return [];
+    }
+    const sealed = await sealTree(plan.tree, {
+      prefix: FOLD_PREFIX,
+      attempt: "f".repeat(32),
+      floor,
+    });
+    return sealed.levels.map((level) => level.length);
+  };
+
+  fcTest.prop(
+    {
+      layout: fc.constantFrom(SMALL_LAYOUT, SMALL_DEPTH_ZERO),
+      base: fc.uniqueArray(smallIds, { maxLength: 80 }),
+      ticks: ticksOver(smallIds, fc.integer({ min: 11, max: 60 }), { ticks: 1, perTick: 30 }),
+    },
+    { numRuns: 60 },
+  )(
+    "after every change, the planner counts each level's fresh nodes as the publication creates them, root included",
+    async ({ layout, base, ticks }) => {
+      const config = configOf(layout);
+      const run = await FoldRun.open(config);
+      if (base.length > 0) {
+        await run.fold(base.map((id) => ({ id, value: sizedRow(id, 30, "a") })));
+      }
+      const planner = new FoldPlanner({
+        prefix: FOLD_PREFIX,
+        root: await run.captured(),
+        chunkKey,
+        get: (key) => Promise.resolve(run.store.get(key) ?? null),
+        config,
+        budget: UNBOUNDED,
+        spent: FOLD_SPENT_BEFORE_PLANNING,
+      });
+      for (const { id, value } of ticks[0]!) {
+        await expect(
+          planner.add({ id, doc: value === null ? null : canonicalDocument(value, "row") }),
+        ).resolves.toBe(true);
+        expect(planner.publicationNodes).toEqual(
+          await levelsOf(planner.plan, run.floor + planner.accepted),
+        );
+      }
+    },
+  );
+
+  test("while pinned, each level counts the larger of the pinned plan and the current one", async () => {
+    const config = configOf(SMALL_LAYOUT);
+    const ids = Array.from({ length: 120 }, (_, i) => `r${String(i).padStart(3, "0")}`);
+    const run = await FoldRun.open(config);
+    await run.fold(ids.map((id) => ({ id, value: sizedRow(id, 30, "a") })));
+    const planner = new FoldPlanner({
+      prefix: FOLD_PREFIX,
+      root: await run.captured(),
+      chunkKey,
+      get: (key) => Promise.resolve(run.store.get(key) ?? null),
+      config,
+      budget: UNBOUNDED,
+      spent: FOLD_SPENT_BEFORE_PLANNING,
+    });
+    // Scattered updates rewrite many leaves; the pin holds that plan.
+    for (let i = 0; i < 30; i++) {
+      const id = ids[(i * 37) % ids.length]!;
+      await expect(
+        planner.add({ id, doc: canonicalDocument(sizedRow(id, 30, "b"), "row") }),
+      ).resolves.toBe(true);
+    }
+    const pinned = await levelsOf(planner.plan, run.floor + planner.accepted);
+    expect(pinned[0]).toBeGreaterThan(1);
+    planner.pin();
+    // Deleting every row leaves a current plan with no fresh node at all.
+    for (const id of ids) {
+      await expect(planner.add({ id, doc: null })).resolves.toBe(true);
+    }
+    const current = await levelsOf(planner.plan, run.floor + planner.accepted);
+    expect(current).toEqual([]);
+    expect(planner.publicationNodes).toEqual(pinned);
+    planner.rollback();
+    expect(planner.publicationNodes).toEqual(pinned);
+  });
+});
+
 describe("the fold record's key cap", () => {
   const base: RowChange[] = Array.from({ length: 20 }, (_, i) => ({
     id: `k${i}`,

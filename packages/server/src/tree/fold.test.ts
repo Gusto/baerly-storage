@@ -38,6 +38,7 @@ import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import {
   BaerlyError,
+  CF_MAX_CONCURRENT_STORAGE_CALLS,
   casUpdateCurrentJson,
   type DocumentData,
   decodeJsonBytes,
@@ -65,9 +66,12 @@ import { TreeWriter, type TreeWrite } from "../../../../tests/fixtures/tree-writ
 import { foldLogEntriesOnto } from "../log-walk.ts";
 import { createObservabilityContext, runWithContext } from "../observability/context.ts";
 import { RequestScopedMetricsRecorder } from "../observability/recorder.ts";
+import { sealTree } from "./build.ts";
+import { TREE_FOLD_PARALLEL_CALLS } from "./constants.ts";
 import { foldTree, prepareTreeFold, type TreeFoldInput, type TreeFoldOutcome } from "./fold.ts";
 import { readTreeHead, treeHeadKey } from "./head.ts";
 import { createTreeConfig, TREE_LAYOUT, type TreeConfig, type TreeLayout } from "./layout.ts";
+import type { TreeFoldPlan } from "./plan.ts";
 
 const PREFIX = "app/helpdesk/tenant/acme/manifests/tickets";
 const COLLECTION = "tickets";
@@ -1160,6 +1164,140 @@ describe("tick budget", () => {
       expect(seen.max).toBe(width);
       await judge(b.storage, SMALL_LAYOUT, TAIL);
     }
+  });
+
+  test("each host profile fixes its fold width: 6 on Workers, where a seventh call queues, and 16 on Node", () => {
+    expect(CF_MAX_CONCURRENT_STORAGE_CALLS).toBe(6);
+    expect(MAINTENANCE_PROFILE_CF_FREE.foldParallelCalls).toBe(6);
+    expect(MAINTENANCE_PROFILE_CF_PAID.foldParallelCalls).toBe(6);
+    expect(MAINTENANCE_PROFILE_NODE.foldParallelCalls).toBe(16);
+    expect(MAINTENANCE_PROFILE_CF_FREE.foldParallelCalls).toBe(CF_MAX_CONCURRENT_STORAGE_CALLS);
+    expect(MAINTENANCE_PROFILE_CF_PAID.foldParallelCalls).toBe(CF_MAX_CONCURRENT_STORAGE_CALLS);
+  });
+
+  /** Only the head GET takes `headMs`, so the slowest call the tick times is it. */
+  const slowHead = (b: Bucket, headMs: number) =>
+    virtualClock(b.storage, (op, key) =>
+      op === "get" && key === treeHeadKey(PREFIX) ? headMs : 0,
+    );
+
+  /**
+   * Rounds of calls publishing `plan` takes: the fold record, each level
+   * of fresh nodes `width` at a time as the publication groups them, the
+   * head CAS and its fate re-read.
+   */
+  const roundsOf = async (plan: TreeFoldPlan, floor: number, width: number): Promise<number> => {
+    const sealed = await sealTree(plan.tree, { prefix: PREFIX, attempt: "f".repeat(32), floor });
+    return sealed.levels.reduce((rounds, level) => rounds + Math.ceil(level.length / width), 3);
+  };
+
+  test("a single-leaf plan stops at a budget of exactly its elapsed time plus four rounds: record, leaf, head CAS, re-read", async () => {
+    const headMs = 100;
+    for (const [budget, foldEnd] of [
+      [headMs + 4 * headMs, 1],
+      [headMs + 4 * headMs + 1, 5],
+    ] as const) {
+      const b = openBucket();
+      await b.writer.commit(changes(5));
+      const outcome = await fold(b, PRODUCTION, {
+        ...slowHead(b, headMs),
+        tickBudgetMs: budget,
+        knownTail: 5,
+      });
+      expect(outcome, `budget ${budget}`).toMatchObject({ kind: "published", foldEnd });
+      if (foldEnd < 5) {
+        expect(outcome).toMatchObject({ stop: { reason: "tick-budget", seq: foldEnd } });
+      }
+      await judge(b.storage, PRODUCTION.layout, foldEnd);
+    }
+  });
+
+  test("a branch plan stops at a budget of exactly its elapsed time plus its publication's rounds", async () => {
+    const headMs = 100;
+    const width = TREE_FOLD_PARALLEL_CALLS;
+    const probe = await appendHeavy();
+    // A spent budget plans exactly one entry: the plan to measure.
+    const one = await prepareTreeFold({
+      storage: probe.storage,
+      prefix: PREFIX,
+      config: SMALL,
+      knownTail: TAIL,
+      tickBudgetMs: 0,
+    });
+    expect(one).toMatchObject({ kind: "prepared", foldEnd: BASE + 1 });
+    if (one.kind !== "prepared") {
+      return;
+    }
+    expect(one.plan.tree?.root.level).toBeGreaterThan(0);
+    const rounds = await roundsOf(one.plan, BASE + 1, width);
+    for (const extra of [0, 1]) {
+      const b = await appendHeavy();
+      const outcome = await fold(b, SMALL, {
+        ...slowHead(b, headMs),
+        tickBudgetMs: headMs + rounds * headMs + extra,
+        parallelCalls: width,
+        knownTail: TAIL,
+      });
+      expect(outcome.kind).toBe("published");
+      if (outcome.kind !== "published") {
+        return;
+      }
+      if (extra === 0) {
+        expect(outcome).toMatchObject({
+          foldEnd: BASE + 1,
+          stop: { reason: "tick-budget", seq: BASE + 1 },
+        });
+      } else {
+        expect(outcome.foldEnd).toBeGreaterThan(BASE + 1);
+      }
+      await judge(b.storage, SMALL_LAYOUT, outcome.foldEnd);
+    }
+  });
+
+  test("the estimate times the root GET: a slow root under a fast head still stops the tick early", async () => {
+    const b = await appendHeavy();
+    const rootKey = (await readTreeHead(b.storage, PREFIX))!.root;
+    const clock = virtualClock(b.storage, (op, key) => (op === "get" && key === rootKey ? 100 : 0));
+    const outcome = await fold(b, SMALL, { ...clock, tickBudgetMs: 2_000, knownTail: TAIL });
+    expect(outcome).toMatchObject({ kind: "published", stop: { reason: "tick-budget" } });
+    expect(outcome.kind === "published" && outcome.foldEnd).toBeLessThan(TAIL);
+    expect(clock.now()).toBeLessThanOrEqual(2_000);
+  });
+
+  test("the estimate times node GETs: slow node reads under a fast head and root still stop the tick early", async () => {
+    const b = await appendHeavy();
+    const rootKey = (await readTreeHead(b.storage, PREFIX))!.root;
+    let slowReads = 0;
+    const clock = virtualClock(b.storage, (op, key) => {
+      if (op === "get" && isNodeKey(key) && key !== rootKey) {
+        slowReads += 1;
+        return 100;
+      }
+      return 0;
+    });
+    const outcome = await fold(b, SMALL, { ...clock, tickBudgetMs: 2_000, knownTail: TAIL });
+    expect(slowReads).toBeGreaterThan(0);
+    expect(outcome).toMatchObject({ kind: "published", stop: { reason: "tick-budget" } });
+    expect(outcome.kind === "published" && outcome.foldEnd).toBeLessThan(TAIL);
+    expect(clock.now()).toBeLessThanOrEqual(2_000);
+  });
+
+  test("a tick past its budget issues no further log reads", async () => {
+    const b = openBucket();
+    await b.writer.commit(changes(5));
+    let logReads = 0;
+    const storage: Storage = {
+      ...b.storage,
+      get: (key, opts) => {
+        logReads += key.startsWith(LOG_PREFIX) ? 1 : 0;
+        return b.storage.get(key, opts);
+      },
+    };
+    await expect(fold(b, SMALL, { storage, tickBudgetMs: 0, knownTail: 5 })).resolves.toMatchObject(
+      { kind: "published", foldEnd: 1, stop: { reason: "tick-budget" } },
+    );
+    // The first entry is read before any check can stop the fold; nothing after it is.
+    expect(logReads).toBe(1);
   });
 });
 
