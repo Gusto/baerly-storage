@@ -1117,6 +1117,36 @@ describe("state and clock", () => {
     await expect(bucket.tick()).resolves.toMatchObject({ result: { probed: true } });
   });
 
+  test("between probes a tick lists and deletes nothing, even with work due; the next probe does it", async () => {
+    const bucket = await GcBucket.seeded();
+    await bucket.tick();
+    const loser = await bucket.prepare([["k04", 44]]);
+    await bucket.fold([["k15", 55]]);
+    const lost = await bucket.publish(loser);
+    expect(lost.kind).toBe("cas-lost");
+    const fresh = await freshOf(bucket, lost.attempt);
+    expect(fresh.length).toBeGreaterThan(0);
+    const listed: string[] = [];
+    bucket.onList.set(GC_RECORDS, async () => {
+      listed.push(GC_RECORDS);
+    });
+    bucket.onList.set(GC_NODES, async () => {
+      listed.push(GC_NODES);
+    });
+    const kept = [...(await bucket.keys(GC_NODES)), ...(await bucket.keys(GC_RECORDS))];
+    bucket.advance(0.5);
+    const paced = await bucket.tick();
+    expect(paced.result).toMatchObject({ outcome: "paced", probed: false, deleted: [] });
+    expect(listed).toEqual([]);
+    await expect(bucket.keys(GC_NODES)).resolves.toEqual(expect.arrayContaining(fresh));
+    expect([...(await bucket.keys(GC_NODES)), ...(await bucket.keys(GC_RECORDS))]).toEqual(kept);
+    bucket.advance(0.6);
+    const { result } = await bucket.tick();
+    expect(result).toMatchObject({ outcome: "collected", probed: true });
+    expect(result.deleted).toEqual(expect.arrayContaining([...fresh, lost.record]));
+    await expect(bucket.violations()).resolves.toEqual([]);
+  });
+
   test("a malformed state is replaced by the empty state, and that is the tick's only write", async () => {
     const bucket = await GcBucket.seeded();
     await bucket.fold(MIXED);
