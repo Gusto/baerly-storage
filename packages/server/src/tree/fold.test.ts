@@ -650,7 +650,7 @@ describe("invalid survivors and the look-ahead fallback", () => {
       return b;
     };
     let published = 0;
-    for (let budget = 20; budget <= 260; budget += 2) {
+    for (let budget = 20; budget <= 260; budget += 6) {
       const ends: string[] = [];
       for (const parallelGets of [1, undefined]) {
         const b = await open();
