@@ -43,12 +43,16 @@
  * time, or the last one between probes. A probe that reports no server
  * time stamps nothing and makes nothing due.
  *
- * **Tick.** State GET; in a probe tick, the sweep LIST; head GET; root
- * GET; record LIST; resolve closed floors; the probe write; checks and
- * DELETEs (active losers' fresh nodes, due winners' superseded nodes,
- * due sweep marks); the sweep's notes and stamps; the state write, only
- * when something changed; then `retireLogRange`. Candidate checks per
- * tick are sized from the request ledger.
+ * **Tick.** Only a probe tick collects, so GC's LISTs and DELETEs run
+ * at most once per probe interval, whatever the write rate. Any other
+ * tick is a state GET and then `retireLogRange`. A probe tick: state
+ * GET; the sweep LIST; head GET; root GET; record LIST; resolve closed
+ * floors; the probe write; checks and DELETEs (active losers' fresh
+ * nodes, due winners' superseded nodes, due sweep marks); the sweep's
+ * notes and stamps; the state write, only when something changed; then
+ * `retireLogRange`. Every DELETE follows that tick's record LIST, which
+ * the identity checks are drawn from. Candidate checks per tick are
+ * sized from the request ledger.
  */
 import {
   BaerlyError,
@@ -81,7 +85,7 @@ import {
   type TreeGcState,
   type TreeGcWork,
 } from "./gc-state.ts";
-import { readTreeHead, readTreeRoot, type TreeHead } from "./head.ts";
+import { readTreeHead, readTreeRoot, treeHeadKey, type TreeHead } from "./head.ts";
 import {
   collectionOfPrefix,
   parseTreeNodeKey,
@@ -219,10 +223,11 @@ export interface TreeGcTickResult {
    * - `no-head`: the collection has no head yet;
    * - `reset`: the state was malformed or of another head history, and
    *   was replaced by the empty state;
+   * - `paced`: no probe was due, so the tick only retired the log;
    * - `budget`: the request ledger had no room for one candidate check;
    * - `conflict`: the probe write lost, so the tick deleted nothing.
    */
-  readonly outcome: "collected" | "no-head" | "reset" | "budget" | "conflict";
+  readonly outcome: "collected" | "paced" | "no-head" | "reset" | "budget" | "conflict";
   /** Every key the tick deleted, nodes and records, in order. */
   readonly deleted: readonly string[];
   /** The probe's server time, when the tick probed and storage reported one. */
@@ -335,8 +340,28 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
   const e0 = got?.etag ?? null;
   const read = decoded?.kind === "state" ? decoded.state : null;
 
-  // 2. The sweep page, listed before the head in a probe tick.
+  const retire = async (): Promise<void> => {
+    try {
+      await retireLogRange(storage, treeHeadKey(prefix), {
+        ...(signal !== undefined && { signal }),
+        ...(input.retireWindow !== undefined && { window: input.retireWindow }),
+      });
+    } catch (error) {
+      if (!isWriteConflict(error)) {
+        throw error;
+      }
+    }
+  };
+
+  // 2. Pacing: only a probe tick collects. A malformed state goes on to
+  // be reset, which needs the head.
   const probe = decoded?.kind !== "malformed" && probeIsDue(read?.probed_local_at ?? null, local);
+  if (!probe && decoded?.kind !== "malformed") {
+    await retire();
+    return end("paced");
+  }
+
+  // The sweep page, listed before the head unless a mutant moves it.
   const listed: string[] = [];
   const listSweep = async (cursor: string | null): Promise<void> => {
     for await (const entry of storage.list(nodePrefix, {
@@ -600,37 +625,33 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
     }
   }
 
-  // 7. The probe.
+  // 7. The probe. Past the reset, every tick here probes.
   let etag = e0;
-  let written: TreeGcState | null = null;
   let serverTime: Date | undefined;
-  if (probe) {
-    const probed: TreeGcState = {
-      ...base,
-      ticks: base.ticks + 1,
-      probed_local_at: local.toISOString(),
-    };
-    try {
-      const result = await putState(probed, e0);
-      etag = result.etag;
-      serverTime = steps.now(result.serverDate, local);
-    } catch (error) {
-      if (!isUnknownFate(error)) {
-        throw error;
-      }
-      return end("conflict", { deleted, probed: true, candidates });
+  const probed: TreeGcState = {
+    ...base,
+    ticks: base.ticks + 1,
+    probed_local_at: local.toISOString(),
+  };
+  try {
+    const result = await putState(probed, e0);
+    etag = result.etag;
+    serverTime = steps.now(result.serverDate, local);
+  } catch (error) {
+    if (!isUnknownFate(error)) {
+      throw error;
     }
-    written = probed;
-    if (serverTime === undefined) {
-      counter("no_server_time_total");
-      warn(
-        "tree_gc_no_server_time",
-        { collection },
-        `tree GC is not reclaiming replaced nodes of collection ${JSON.stringify(collection)}: storage reported no server time.`,
-      );
-    }
+    return end("conflict", { deleted, probed: true, candidates });
   }
-  const now = probe ? serverTime : lastClock;
+  if (serverTime === undefined) {
+    counter("no_server_time_total");
+    warn(
+      "tree_gc_no_server_time",
+      { collection },
+      `tree GC is not reclaiming replaced nodes of collection ${JSON.stringify(collection)}: storage reported no server time.`,
+    );
+  }
+  const now = serverTime;
   if (serverTime !== undefined) {
     for (const [i, entry] of work.entries()) {
       if (entry.due_at === null) {
@@ -816,90 +837,84 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
 
   // 9. The sweep page: note new marks, stamp noted ones a later floor closed.
   let cursor = base.sweep.cursor;
-  if (probe) {
-    const marked = new Set(marks.map((mark) => mark.key));
-    let notes = 0;
-    /** How many listed keys this tick examined; the cursor moves past only those. */
-    let examined = 0;
-    for (const key of listed) {
-      if (halted || notes >= noteBudget) {
-        break;
-      }
-      examined += 1;
-      const parts = steps.parsesKey(prefix, key);
-      if (parts === null) {
-        counter("unknown_key_total");
-        continue;
-      }
-      const tail = key.slice(nodePrefix.length);
-      if (
-        marked.has(tail) ||
-        marks.length >= TREE_GC_MAX_SWEEP_MARKS ||
-        !deletable(parts.attempt)
-      ) {
-        continue;
-      }
-      notes += 1;
-      const found = await steps.sweepIsMember(key, view, "note");
-      if (found === "corrupt") {
-        // Counted and warned; a sweep candidate GC cannot authenticate stays.
-        await settle(key, found, "sweep", parts.attempt);
-      } else if (found === "path-unreadable") {
-        counter("path_unreadable_total");
-        halted = true;
-      } else if (found === "non-member") {
-        const stamp = steps.startsAge("note") && serverTime !== undefined;
-        marks.push({
-          key: tail,
-          floor: h,
-          due_at: stamp ? addMinutes(serverTime!, TREE_GC_SWEEP_AGE_MINUTES) : null,
-        });
-        marked.add(tail);
-      }
+  const marked = new Set(marks.map((mark) => mark.key));
+  let notes = 0;
+  /** How many listed keys this tick examined; the cursor moves past only those. */
+  let examined = 0;
+  for (const key of listed) {
+    if (halted || notes >= noteBudget) {
+      break;
     }
-    const stamped: TreeGcMark[] = [];
-    for (const mark of marks) {
-      if (
-        halted ||
-        mark.due_at !== null ||
-        serverTime === undefined ||
-        !steps.startsAge("stamp") ||
-        !steps.passesFloorGate(mark.floor, h) ||
-        !deletable(mark.key.slice(0, 32)) ||
-        budget <= 0
-      ) {
-        stamped.push(mark);
-        continue;
-      }
-      budget -= 1;
-      const found = await steps.sweepIsMember(`${nodePrefix}${mark.key}`, view, "stamp");
-      if (found === "non-member") {
-        stamped.push({ ...mark, due_at: addMinutes(serverTime, TREE_GC_SWEEP_AGE_MINUTES) });
-      } else if (found === "path-unreadable") {
-        counter("path_unreadable_total");
-        halted = true;
-        stamped.push(mark);
-      } else if (found === "deferred") {
-        stamped.push(mark);
-      } else if (found === "corrupt") {
-        await settle(`${nodePrefix}${mark.key}`, found, "sweep", mark.key.slice(0, 32));
-      }
-      // A member, a gone node or a corrupt one leaves the sweep's list.
+    examined += 1;
+    const parts = steps.parsesKey(prefix, key);
+    if (parts === null) {
+      counter("unknown_key_total");
+      continue;
     }
-    marks = stamped;
-    if (examined < listed.length) {
-      cursor = examined === 0 ? cursor : listed[examined - 1]!;
-    } else {
-      cursor = listed.length < TREE_GC_SWEEP_LIST_KEYS ? null : listed.at(-1)!;
+    const tail = key.slice(nodePrefix.length);
+    if (marked.has(tail) || marks.length >= TREE_GC_MAX_SWEEP_MARKS || !deletable(parts.attempt)) {
+      continue;
     }
+    notes += 1;
+    const found = await steps.sweepIsMember(key, view, "note");
+    if (found === "corrupt") {
+      // Counted and warned; a sweep candidate GC cannot authenticate stays.
+      await settle(key, found, "sweep", parts.attempt);
+    } else if (found === "path-unreadable") {
+      counter("path_unreadable_total");
+      halted = true;
+    } else if (found === "non-member") {
+      const stamp = steps.startsAge("note") && serverTime !== undefined;
+      marks.push({
+        key: tail,
+        floor: h,
+        due_at: stamp ? addMinutes(serverTime!, TREE_GC_SWEEP_AGE_MINUTES) : null,
+      });
+      marked.add(tail);
+    }
+  }
+  const stamped: TreeGcMark[] = [];
+  for (const mark of marks) {
+    if (
+      halted ||
+      mark.due_at !== null ||
+      serverTime === undefined ||
+      !steps.startsAge("stamp") ||
+      !steps.passesFloorGate(mark.floor, h) ||
+      !deletable(mark.key.slice(0, 32)) ||
+      budget <= 0
+    ) {
+      stamped.push(mark);
+      continue;
+    }
+    budget -= 1;
+    const found = await steps.sweepIsMember(`${nodePrefix}${mark.key}`, view, "stamp");
+    if (found === "non-member") {
+      stamped.push({ ...mark, due_at: addMinutes(serverTime, TREE_GC_SWEEP_AGE_MINUTES) });
+    } else if (found === "path-unreadable") {
+      counter("path_unreadable_total");
+      halted = true;
+      stamped.push(mark);
+    } else if (found === "deferred") {
+      stamped.push(mark);
+    } else if (found === "corrupt") {
+      await settle(`${nodePrefix}${mark.key}`, found, "sweep", mark.key.slice(0, 32));
+    }
+    // A member, a gone node or a corrupt one leaves the sweep's list.
+  }
+  marks = stamped;
+  if (examined < listed.length) {
+    cursor = examined === 0 ? cursor : listed[examined - 1]!;
+  } else {
+    cursor = listed.length < TREE_GC_SWEEP_LIST_KEYS ? null : listed.at(-1)!;
   }
 
   // 10. The state write, when the tick changed anything.
-  const prior = written ?? base;
+  const prior = probed;
   const final: TreeGcState = {
     ...prior,
     floor_seen: h,
-    clock: probe && serverTime !== undefined ? serverTime.toISOString() : prior.clock,
+    clock: serverTime !== undefined ? serverTime.toISOString() : prior.clock,
     resolved_through: resolvedThrough,
     stuck,
     work: remaining,
@@ -916,15 +931,6 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
   }
 
   // 11. Log retirement, as main's GC phase ends.
-  try {
-    await retireLogRange(storage, head.key, {
-      ...(signal !== undefined && { signal }),
-      ...(input.retireWindow !== undefined && { window: input.retireWindow }),
-    });
-  } catch (error) {
-    if (!isWriteConflict(error)) {
-      throw error;
-    }
-  }
-  return end("collected", { deleted, serverTime, probed: probe, candidates });
+  await retire();
+  return end("collected", { deleted, serverTime, probed: true, candidates });
 };
