@@ -181,6 +181,9 @@ export const parseTreeRecordKey = (prefix: string, key: string): TreeRecordKeyPa
   return { floor, attempt: rest.slice(0, 32), sha256: rest.slice(33) };
 };
 
+/** The key of the collection's tree GC state: `<P>/_v99/gc-pending.json`. */
+export const treeGcStateKey = (prefix: string): string => `${prefix}/${TREE_NS}/gc-pending.json`;
+
 /**
  * Mint a fresh attempt identity: 128 random bits as lowercase hex. One
  * publication attempt (one capture of the head and its root, then at

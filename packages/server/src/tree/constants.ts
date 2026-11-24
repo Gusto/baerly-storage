@@ -262,3 +262,37 @@ export const TREE_GC_MAX_WORK_ENTRIES = 256;
  * key left unmarked is examined again on the next sweep pass.
  */
 export const TREE_GC_MAX_SWEEP_MARKS = 256;
+
+/**
+ * Most candidate checks one GC tick makes when its request ledger has
+ * room: on the Workers Paid ledger a tick of this many checks at depth 2
+ * costs about 4,700 calls with log retirement, about half the ledger,
+ * and drains a whole-tree rewrite's record in a few ticks instead of
+ * dozens. A ledger with less room gets {@link TREE_GC_TICK_CANDIDATES}.
+ */
+export const TREE_GC_TICK_MAX_CANDIDATES = 512;
+
+/**
+ * Calls a GC tick may make besides its candidate checks, each charged
+ * at every attempt: the state GET, two LISTs, the head and root GETs,
+ * {@link TREE_GC_TICK_RECORD_CALLS} record GETs and as many record
+ * DELETEs (3 each), one state create (3) and one state CAS (1), plus 69
+ * for a log-retirement pass that finds work (its gate GET, CAS GET and
+ * PUT, and 20 DELETEs). The tick sizes its candidate count from what
+ * the ledger has left after these.
+ */
+export const TREE_GC_TICK_RESERVED_CALLS = 43 + 69;
+
+/** The `format` tag of the tree GC state. */
+export const TREE_GC_STATE_FORMAT = "baerly-tree-gc-state-proto";
+
+/** The `schema_version` of the tree GC state. */
+export const TREE_GC_STATE_SCHEMA_VERSION = 1;
+
+/**
+ * Decoder ceiling on the tree GC state body, in bytes. A state at its
+ * caps ({@link TREE_GC_MAX_WORK_ENTRIES} work entries and
+ * {@link TREE_GC_MAX_SWEEP_MARKS} marks, a few hundred bytes each) is
+ * well under it.
+ */
+export const TREE_GC_STATE_MAX_BODY_BYTES = 524_288;
