@@ -15,6 +15,7 @@ import {
   createCurrentJson,
   encodeJsonBytes,
   type LogEntry,
+  MAINTENANCE_PROFILE_CF_FREE,
   MemoryStorage,
   RequestLedger,
   type RequestPool,
@@ -30,7 +31,6 @@ import { ledgeredStorage } from "../../../tests/fixtures/ledgered-storage.ts";
 import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { Db } from "./db.ts";
-import type { InternalBoundedMaintenanceOptions } from "./maintenance-options.ts";
 import {
   createObservabilityContext,
   getCurrentContext,
@@ -491,9 +491,8 @@ describe.each(POOLS)("a multi-row update under the request ledger (%s pool)", (p
             runWithContext(from, () => drain(ledger, pool));
           });
         },
-        // Fold after every write, as Free + S3's early fold does.
-        // An adapter-only trigger, as `maintenance.ts` reads it.
-        options: { foldAtTailEntries: 1 } as InternalBoundedMaintenanceOptions,
+        // Fold after every write: the profile's count arm at 1.
+        options: { profile: { ...MAINTENANCE_PROFILE_CF_FREE, foldAtTailEntries: 1 } },
       },
     });
     let creates = 0;
@@ -551,7 +550,7 @@ describe.each(POOLS)("a multi-row update under the request ledger (%s pool)", (p
             await runWithContext(from, task);
           });
         },
-        options: { foldAtTailEntries: 1 } as InternalBoundedMaintenanceOptions,
+        options: { profile: { ...MAINTENANCE_PROFILE_CF_FREE, foldAtTailEntries: 1 } },
       },
     });
     let creates = 0;

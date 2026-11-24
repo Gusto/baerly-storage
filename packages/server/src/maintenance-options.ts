@@ -7,7 +7,6 @@
 import type { Storage } from "@baerly/protocol";
 import type { InternalCompactOptions } from "./compactor.ts";
 import type { InternalRunGcOptions } from "./gc.ts";
-import type { BoundedMaintenanceOptions } from "./maintenance.ts";
 
 /** The collection one {@link runScheduledMaintenance} call maintains. */
 export interface MaintenanceTarget {
@@ -100,25 +99,4 @@ export interface LogRetentionOptions {
    * exercising the budget boundary; production callers should omit it.
    */
   readonly maxDeletes?: number;
-}
-
-/**
- * {@link BoundedMaintenanceOptions} plus the host trigger an adapter may
- * thread into the write tick. Unpublished, like
- * {@link InternalMaintenanceOptions}: it is adapter wiring, not an app
- * or operator setting.
- *
- * @internal
- */
-export interface InternalBoundedMaintenanceOptions extends BoundedMaintenanceOptions {
-  /**
-   * @internal Fold once the live tail reaches this many entries, whatever
-   * the tail-to-snapshot ratio. Absent ⇒ only the ratio trigger (with the
-   * `minEntriesToCompact` floor) folds. The Cloudflare adapter passes
-   * `CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES` under the `cf-free` profile when
-   * storage is reached through `fetch` rather than the R2 binding, where a
-   * write that replays a ratio-length tail plus the fold it triggers would
-   * not fit in one request.
-   */
-  readonly foldAtTailEntries?: number;
 }

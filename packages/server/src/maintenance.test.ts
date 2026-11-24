@@ -22,6 +22,7 @@ import {
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MAINTENANCE_WARN_INTERVAL_WRITES,
   MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_PROFILE_CF_PAID,
   MemoryStorage,
   readCurrentJson,
   RequestLedger,
@@ -41,6 +42,7 @@ import { describe, expect, test, vi } from "vitest";
 import { compact } from "./compactor.ts";
 import { runGc, type InternalRunGcOptions } from "./gc.ts";
 import {
+  type BoundedMaintenanceOptions,
   CLOUDFLARE_FREE_TIER,
   CLOUDFLARE_PAID_TIER,
   crossesGcBoundary,
@@ -53,14 +55,12 @@ import {
   shouldFireMaintenance,
 } from "./maintenance.ts";
 import { Db } from "./db.ts";
-import type {
-  InternalBoundedMaintenanceOptions,
-  InternalMaintenanceOptions,
-} from "./maintenance-options.ts";
+import type { InternalMaintenanceOptions } from "./maintenance-options.ts";
 import { probeTailFrom } from "./log-tail.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { RequestScopedMetricsRecorder } from "./observability/recorder.ts";
 import { Writer } from "./writer.ts";
+import { UntickedWriter } from "../../../tests/fixtures/unticked-writer.ts";
 import { ledgeredStorage } from "../../../tests/fixtures/ledgered-storage.ts";
 import {
   logStateCurrentJson,
@@ -80,7 +80,7 @@ describe("runMaintenancePass", () => {
   test("runs both compact and gc by default", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 150; i++) {
       await writer.commit({
         op: "I",
@@ -119,7 +119,7 @@ describe("runMaintenancePass", () => {
     // `runMaintenancePass`.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 150; i++) {
       await writer.commit({
         op: "I",
@@ -140,7 +140,7 @@ describe("runMaintenancePass", () => {
     // green for months while every read replayed the whole tail.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 3; i++) {
       await writer.commit({
         op: "I",
@@ -158,7 +158,7 @@ describe("runMaintenancePass", () => {
   test("an explicit options.compact.minEntriesToCompact overrides the scheduled default", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 5; i++) {
       await writer.commit({
         op: "I",
@@ -183,7 +183,7 @@ describe("runMaintenancePass", () => {
     // while folding nothing for months.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 3; i++) {
       await writer.commit({
         op: "I",
@@ -221,7 +221,7 @@ describe("runMaintenancePass", () => {
     // fix must not move it.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 3; i++) {
       await writer.commit({
         op: "I",
@@ -243,7 +243,7 @@ describe("runMaintenancePass", () => {
     // write-tick dead zone.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     const n = 36;
     for (let i = 0; i < n; i++) {
       await writer.commit({
@@ -326,7 +326,7 @@ describe("runScheduledMaintenance", () => {
   /** `n` commits through a bare Writer, which leaves `tail_hint` at 0. */
   const seed = async (storage: MemoryStorage, n: number): Promise<void> => {
     await bootstrap(storage, KEY);
-    const writer = new Writer({ storage, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage, currentJsonKey: KEY });
     for (let i = 0; i < n; i++) {
       await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
     }
@@ -499,12 +499,14 @@ describe("estimateTailBytes", () => {
 
 describe("shouldFireMaintenance", () => {
   const base = logStateCurrentJson;
+  // No GC boundary, and a count arm no test tail reaches.
+  const coldCount = { gcInterval: 999, foldAtTailEntries: 999 };
 
   test("fires on a crossed GC boundary even when ratio is cold", () => {
     // Drives PURELY off tail_hint / log_seq_start / mean_entry_bytes.
     // observedTail == tail_hint under the single-write commit.
     const cur = base({ tail_hint: WRITE_TICK_GC_INTERVAL });
-    expect(shouldFireMaintenance(cur, 0, WRITE_TICK_GC_INTERVAL, cur.tail_hint)).toBe(true);
+    expect(shouldFireMaintenance(cur, 0, MAINTENANCE_PROFILE_CF_FREE, cur.tail_hint)).toBe(true);
   });
 
   test("fires when the DERIVED tail/snapshot ratio meets the target", () => {
@@ -519,7 +521,7 @@ describe("shouldFireMaintenance", () => {
       mean_entry_bytes: mean,
       snapshot_bytes: 0,
     });
-    expect(shouldFireMaintenance(cur, liveEntries, 999, cur.tail_hint)).toBe(true);
+    expect(shouldFireMaintenance(cur, liveEntries, coldCount, cur.tail_hint)).toBe(true);
     // One entry below the floor ⇒ no-fire (ratio < 1, no GC boundary).
     const below = base({
       tail_hint: liveEntries - 1,
@@ -527,12 +529,22 @@ describe("shouldFireMaintenance", () => {
       mean_entry_bytes: mean,
       snapshot_bytes: 0,
     });
-    expect(shouldFireMaintenance(below, below.tail_hint, 999, below.tail_hint)).toBe(false);
+    expect(shouldFireMaintenance(below, below.tail_hint, coldCount, below.tail_hint)).toBe(false);
   });
 
-  test("does not fire when neither gate trips", () => {
+  test("fires when the live tail reaches foldAtTailEntries with the ratio cold", () => {
+    // mean_entry_bytes 0 ⇒ the ratio estimate is 0; no GC boundary at 999.
+    const q = 9;
+    const profile = { gcInterval: 999, foldAtTailEntries: q };
+    const at = base({ tail_hint: q + 5, log_seq_start: 5, mean_entry_bytes: 0, snapshot_bytes: 0 });
+    expect(shouldFireMaintenance(at, at.tail_hint, profile, at.tail_hint)).toBe(true);
+    const under = base({ tail_hint: q + 4, log_seq_start: 5, mean_entry_bytes: 0 });
+    expect(shouldFireMaintenance(under, under.tail_hint, profile, under.tail_hint)).toBe(false);
+  });
+
+  test("does not fire when no arm trips", () => {
     const cur = base({ tail_hint: 1, log_seq_start: 0, mean_entry_bytes: 0, snapshot_bytes: 0 });
-    expect(shouldFireMaintenance(cur, 1, 999, cur.tail_hint)).toBe(false);
+    expect(shouldFireMaintenance(cur, 1, coldCount, cur.tail_hint)).toBe(false);
   });
 });
 
@@ -581,10 +593,10 @@ const countingStorage = (inner: Storage): Counting => {
   };
 };
 
-/** Seed `n` real log entries via the Writer (no snapshot yet). */
+/** Seed `n` real log entries via an unticked Writer (no snapshot yet, no fold). */
 const seedLog = async (storage: Storage, key: string, coll: string, n: number): Promise<void> => {
   await provisionCollection(storage, key, "bounded-test");
-  const writer = new Writer({ storage, currentJsonKey: key });
+  const writer = new UntickedWriter({ storage, currentJsonKey: key });
   for (let i = 0; i < n; i++) {
     await writer.commit({
       op: "I",
@@ -713,8 +725,8 @@ describe("runBoundedMaintenance", () => {
 
   test("foldAtTailEntries folds a tail that long with the ratio cold, and no shorter one", async () => {
     // A small tail on a large snapshot: ratio far below 1, and the tail
-    // under WRITE_TICK_MIN_ENTRIES_TO_COMPACT, so only foldAtTailEntries
-    // can trip Gate 1.
+    // under WRITE_TICK_MIN_ENTRIES_TO_COMPACT, so only the profile's count
+    // arm can trip Gate 1.
     for (const [tail, folds] of [
       [8, false],
       [9, true],
@@ -724,34 +736,40 @@ describe("runBoundedMaintenance", () => {
       await patchCurrent(inner, KEY, { mean_entry_bytes: 64, snapshot_bytes: 256 * 1024 });
       await runBoundedMaintenance(
         { storage: inner, currentJsonKey: KEY, prevSeq: tail, observedTail: tail },
-        { foldAtTailEntries: 9 } as InternalBoundedMaintenanceOptions,
+        { profile: { ...MAINTENANCE_PROFILE_CF_FREE, foldAtTailEntries: 9 } },
       );
       await expect(readSeqStart(inner, KEY)).resolves.toBe(folds ? tail : 0);
     }
   });
 
-  test("the write-tick floor stays WRITE_TICK_MIN_ENTRIES_TO_COMPACT — a 40-entry gate1-tripping tail does NOT fold", async () => {
+  test("the bytes arm keeps the WRITE_TICK_MIN_ENTRIES_TO_COMPACT floor — a 40-entry ratio-tripping tail under a 64 count arm does NOT fold", async () => {
     // The two maintenance triggers have opposite cost profiles: the
     // scheduled path drains whatever tail exists (floor 1), the in-band
-    // write tick keeps its 50-entry floor so a write never thrashes
-    // snapshot rewrites. 40 entries trip neither 50 nor 100 — under the
-    // OLD shared shape this was exactly the measured dead zone (a 36-entry
-    // tail costing 36 S3 GETs per read); it must stay unfolded on the tick
-    // path.
+    // write tick folds on its count arm (`foldAtTailEntries`) or on the
+    // ratio past a 50-entry floor, so a write never thrashes snapshot
+    // rewrites. Under the cf-paid profile (count arm 64) 40 entries trip
+    // neither the count arm nor the floor, so they stay unfolded on the
+    // tick path.
+    expect(MAINTENANCE_PROFILE_CF_PAID.foldAtTailEntries).toBeGreaterThan(
+      WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+    );
     const inner = new MemoryStorage();
     await seedLog(inner, KEY, COLL, 40);
-    // Ratio >= 1 so ONLY the entry floor gates gate1 (40 < 50).
+    // Ratio >= 1 so ONLY the entry floor gates the bytes arm (40 < 50).
     await patchCurrent(inner, KEY, {
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });
     const before = await readSeqStart(inner, KEY);
-    await runBoundedMaintenance({
-      storage: inner,
-      currentJsonKey: KEY,
-      prevSeq: 40, // == probed tail ⇒ no GC boundary either
-    });
+    await runBoundedMaintenance(
+      {
+        storage: inner,
+        currentJsonKey: KEY,
+        prevSeq: 40, // == probed tail ⇒ no GC boundary either
+      },
+      { profile: MAINTENANCE_PROFILE_CF_PAID },
+    );
     await expect(readSeqStart(inner, KEY)).resolves.toBe(before); // 0 — nothing folded
     // Contrast: the same store under the scheduled path folds it all.
     const r = await runMaintenancePass({ storage: inner, currentJsonKey: KEY });
@@ -1835,7 +1853,7 @@ describe("runBoundedMaintenance — sized from the request ledger's remainder", 
     inner: Storage,
     left: number,
     args: Omit<Parameters<typeof runBoundedMaintenance>[0], "storage" | "currentJsonKey">,
-    options?: InternalBoundedMaintenanceOptions,
+    options?: BoundedMaintenanceOptions,
     pools: { ledgerPool: RequestPool; storagePool: RequestPool } = {
       ledgerPool: "external",
       storagePool: "external",
@@ -1898,12 +1916,14 @@ describe("runBoundedMaintenance — sized from the request ledger's remainder", 
     return seq;
   };
 
-  // A 20-entry tail that `foldAtTailEntries` folds with the ratio cold. The
-  // tick's runner GET plus the fold (5 + 20) needs 26; prevSeq ==
-  // observedTail crosses no GC boundary.
+  // A 20-entry tail that the profile's count arm (`foldAtTailEntries`)
+  // folds with the ratio cold. The tick's runner GET plus the fold
+  // (5 + 20) needs 26; prevSeq == observedTail crosses no GC boundary.
   const FOLD_TAIL = 20;
   const foldTick = { prevSeq: FOLD_TAIL, observedTail: FOLD_TAIL };
-  const foldOptions = { foldAtTailEntries: FOLD_TAIL } as InternalBoundedMaintenanceOptions;
+  const foldOptions: BoundedMaintenanceOptions = {
+    profile: { ...MAINTENANCE_PROFILE_CF_FREE, foldAtTailEntries: FOLD_TAIL },
+  };
 
   test("a fold that does not fit what is left is skipped, never started", async () => {
     const inner = new MemoryStorage();

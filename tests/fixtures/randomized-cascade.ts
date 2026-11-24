@@ -839,15 +839,16 @@ export const runMultiDocCascade = async (opts: {
   // real committed range the collection-total-order property exists to
   // witness.
   const inst = instances[0]!;
-  const read = await readCurrentJson(inst.storage, inst.currentJsonKey);
-  const start = read === null ? 0 : read.json.log_seq_start;
-
   const committedSeqs = [...(await collectCommittedSlots(inst))];
 
   // Walk the committed entries in ascending seq order for the per-doc
   // projection — `observedPerDoc[docId]` is that doc's committed-value
   // sequence. The probe returns entries in ascending slot order, so the
-  // projection onto each doc preserves commit order.
+  // projection onto each doc preserves commit order. It starts at the
+  // lowest committed slot, not `log_seq_start`: the writers' ticks fold as
+  // they go, and a folded entry stays in the log until retirement, so
+  // both tallies cover the same slots.
+  const start = committedSeqs.length === 0 ? 0 : Math.min(...committedSeqs);
   const probe = await probeTailFrom(inst.storage, inst.logPrefix, start);
   const observedPerDoc: Record<string, string[]> = {};
   for (const docId of docIds) {

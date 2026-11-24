@@ -3,7 +3,7 @@
  * whole-pass composition (`runMaintenancePass`) addressed by
  * `current.json` key, the host tiers and profiles, the write-tick runner,
  * and the helpers the adapters, CLI, and bench share with it: dispatch
- * wiring, env parsing, the cadence/ratio gates, and the fold-ceiling
+ * wiring, env parsing, the cadence/fold-trigger gates, and the fold-ceiling
  * predicates.
  *
  * Mirrors `_internal/testing`: intentionally NOT in `publishConfig.exports`,

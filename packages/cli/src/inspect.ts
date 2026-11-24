@@ -24,8 +24,8 @@
  *     (`snapshot_bytes <= C && snapshot_rows <= E`)
  *     against that profile's ceilings, with `C` overridden by
  *     `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` from the CLI's environment. Plus
- *     `retention_stalled`: the gate is closed and the live tail has
- *     reached the write-tick fold floor, so the tail and log retention
+ *     `retention_stalled`: the gate is closed and the live tail is long
+ *     enough for the write tick to fold, so the tail and log retention
  *     are frozen. The CLI cannot know the host, hence one verdict per
  *     profile. A collection whose stored snapshot is under `C` but whose
  *     next rebuild would exceed it reads `open` here; the runner's
@@ -148,7 +148,11 @@ const foldGateVerdict = (
     verdict,
     ceiling_bytes: ceilingBytes,
     ceiling_rows: ceilingRows,
-    retention_stalled: verdict !== "open" && liveLogTail >= WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+    // The shortest tail the write tick folds: its count arm, or the bytes
+    // arm's entry floor.
+    retention_stalled:
+      verdict !== "open" &&
+      liveLogTail >= Math.min(profile.foldAtTailEntries, WRITE_TICK_MIN_ENTRIES_TO_COMPACT),
   };
 };
 

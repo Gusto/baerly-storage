@@ -25,7 +25,7 @@ import { compactInternal as compact, type InternalCompactOptions } from "./compa
 import { loadSnapshotAsMap, snapshotKey } from "./snapshot.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
 import { runGc } from "./gc.ts";
-import { Writer } from "./writer.ts";
+import { UntickedWriter } from "../../../tests/fixtures/unticked-writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
   await createCurrentJson(
@@ -68,7 +68,7 @@ describe("compact", () => {
     // it keeps doing so.
     const s = new MemoryStorage();
     await createCurrentJson(s, KEY, logStateCurrentJson({ generation: "0123456789ab" }));
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 12; i++) {
       await writer.commit({
         op: "I",
@@ -124,7 +124,7 @@ describe("compact", () => {
   test("skips when below min threshold", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 5; i++) {
       await writer.commit({
         op: "I",
@@ -145,7 +145,7 @@ describe("compact", () => {
   test("writes a snapshot and advances log_seq_start", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -198,7 +198,7 @@ describe("compact", () => {
     test("fails closed before invoking storage", async () => {
       const s = new MemoryStorage();
       await bootstrap(s, KEY);
-      const writer = new Writer({ storage: s, currentJsonKey: KEY });
+      const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
       for (let i = 0; i < 20; i++) {
         await writer.commit({
           op: "I",
@@ -267,7 +267,7 @@ describe("compact", () => {
     // MAX_SAFE_INTEGER and `knownTail` is absent.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 5; i++) {
       await writer.commit({
         op: "I",
@@ -284,7 +284,7 @@ describe("compact", () => {
   test("is idempotent: re-running with no new writes is a no-op", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     // 50 entries, fold them all in one shot so no live tail remains.
     for (let i = 0; i < 50; i++) {
       await writer.commit({
@@ -314,7 +314,7 @@ describe("compact", () => {
   test("subsequent run extends the snapshot when new writes have landed", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 40; i++) {
       await writer.commit({
         op: "I",
@@ -356,7 +356,7 @@ describe("compact", () => {
   test("snapshot body hash matches the filename hash", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -378,7 +378,7 @@ describe("compact", () => {
   test("rejects a snapshot whose body has been tampered with", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -414,7 +414,7 @@ describe("compact", () => {
   test("delete tombstones drop docs from the snapshot fold", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     await writer.commit({ op: "I", collection: COLL, docId: "a", body: { _id: "a" } });
     await writer.commit({ op: "I", collection: COLL, docId: "b", body: { _id: "b" } });
     await writer.commit({ op: "D", collection: COLL, docId: "a" });
@@ -437,7 +437,7 @@ describe("compact", () => {
   test("rejects a snapshot body that names a different collection", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -456,7 +456,7 @@ describe("compact", () => {
   test("emits db.compact.entries_folded and db.manifest.lag_window_depth on success", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -521,7 +521,7 @@ describe("compact", () => {
   test("writes snapshot_bytes and snapshot_rows (= base.size) on a successful fold", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 30; i++) {
       await writer.commit({
         op: "I",
@@ -546,7 +546,7 @@ describe("compact", () => {
   test("stamps mean_entry_bytes = round(foldedSliceBytes / entriesFolded) on a fold", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     // Vary the doc-id / payload length so the per-entry byte sizes differ
     // and B / K is non-integer → exercises Math.round.
     const K = 21;
@@ -577,7 +577,7 @@ describe("compact", () => {
   test("ceiling is on the SNAPSHOT not snapshot+tail: small snapshot + huge tail still folds", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     // Many entries, but the snapshot built from a maxEntriesPerRun slice
     // stays tiny. A generous ceilingBytes that the small snapshot fits
     // under must NOT defer just because the live tail is large.
@@ -602,7 +602,7 @@ describe("compact", () => {
   test("defers when the rebuilt snapshot bytes exceed ceilingBytes (current.json unchanged)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 20; i++) {
       await writer.commit({
         op: "I",
@@ -629,7 +629,7 @@ describe("compact", () => {
   test("folds the longest prefix within ceilingEntries on the tiny-doc case", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 20; i++) {
       await writer.commit({
         op: "I",
@@ -654,7 +654,7 @@ describe("compact", () => {
   test("at ceilingEntries, updates and deletes fold and only a row-adding entry stops the prefix", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 5; i++) {
       await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
     }
@@ -678,7 +678,7 @@ describe("compact", () => {
   test("defers without a PUT when the first entry would add a row at ceilingEntries", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 6; i++) {
       await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
     }
@@ -708,7 +708,7 @@ describe("compact", () => {
     async ({ ceiling, dimension }) => {
       const s = new MemoryStorage();
       await bootstrap(s, KEY);
-      const writer = new Writer({ storage: s, currentJsonKey: KEY });
+      const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
       for (let i = 0; i < 3; i++) {
         await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
       }
@@ -731,7 +731,7 @@ describe("compact", () => {
   test("a stored snapshot over ceilingEntries folds once its deletes bring it back within", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 8; i++) {
       await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
     }
@@ -760,7 +760,7 @@ describe("compact", () => {
     const seeded = async () => {
       const s = new MemoryStorage();
       await bootstrap(s, KEY);
-      const writer = new Writer({ storage: s, currentJsonKey: KEY });
+      const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
       for (let i = 0; i < 3; i++) {
         await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
       }
@@ -821,7 +821,7 @@ describe("compact", () => {
   test("a rebuild defer reports the tripped dimension and rebuilt size, and leaves the metric to the caller", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 20; i++) {
       await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
     }
@@ -845,7 +845,7 @@ describe("compact", () => {
   test("both ceilings undefined rebuild an arbitrarily large snapshot (unbounded reconcile)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 200; i++) {
       await writer.commit({
         op: "I",
@@ -868,7 +868,7 @@ describe("compact", () => {
   test("maxEntriesPerRun slices a large tail (advances log_seq_start by only the slice)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 100; i++) {
       await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
     }
@@ -1130,7 +1130,7 @@ describe("compact", () => {
     const recording = recordingStorage(inner);
     const foldEnd = 30;
     await bootstrap(inner, KEY);
-    const writer = new Writer({ storage: inner, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: inner, currentJsonKey: KEY });
     for (let i = 0; i < foldEnd; i++) {
       await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
     }

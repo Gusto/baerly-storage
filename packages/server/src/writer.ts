@@ -95,7 +95,6 @@ import { walkLogRange } from "./log-walk.ts";
 import { findLogTail, probeTailFrom } from "./log-tail.ts";
 import { tryAdoptOwnSessionLogEntry } from "./log-conflict-adoption.ts";
 import { dispatchWriteTick, shouldFireMaintenance } from "./maintenance.ts";
-import type { InternalBoundedMaintenanceOptions } from "./maintenance-options.ts";
 import { getCurrentContext, runWithContext } from "./observability/context.ts";
 import { assertPostImageIdentity } from "./post-image-identity.ts";
 import { isOwnCollection } from "./collection-alias.ts";
@@ -164,9 +163,9 @@ export interface CommitInput {
   readonly insertGuard?: InsertGuard;
 
   /**
-   * Force the post-commit maintenance tick: dispatch it even
-   * when the ratio-OR-boundary gate is closed, and let it bypass Gate 1
-   * inside the runner. Ignored under `BAERLY_MAINTENANCE_DISABLE`.
+   * Force the post-commit maintenance tick: dispatch it even when the
+   * dispatch gate (`shouldFireMaintenance`) is closed, and let it bypass
+   * Gate 1 inside the runner. Ignored under `BAERLY_MAINTENANCE_DISABLE`.
    *
    * @internal — set by the write verbs in `./query.ts` while a growth
    * write would be refused (`capacityDecision`'s `pressure`).
@@ -864,25 +863,18 @@ export class Writer {
     const maint = getCurrentContext()?.maintenance;
     // Same absent-context default as runBoundedMaintenance's
     // `options?.profile ?? MAINTENANCE_PROFILE_CF_FREE` — keep the two in
-    // step (this gate reads only gcInterval; the runner resolves the whole
-    // profile) so the pre-fire cadence can't diverge from the fold's.
-    const gcInterval =
-      maint?.options?.profile?.gcInterval ?? MAINTENANCE_PROFILE_CF_FREE.gcInterval;
-    // A forced tick skips the ratio-OR-boundary gate: the
-    // verb found the collection at its growth-refusal point.
+    // step (this gate reads only gcInterval and foldAtTailEntries; the
+    // runner resolves the whole profile) so the pre-fire triggers can't
+    // diverge from the fold's.
+    const profile = maint?.options?.profile ?? MAINTENANCE_PROFILE_CF_FREE;
+    // A forced tick skips the trigger gate: the verb found the
+    // collection at its growth-refusal point.
     const forceFold =
       (input.forceMaintenance === true || admissionForces) && maint?.disabled !== true;
-    // The adapter's host trigger (`InternalBoundedMaintenanceOptions`): a
-    // live tail this long fires too, so the runner's Gate 1 sees it.
-    const foldAtTailEntries = (maint?.options as InternalBoundedMaintenanceOptions | undefined)
-      ?.foldAtTailEntries;
     const maintenanceDue =
       maint?.disabled === true
         ? observedTail - current.tail_hint >= MAINTENANCE_TAIL_HINT_REFRESH_WRITES
-        : forceFold ||
-          (foldAtTailEntries !== undefined &&
-            observedTail - current.log_seq_start >= foldAtTailEntries) ||
-          shouldFireMaintenance(current, prevSeq, gcInterval, observedTail);
+        : forceFold || shouldFireMaintenance(current, prevSeq, profile, observedTail);
     if (maintenanceDue) {
       await dispatchWriteTick({
         storage: this.#storage,

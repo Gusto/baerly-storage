@@ -242,13 +242,16 @@ export const cfReadEnvelope = (storage: Storage): ReadEnvelope => ({
 
 /**
  * Write-tick options on the free profile for storage reached through
- * `fetch`: the GC sweep capped, and the server's unpublished host trigger
- * `foldAtTailEntries` (`InternalBoundedMaintenanceOptions`), spread into
- * the public options bag. `worker-maintenance.test.ts` pins the result.
+ * `fetch`: the free profile with its fold trigger lowered and its GC sweep
+ * capped, so a write and the tick it dispatches fit the 45-call external
+ * pool. `worker-maintenance.test.ts` pins the result.
  */
 const CF_FREE_FETCH_TICK = {
-  profile: { ...MAINTENANCE_PROFILE_CF_FREE, gcMaxSweeps: CF_FREE_FETCH_GC_MAX_SWEEPS },
-  foldAtTailEntries: CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+  profile: {
+    ...MAINTENANCE_PROFILE_CF_FREE,
+    foldAtTailEntries: CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+    gcMaxSweeps: CF_FREE_FETCH_GC_MAX_SWEEPS,
+  },
 } as const;
 
 /**
@@ -297,8 +300,8 @@ const CF_FREE_FETCH_TICK = {
  * `storage` is the Worker's base storage. On the free profile, storage
  * other than the R2 binding (`S3HttpStorage`, or any wrapper) is charged
  * to the 45-call `external` pool, so the write tick folds as soon as the
- * live tail reaches {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES} entries,
- * and a GC slice sweeps at most {@link CF_FREE_FETCH_GC_MAX_SWEEPS}
+ * live tail reaches {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES} entries
+ * (the free profile's own count trigger is 20), and a GC slice sweeps at most {@link CF_FREE_FETCH_GC_MAX_SWEEPS}
  * snapshots: a write replays the tail, and on a longer tail or a larger
  * sweep the write plus the tick it dispatches no longer fit in one
  * request. Workers Free + S3 is not a supported host, but the Worker
@@ -386,8 +389,8 @@ export interface BaerlyWorkerOptions {
    * `BAERLY_MAINTENANCE_PROFILE=cf-paid`; Workers Free + S3 is not
    * supported. Under the free profile, storage other than the R2 binding
    * is held to 45 calls per request (a typed `CapacityExceeded` past it,
-   * not the platform's throw at call 51), so the write tick folds after a
-   * few writes instead of on the ratio trigger.
+   * not the platform's throw at call 51), so the write tick folds once 7
+   * writes are pending instead of the free profile's 20.
    */
   readonly storage?: Storage;
   /**

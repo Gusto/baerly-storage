@@ -612,10 +612,17 @@ export const GC_MARK_LIST_PAGE_KEYS: number = 1000;
 export const GC_PENDING_CAS_MAX_ATTEMPTS: number = 3;
 
 /**
- * Fold-trigger ratio: fold fires at tail ≥ R×snapshot. Pure READ-AMP / fold-frequency
- * knob — with the ceiling on the snapshot axis (Decision 3a, tail sliced) the
- * auto-maintained snapshot ceiling is S_max = C, NOT C/(1+R). R=1.0 caps steady-state
- * read-amp at ~2× and keeps compaction write-amp (≈1+1/R) moderate. See
+ * Fold-trigger ratio: the bytes arm of the write-tick fold trigger fires at
+ * tail ≥ R×snapshot (estimated tail bytes against `snapshot_bytes`), once
+ * the tail holds {@link WRITE_TICK_MIN_ENTRIES_TO_COMPACT} entries. With the
+ * ceiling on the snapshot axis (Decision 3a, tail sliced) the auto-maintained
+ * snapshot ceiling is S_max = C, NOT C/(1+R). R=1.0 caps steady-state read-amp
+ * at ~2× **in bytes**, not in requests: a reader GETs every tail entry, so
+ * under this arm alone a snapshot of many small documents settles at a tail of
+ * about `snapshot_bytes / mean_entry_bytes` entries, one GET each. The count
+ * arm (the profile's `foldAtTailEntries`, see
+ * {@link MAINTENANCE_FOLD_AT_TAIL_ENTRIES}) bounds the request count; this arm
+ * stays for entries large enough to outgrow the snapshot in fewer entries. See
  * docs/spec/scale-ceilings.md for the derivation.
  *
  * @see docs/spec/scale-ceilings.md
@@ -697,6 +704,17 @@ export const WRITE_TICK_GC_MAX_SWEEPS: number = 10;
 export const WRITE_TICK_FOLD_ENTRIES_PER_PASS: number = 20;
 
 /**
+ * Live-tail length at which the write tick folds under the `cf-free`
+ * profile, whatever the tail-to-snapshot ratio: that profile's per-pass
+ * cap, {@link WRITE_TICK_FOLD_ENTRIES_PER_PASS}. A trigger above the cap
+ * buys nothing (derivation on {@link MAINTENANCE_FOLD_AT_TAIL_ENTRIES}),
+ * and at the cap one pass folds the whole pending tail.
+ *
+ * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
+ */
+export const WRITE_TICK_FOLD_AT_TAIL_ENTRIES: number = WRITE_TICK_FOLD_ENTRIES_PER_PASS;
+
+/**
  * Cloudflare Free scheduled-compactor tail-discovery budget (`P`). A
  * prior-snapshot fold pass costs 1 GET current + P GETs tail probe +
  * 1 GET prior snapshot + N GETs log + 1 PUT snapshot + 1 PUT current
@@ -738,9 +756,11 @@ export const CF_FREE_COMPACT_TAIL_PROBE_GETS: number = 25;
 export const CF_PAID_COMPACT_TAIL_PROBE_GETS: number = 1000;
 
 /**
- * compact()'s minEntriesToCompact, set EXPLICITLY by the runner so it agrees with Gate 1
- * rather than inheriting compact()'s silent default 100 (which would contradict the 64 KB
- * first-fold story — round-4 Tier-3). Adapter-overridable; CF-free value.
+ * Gate 1's entry floor for the bytes arm ({@link MAINTENANCE_TARGET_RATIO}): the ratio
+ * folds only a tail at least this long. The count arm (the profile's `foldAtTailEntries`)
+ * has no floor of its own, so the runner passes compact() the smaller of the two, set
+ * EXPLICITLY rather than inheriting compact()'s silent default 100 (which would contradict
+ * the 64 KB first-fold story — round-4 Tier-3). Adapter-overridable; CF-free value.
  *
  * @see packages/server/src/maintenance.ts
  */
@@ -829,9 +849,9 @@ export const MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS: number = 2;
  * profile when the Worker reaches its bucket through `fetch` (S3 over
  * HTTP) rather than the R2 binding, whatever the tail-to-snapshot ratio.
  * The Cloudflare adapter detects that from the storage it was given and
- * threads this as `foldAtTailEntries`, with
- * {@link CF_FREE_FETCH_GC_MAX_SWEEPS}; Free with the R2 binding, `cf-paid`,
- * and Node keep the ratio trigger alone.
+ * sets this as the profile's `foldAtTailEntries`, in place of
+ * {@link WRITE_TICK_FOLD_AT_TAIL_ENTRIES} (20), with
+ * {@link CF_FREE_FETCH_GC_MAX_SWEEPS}; Free with the R2 binding keeps 20.
  *
  * Workers Free + S3 is not a supported host. A Worker cannot tell Free
  * from Paid, so `cf-free` caps storage over `fetch` at
@@ -840,18 +860,17 @@ export const MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS: number = 2;
  * 51. This trigger keeps ordinary requests inside that cap, including a
  * Paid Worker on S3 that has not set `cf-paid`.
  *
- * **Why the ratio trigger fails there.** Every storage call there is
+ * **Why the profile's 20 fails there.** Every storage call there is
  * charged to the `external` pool, {@link CF_FREE_EXTERNAL_REQUEST_LIMIT}
  * (45) of Free's 50 external subrequests per invocation, leaving 5 for the
  * verifier and platform. The Cloudflare limits page counts
  * subrequests per invocation and does not exempt `ctx.waitUntil` work, so
  * the tick a write dispatches is assumed to share the write's cap. A write
  * and a read both replay the live tail, one GET per entry, so a request
- * costs at least its tail. The ratio trigger first folds near 512 entries
- * (`MAINTENANCE_MIN_LIVE_BYTES` / 128-byte entries) and no sooner than
- * {@link WRITE_TICK_MIN_ENTRIES_TO_COMPACT} (50): at that tail an insert
- * alone costs 57 calls, so the fold never fits and every read fails once
- * the tail passes ~41.
+ * costs at least its tail. A write plus the fold it triggers at tail `T`
+ * costs up to `14 + 2T` (derivation below): 54 at `T = 20`, so the runner
+ * skips that fold for budget on every write, the tail keeps growing, and
+ * every read fails once the tail passes ~41.
  *
  * **Derivation of 7.** From `request-counts.json` (100-doc snapshot, live
  * tail `t`): an insert, an update and a delete each cost `7 + t`, whatever
@@ -948,7 +967,7 @@ export const SCHEDULED_MIN_ENTRIES_TO_COMPACT: number = 1;
  * defaults, threaded into the per-request observability context by `baerlyNode` /
  * `createFetchHandler` (§8.4). Node v1 runs maintenance INLINE on the commit path (no
  * `waitUntil`), so the cap is NOT the CF subrequest wall — it's the worst-case single-write
- * added latency. A maintenance tick only fires on a ratio/boundary trip (rare), and when it
+ * added latency. A maintenance tick only fires on a count/ratio/boundary trip, and when it
  * does it performs bounded fold work plus bounded GC LIST classification and DELETE sweeps
  * against a co-located S3/R2 — sub-second on the occasional boundary write at a 10×
  * multiple. These are deliberately BOUNDED (10× CF-free), NOT unbounded: the deleted
@@ -962,6 +981,50 @@ export const SCHEDULED_MIN_ENTRIES_TO_COMPACT: number = 1;
  * @see docs/spec/scale-ceilings.md
  */
 export const NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS: number = 200;
+
+/**
+ * Live-tail length `q` at which the write tick folds under the `cf-paid`
+ * and `node` profiles, whatever the tail-to-snapshot ratio. The fold
+ * trigger is hybrid: fold when the live tail (`nextSeq − log_seq_start`)
+ * reaches the profile's `foldAtTailEntries`, OR when the bytes arm
+ * ({@link MAINTENANCE_TARGET_RATIO}) trips. The bytes arm alone bounds the
+ * tail in bytes, not in requests, and every read and write GETs each tail
+ * entry: with it alone a 32 MiB snapshot of 5 KiB documents on Workers
+ * Paid let a point read issue 6,333 GETs. With `q` the tail stays at or
+ * under `q` (`q` itself only when the hard-GC guard gives a tick to GC),
+ * so a point read replays at most `q` entries, for one snapshot rewrite
+ * per `q` writes. A fold's request count does not change.
+ *
+ * **Sizing: an economic order quantity.** Folding every `q` writes costs
+ * one fold, `F` in tail-entry GETs replayed, per `q` writes; between folds
+ * the mean tail is `q / 2`, paid by every read. With `r` reads per write
+ * the cost per write is `F / q + r·q / 2`, minimized at `q* ≈ √(2F / r)`.
+ * Deployed Workers Paid figures put a fold at about 550 ms CPU and a
+ * read's replay at about 0.41 ms CPU per tail entry, so `F ≈ 1,340` entry
+ * equivalents and `q* ≈ 103 / 52 / 26` at `r = 0.25 / 1 / 4`, on CPU
+ * alone. GET price and latency, and the write's own replay of the tail,
+ * push `q*` lower. Reads never tick, so the server cannot observe `r`,
+ * and `q` is a constant. 64 sits inside that band, where the curve is
+ * flat: the cost per write at 64 is within 1.43× of the optimum across it
+ * (`(q / q* + q* / q) / 2`, worst at `q* = 26`).
+ *
+ * **`q` ≤ the per-pass cap.** A pass folds at most `maxFoldEntriesPerPass`
+ * entries. With the cap below `q`, a fold at `q` leaves `q − cap`, so the
+ * tail swings between `q − cap` and `q`: longer than at `q = cap`, at the
+ * same fold rate. 64 sits under {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS}
+ * (200); the `cf-free` profile, whose cap is 20, folds at its cap
+ * ({@link WRITE_TICK_FOLD_AT_TAIL_ENTRIES}).
+ *
+ * Prior art bounds a log by count the same way: RocksDB's L0 file-count
+ * compaction trigger (`level0_file_num_compaction_trigger`), SQLite's WAL
+ * auto-checkpoint at 1,000 pages, Delta Lake's checkpoint every N commits
+ * (`delta.checkpointInterval`), and Kafka's `max.compaction.lag.ms`,
+ * added because a dirty ratio alone cannot bound compaction lag (KIP-354).
+ *
+ * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
+ * @see tests/unit/fold-trigger-tail-bound.test.ts
+ */
+export const MAINTENANCE_FOLD_AT_TAIL_ENTRIES: number = 64;
 
 /** Node-tier per-category LIST classification/ledger-growth cap. 10× CF-free. @see {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS} */
 export const NODE_MAINTENANCE_GC_MAX_MARKS: number = 200;
@@ -1177,6 +1240,7 @@ type MaintenanceProfileShape = Readonly<{
   gcMaxMarks: number;
   gcMaxSweeps: number;
   maxFoldEntriesPerPass: number;
+  foldAtTailEntries: number;
   maxFoldBytes: number;
   maxFoldRows: number;
 }>;
@@ -1187,6 +1251,7 @@ export const MAINTENANCE_PROFILE_CF_FREE: MaintenanceProfileShape = {
   gcMaxMarks: WRITE_TICK_GC_MAX_MARKS,
   gcMaxSweeps: WRITE_TICK_GC_MAX_SWEEPS,
   maxFoldEntriesPerPass: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+  foldAtTailEntries: WRITE_TICK_FOLD_AT_TAIL_ENTRIES,
   maxFoldBytes: MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
   maxFoldRows: MAINTENANCE_MAX_FOLD_ROWS,
 };
@@ -1197,6 +1262,7 @@ export const MAINTENANCE_PROFILE_NODE: MaintenanceProfileShape = {
   gcMaxMarks: NODE_MAINTENANCE_GC_MAX_MARKS,
   gcMaxSweeps: NODE_MAINTENANCE_GC_MAX_SWEEPS,
   maxFoldEntriesPerPass: NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
+  foldAtTailEntries: MAINTENANCE_FOLD_AT_TAIL_ENTRIES,
   maxFoldBytes: NODE_MAINTENANCE_MAX_FOLD_BYTES,
   maxFoldRows: NODE_MAINTENANCE_MAX_FOLD_ROWS,
 };
@@ -1223,6 +1289,7 @@ export const MAINTENANCE_PROFILE_CF_PAID: MaintenanceProfileShape = {
   gcMaxMarks: NODE_MAINTENANCE_GC_MAX_MARKS,
   gcMaxSweeps: NODE_MAINTENANCE_GC_MAX_SWEEPS,
   maxFoldEntriesPerPass: NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
+  foldAtTailEntries: MAINTENANCE_FOLD_AT_TAIL_ENTRIES,
   maxFoldBytes: CF_PAID_MAINTENANCE_MAX_FOLD_BYTES,
   maxFoldRows: CF_PAID_MAINTENANCE_MAX_FOLD_ROWS,
 };

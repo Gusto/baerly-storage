@@ -7,11 +7,10 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { MemoryStorage, type Storage } from "@baerly/protocol";
+import { MAINTENANCE_PROFILE_CF_FREE, MemoryStorage, type Storage } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { runWithContext } from "@baerly/server/observability";
 import { createObservabilityContext } from "@baerly/server/_internal/observability";
-import type { InternalBoundedMaintenanceOptions } from "../../packages/server/src/maintenance-options.ts";
 import { listIndexObjects } from "../fixtures/legacy-index-markers.ts";
 
 const APP = "inert";
@@ -105,7 +104,7 @@ const trace = async (declared: boolean) => {
   // Ticks run inline and fold from a 2-entry tail, so the trace covers
   // the write tick as well as each route.
   const ctx = createObservabilityContext({
-    maintenance: { options: { foldAtTailEntries: 2 } as InternalBoundedMaintenanceOptions },
+    maintenance: { options: { profile: { ...MAINTENANCE_PROFILE_CF_FREE, foldAtTailEntries: 2 } } },
   });
   for (const [label, run] of STEPS) {
     const from = calls.length;

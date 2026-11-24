@@ -87,6 +87,7 @@ import {
 } from "@baerly/server/_internal/testing";
 import { type AbortingStorageHandle, abortingStorage } from "../fixtures/aborting-storage.ts";
 import { logStateCurrentJson } from "../fixtures/log-state.ts";
+import { UntickedWriter } from "../fixtures/unticked-writer.ts";
 import { type ObservedStep, observeStep, type OracleStep } from "../fixtures/physical-oracle.ts";
 import { makeValidDocIdArb } from "../fixtures/scalar-doc-id-arbitraries.ts";
 
@@ -809,7 +810,8 @@ describe("Lost-fold orphan snapshot reclaimed under contention", () => {
     async ({ numInserts }) => {
       const inner = new MemoryStorage();
       await provision(inner);
-      const writer = new Writer({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
+      // Unticked, so the folds below are the only ones.
+      const writer = new UntickedWriter({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
       for (let i = 0; i < numInserts; i++) {
         const id = `d-${i}`;
         await writer.commit({
