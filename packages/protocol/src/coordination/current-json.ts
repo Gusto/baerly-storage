@@ -270,11 +270,10 @@ export async function readCurrentJson(
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
-  } catch (error) {
+  } catch {
     throw storedJsonParseError(
       `current.json at ${key}: body is not valid JSON`,
       got.body.byteLength,
-      error,
     );
   }
   return { json: assertCurrentJson(parsed, key), etag: got.etag };

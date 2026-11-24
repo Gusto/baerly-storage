@@ -1629,6 +1629,16 @@ describe("readCurrentJson on a malformed body", () => {
     return parts.join("\n");
   };
 
+  plainTest("never treats stored text as a parser position", async () => {
+    const storage = new MemoryStorage();
+    const secret = "12345678";
+    await storage.put("current.json", new TextEncoder().encode(`at position ${secret}`));
+    const caught = await readCurrentJson(storage, "current.json").catch((error: unknown) => error);
+    expect(caught).toBeInstanceOf(BaerlyError);
+    expect((caught as BaerlyError).code).toBe("InvalidResponse");
+    expect(reachableText(caught)).not.toContain(secret);
+  });
+
   plainTest("never echoes stored content through message or cause", async () => {
     const storage = new MemoryStorage();
     const body = `{"proto_tree":{"chunk_salt":${SECRET}}}`;

@@ -665,12 +665,8 @@ const readFormatMarker = async (marker: string): Promise<boolean> => {
   try {
     encoding = (JSON.parse(new TextDecoder().decode(body)) as { key_encoding?: unknown })
       .key_encoding;
-  } catch (error) {
-    throw storedJsonParseError(
-      `LocalFsStorage: ${marker} is not valid JSON`,
-      body.byteLength,
-      error,
-    );
+  } catch {
+    throw storedJsonParseError(`LocalFsStorage: ${marker} is not valid JSON`, body.byteLength);
   }
   if (encoding !== KEY_ENCODING) {
     throw new BaerlyError(

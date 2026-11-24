@@ -22,18 +22,10 @@ export const decodeJsonBytes = <T = unknown>(bytes: Uint8Array): T =>
  * A `JSON.parse` `SyntaxError` is deliberately dropped, not attached as
  * `cause`: V8's "Unexpected token" message quotes a window of the source
  * text, which would carry stored values into logs. The message reports
- * only the body length and, when V8 states one, the failing character
- * position.
+ * only the body length; parser diagnostics can contain stored text even
+ * when they resemble a character position.
  *
  * @param what Caller's description, e.g. `current.json at ${key}: body is not valid JSON`.
  */
-export const storedJsonParseError = (
-  what: string,
-  byteLength: number,
-  error: unknown,
-): BaerlyError => {
-  const position =
-    error instanceof Error ? /\bat position (\d+)/.exec(error.message)?.[1] : undefined;
-  const where = position === undefined ? "" : `, error at position ${position}`;
-  return new BaerlyError("InvalidResponse", `${what} (${byteLength} bytes${where})`);
-};
+export const storedJsonParseError = (what: string, byteLength: number): BaerlyError =>
+  new BaerlyError("InvalidResponse", `${what} (${byteLength} bytes)`);

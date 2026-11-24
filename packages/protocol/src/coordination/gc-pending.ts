@@ -140,11 +140,10 @@ export const readGcPending = async (
   let parsed: unknown;
   try {
     parsed = decodeJsonBytes(got.body);
-  } catch (error) {
+  } catch {
     throw storedJsonParseError(
       `gc/pending.json at ${key}: body is not valid JSON`,
       got.body.byteLength,
-      error,
     );
   }
   return { json: assertGcPending(parsed, key), etag: got.etag };

@@ -141,11 +141,10 @@ const readCommitTsMs = async (storage: Storage, key: string): Promise<number | n
   let parsed: LogEntry;
   try {
     parsed = decodeJsonBytes<LogEntry>(got.body);
-  } catch (error) {
+  } catch {
     throw storedJsonParseError(
       `usage scan: log entry at ${key} is not valid JSON`,
       got.body.byteLength,
-      error,
     );
   }
   if (typeof parsed.commit_ts !== "string") {

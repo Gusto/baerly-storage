@@ -200,12 +200,8 @@ const readLogEntry = async (
   let parsed: unknown;
   try {
     parsed = decodeJsonBytes(got.body);
-  } catch (error) {
-    throw storedJsonParseError(
-      `log entry at ${key}: body is not valid JSON`,
-      got.body.byteLength,
-      error,
-    );
+  } catch {
+    throw storedJsonParseError(`log entry at ${key}: body is not valid JSON`, got.body.byteLength);
   }
   const entry = parsed as LogEntry;
   // On R2 an NFC name addresses a legacy non-NFC spelling's objects;

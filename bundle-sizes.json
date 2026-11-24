@@ -20,9 +20,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 371156,
-      "gz": 118473,
-      "minGz": 31969,
+      "raw": 370864,
+      "gz": 118377,
+      "minGz": 31947,
       "ratchet": {
         "raw": 385792,
         "gz": 122880,
@@ -56,13 +56,13 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 642031,
-      "gz": 193968,
-      "minGz": 63816,
+      "raw": 641739,
+      "gz": 193802,
+      "minGz": 63765,
       "ratchet": {
         "raw": 701440,
         "gz": 212992,
-        "minGz": 70400
+        "minGz": 70144
       },
       "note": "Worker isolate cold start. Aggregator: closure includes the index.js and http.js subgraphs, so growth that slips past those entries still surfaces here."
     },
@@ -92,9 +92,9 @@
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 564301,
-      "gz": 169820,
-      "minGz": 54972,
+      "raw": 564009,
+      "gz": 169484,
+      "minGz": 54885,
       "ratchet": {
         "raw": 610816,
         "gz": 185088,
@@ -116,9 +116,9 @@
     },
     "maintenance.js": {
       "tier": "shipped",
-      "raw": 170728,
-      "gz": 55991,
-      "minGz": 13765,
+      "raw": 170481,
+      "gz": 55853,
+      "minGz": 13730,
       "ratchet": {
         "raw": 180480,
         "gz": 59136,
@@ -156,7 +156,7 @@
     },
     "dev.js": {
       "tier": "tooling",
-      "raw": 92707,
+      "raw": 92505,
       "ratchet": {
         "raw": 97792
       },
@@ -164,7 +164,7 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 838906,
+      "raw": 838599,
       "ratchet": {
         "raw": 918016
       },
@@ -172,7 +172,7 @@
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 847867,
+      "raw": 847560,
       "ratchet": {
         "raw": 928000
       },
