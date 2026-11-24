@@ -18,7 +18,10 @@
  *   `TREE_GC_SUPERSEDED_DELAY_MINUTES` after a probe of the storage
  *   server's clock first stamps them, so reads through the replaced
  *   root can finish. The delay is a margin, not a proof: a read that
- *   outlives it meets the reader's missing-node backstop.
+ *   outlives it meets the reader's missing-node backstop. A winner
+ *   whose identity shows up in another record is quarantined: none of
+ *   its superseded nodes is deleted, and once its floor's loser is done
+ *   its record is retired leak-only.
  * - A slow leak sweep lists the node prefix a page per probe and
  *   deletes nodes that are unreachable, whose attempt can no longer
  *   publish (a later fold moved the floor past the one read after the
@@ -794,7 +797,15 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
       dropped.add(i);
       continue;
     }
-    if (entry.quarantined || !steps.isDue(entry.due_at, now) || budget <= 0) {
+    if (entry.quarantined) {
+      // Its identity was reused, so it is never a deletion source: once
+      // its loser is done, its record is retired leak-only and the slot ends.
+      if (work[i]!.loser === null && (await retireRecord(key))) {
+        dropped.add(i);
+      }
+      continue;
+    }
+    if (!steps.isDue(entry.due_at, now) || budget <= 0) {
       continue;
     }
     const record = await recordAt(key);

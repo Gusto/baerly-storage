@@ -823,6 +823,53 @@ const lostProbeFailure = (mutant?: TreeMutant) =>
     return joined(problems);
   });
 
+/**
+ * A winner's identity reappears in four records that sort before its
+ * own, so the tick's record DELETEs retire those four and run out before
+ * the winner's record. Later ticks see the identity once again, yet the
+ * slot stays quarantined: it drops and its record is retired, and none
+ * of the nodes it names is deleted.
+ */
+const quarantineClearsFailure = (mutant?: TreeMutant) =>
+  guarded(async () => {
+    const bucket = await GcBucket.seeded();
+    const winner = "c".repeat(32);
+    await bucket.fold(MIXED, { attempt: winner });
+    await bucket.tick(gcConfig(mutant));
+    const listed = await bucket.keys(GC_RECORDS);
+    const own = listed.find((key) => key.includes(`/${winner}/`))!;
+    for (let floor = 1; floor <= 4; floor++) {
+      const sealed = await sealFoldRecord(GC_PREFIX, {
+        attempt: winner,
+        base: { floor, root: null, attempt: null, generation: null },
+        result: { floor: floor + 1, root: null },
+        fresh: [],
+        superseded: [],
+      });
+      await bucket.memory.put(sealed.key, sealed.bytes);
+    }
+    const deleted: string[] = [];
+    for (const minutes of [DELAY + 1, 1, 1, 1]) {
+      bucket.advance(minutes);
+      const { result } = await bucket.tick(gcConfig(mutant));
+      deleted.push(...result.deleted);
+    }
+    const problems: string[] = [];
+    const nodes = deleted.filter((key) => key.startsWith(GC_NODES));
+    if (nodes.length > 0) {
+      problems.push(`deleted nodes ${nodes.join(", ")}`);
+    }
+    const left = await bucket.keys(GC_RECORDS);
+    if (left.includes(own)) {
+      problems.push("the quarantined winner's record remains");
+    }
+    const state = await bucket.state();
+    if (state?.work.some((entry) => entry.winner.startsWith(winner))) {
+      problems.push("the quarantined slot remains");
+    }
+    return joined(problems);
+  });
+
 // ---------------------------------------------------------------------
 // Record path
 // ---------------------------------------------------------------------
@@ -1027,6 +1074,10 @@ describe("attempt identity and closure", () => {
 
   test("a winner whose identity reappears is quarantined even when its record outlives the tick", async () => {
     await expect(quarantineFailure()).resolves.toBeUndefined();
+  });
+
+  test("a quarantined slot drops and retires its winner's record leak-only", async () => {
+    await expect(quarantineClearsFailure()).resolves.toBeUndefined();
   });
 
   test("a record of another head history is never evidence for the new history's winner", async () => {
@@ -1341,7 +1392,10 @@ describe("mutation", () => {
     [SWEEP_MEMBER_AGAINST_MARK_ROOT, [sweepInFlightFailure]],
     [GC_SKIPS_MEMBERSHIP_CHECK, [membershipFailure, withReusedNode(reclaimFailure)]],
     [PUBLISH_REUSES_ATTEMPT, [reuseCounterFailure]],
-    [GC_IGNORES_DUPLICATE_IDENTITY, [reuseFailure, lateDuplicateFailure, sweepReuseFailure]],
+    [
+      GC_IGNORES_DUPLICATE_IDENTITY,
+      [reuseFailure, lateDuplicateFailure, sweepReuseFailure, quarantineClearsFailure],
+    ],
     [GC_PROCESSES_OPEN_FLOOR, [openFloorFailure]],
     [GC_IGNORES_GENERATION, [regenerationFailure]],
     [GC_WINNER_AS_LOSER, [raceFailure]],
