@@ -94,16 +94,6 @@ export const TREE_READ_PARALLEL_GETS: number = MAX_PARALLEL_LOG_READS;
 export const TREE_FOLD_TICK_BUDGET_MS = 20_000;
 
 /**
- * Per-call latency, in milliseconds, a fold's publication estimate
- * assumes before it has timed any storage call. Well above the few
- * hundred milliseconds an R2 binding or S3 GET takes, so a fold that
- * has no measurement errs toward publishing early. The fold times its
- * head GET before it plans, so this applies only when that measurement
- * is missing.
- */
-export const TREE_FOLD_DEFAULT_CALL_MS = 1_000;
-
-/**
  * Most storage calls a fold keeps in flight at once when no width is
  * passed: its node read-ahead (`FoldPlanner.prefetch`) and each level of
  * its publication's creates (`publishTree`). Planning and publication
