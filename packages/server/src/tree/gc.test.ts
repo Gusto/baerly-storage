@@ -1373,6 +1373,41 @@ describe("budget", () => {
     expect(result.outcome).toBe("budget");
   });
 
+  test("a probe tick with no room for one check at any depth lists nothing and still retires the log", async () => {
+    const bucket = await GcBucket.seeded();
+    const listed: string[] = [];
+    for (const prefix of [GC_NODES, GC_RECORDS]) {
+      bucket.onList.set(prefix, async () => {
+        listed.push(prefix);
+      });
+    }
+    const before = await bucket.head();
+    const floorBefore = before.json.log_delete_floor ?? 0;
+    const { result } = await bucket.tickWithLedger(TREE_GC_TICK_RESERVED_CALLS + 2, gcConfig(), 0);
+    expect(result).toMatchObject({ outcome: "budget", probed: false, deleted: [] });
+    expect(listed).toEqual([]);
+    const head = await bucket.head();
+    expect(head.json.log_delete_floor).toBeGreaterThan(floorBefore);
+  });
+
+  test("a probe tick with no room at the root's depth writes the probe, so the next ticks are paced", async () => {
+    const bucket = await GcBucket.seeded();
+    // Room for one check at depth 0 after the state GET, none at depth 3 after the root GET.
+    const limit = TREE_GC_TICK_RESERVED_CALLS + 4 * 3 + 5;
+    const first = await bucket.tickWithLedger(limit);
+    expect(first.result).toMatchObject({ outcome: "budget", deleted: [] });
+    const listed: string[] = [];
+    for (const prefix of [GC_NODES, GC_RECORDS]) {
+      bucket.onList.set(prefix, async () => {
+        listed.push(prefix);
+      });
+    }
+    bucket.advance(0.5);
+    const second = await bucket.tickWithLedger(limit);
+    expect(second.result.outcome).toBe("paced");
+    expect(listed).toEqual([]);
+  });
+
   test("a deleting tick's charged calls stay within the static bound for its candidate count", async () => {
     const bucket = await GcBucket.seeded();
     await bucket.fold(MIXED);

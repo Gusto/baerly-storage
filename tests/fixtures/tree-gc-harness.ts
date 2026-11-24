@@ -391,11 +391,18 @@ export class GcBucket {
   async tickWithLedger(
     limit: number,
     config: TreeConfig = gcConfig(),
+    retireWindow?: number,
   ): Promise<{ readonly result: TreeGcTickResult; readonly charged: number }> {
     const ledger = new RequestLedger({ internal: limit, external: limit });
     const storage = ledgeredStorage(this.storage, "internal");
     const result = await runWithContext(createObservabilityContext({ ledger }), () =>
-      runTreeGcTick({ storage, prefix: GC_PREFIX, config, now: () => new Date(this.local) }),
+      runTreeGcTick({
+        storage,
+        prefix: GC_PREFIX,
+        config,
+        now: () => new Date(this.local),
+        ...(retireWindow !== undefined && { retireWindow }),
+      }),
     );
     return { result, charged: limit - ledger.storageRemaining() };
   }

@@ -56,9 +56,12 @@
  * write; the queued retirements; checks and DELETEs (active losers'
  * fresh nodes, due winners' superseded nodes, due sweep marks); the
  * sweep's notes and stamps; the state write, only when something
- * changed; then `retireLogRange`. Every DELETE follows that tick's record LIST, which
- * the identity checks are drawn from. Candidate checks per tick are
- * sized from the request ledger.
+ * changed; then `retireLogRange`. Every DELETE follows that tick's
+ * record LIST, which the identity checks are drawn from. Candidate
+ * checks per tick are sized from the request ledger: a probe tick
+ * without room for one check at depth 0 lists nothing and behaves as a
+ * paced tick; one without room at the root's depth writes the probe
+ * alone, then retires the log.
  */
 import {
   BaerlyError,
@@ -232,7 +235,10 @@ export interface TreeGcTickResult {
    * - `reset`: the state was malformed or of another head history, and
    *   was replaced by the empty state;
    * - `paced`: no probe was due, so the tick only retired the log;
-   * - `budget`: the request ledger had no room for one candidate check;
+   * - `budget`: the request ledger had no room for one candidate check,
+   *   so the tick deleted nothing and only retired the log. Judged at
+   *   depth 0 before any LIST; a tick only the root's depth rules out
+   *   writes the probe, so the next probe interval is paced;
    * - `conflict`: the probe write lost, so the tick deleted nothing.
    */
   readonly outcome: "collected" | "paced" | "no-head" | "reset" | "budget" | "conflict";
@@ -295,6 +301,10 @@ const sameState = (a: TreeGcState, b: TreeGcState): boolean =>
     encodeTreeGcState({ ...b, floor_seen: 0 }),
   );
 
+/** Calls the current request ledger has left; unbounded without one. */
+const ledgerLeft = (): number =>
+  currentRequestLedger()?.storageRemaining() ?? Number.POSITIVE_INFINITY;
+
 const isUnknownFate = (error: unknown): boolean =>
   isWriteConflict(error) || (error instanceof BaerlyError && error.code === "NetworkError");
 
@@ -342,8 +352,17 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
       ...(signal !== undefined && { signal }),
     });
 
+  const countBudgetSkip = (): void => {
+    ctxMetrics().counter("db.maintenance.request_budget_skipped_total", 1, {
+      collection,
+      phase: "gc",
+    });
+  };
+
   // 1. The state.
   const got = await storage.get(stateKey, opts);
+  // A ledger reports its room only once it has charged a storage call.
+  const leftAfterState = ledgerLeft();
   const decoded = got === null ? null : decodeTreeGcState(stateKey, got.body);
   const e0 = got?.etag ?? null;
   const read = decoded?.kind === "state" ? decoded.state : null;
@@ -367,6 +386,13 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
   if (!probe && decoded?.kind !== "malformed") {
     await retire();
     return end("paced");
+  }
+  // A ledger without room for one check even at depth 0 skips the
+  // collection the way a paced tick does: no LIST, then the log.
+  if (probe && treeGcCandidates(0, leftAfterState) < 1) {
+    countBudgetSkip();
+    await retire();
+    return end("budget");
   }
 
   // The sweep page, listed before the head unless a mutant moves it.
@@ -409,16 +435,20 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
   // 4. The root, and the candidate budget it implies.
   const root = await readTreeRoot(storage, head, config, opts);
   const depth = root?.node.level ?? 0;
-  const candidates = treeGcCandidates(
-    depth,
-    currentRequestLedger()?.storageRemaining() ?? Number.POSITIVE_INFINITY,
-  );
+  const candidates = treeGcCandidates(depth, ledgerLeft());
   if (candidates < 1) {
-    ctxMetrics().counter("db.maintenance.request_budget_skipped_total", 1, {
-      collection,
-      phase: "gc",
-    });
-    return end("budget");
+    // No room at this depth: write the probe alone, so the ticks of the
+    // next probe interval are paced instead of listing again, then the log.
+    countBudgetSkip();
+    try {
+      await putState({ ...base, ticks: base.ticks + 1, probed_local_at: local.toISOString() }, e0);
+    } catch (error) {
+      if (!isUnknownFate(error)) {
+        throw error;
+      }
+    }
+    await retire();
+    return end("budget", { probed: true });
   }
 
   // 5. The record page.
