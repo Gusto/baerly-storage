@@ -36,6 +36,7 @@ import {
   LOG_RETENTION_MAX_DELETES_PER_TICK,
   MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
   MAINTENANCE_MAX_FOLD_ROWS,
+  MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
   STORAGE_RETRY_MAX_ATTEMPTS,
   WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
@@ -726,6 +727,8 @@ export interface HostProfile {
   readonly collection: CollectionSize;
   /** Log entries one fold pass takes (`maxFoldEntriesPerPass`). */
   readonly entriesPerPass: number;
+  /** Storage calls a fold keeps in flight at once (`foldParallelCalls`). */
+  readonly foldParallelCalls: number;
   /** GC deletes per tick (`gcMaxSweeps`). */
   readonly gcSweeps: number;
   /** Log objects one retirement pass deletes (`LOG_RETENTION_MAX_DELETES_PER_TICK`). */
@@ -746,6 +749,7 @@ export const FREE_R2_HOST: HostProfile = {
   ledger: FREE_LEDGER,
   collection: FLOOR_COLLECTION,
   entriesPerPass: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+  foldParallelCalls: MAINTENANCE_PROFILE_CF_FREE.foldParallelCalls,
   gcSweeps: WRITE_TICK_GC_MAX_SWEEPS,
   retirementDeletes: LOG_RETENTION_MAX_DELETES_PER_TICK,
   listPageKeys: GC_MARK_LIST_PAGE_KEYS,
@@ -758,6 +762,7 @@ export const PAID_HOST: HostProfile = {
   ledger: PAID_LEDGER,
   collection: PAID_COLLECTION,
   entriesPerPass: MAINTENANCE_PROFILE_CF_PAID.maxFoldEntriesPerPass,
+  foldParallelCalls: MAINTENANCE_PROFILE_CF_PAID.foldParallelCalls,
   gcSweeps: MAINTENANCE_PROFILE_CF_PAID.gcMaxSweeps,
   retirementDeletes: LOG_RETENTION_MAX_DELETES_PER_TICK,
   listPageKeys: GC_MARK_LIST_PAGE_KEYS,

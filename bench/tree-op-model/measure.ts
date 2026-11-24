@@ -652,7 +652,7 @@ export interface MeasuredFold extends Measured {
 /**
  * One fold step on a bucket whose unfolded tail is `tailLength` entries,
  * with the writer's committed tail as `knownTail` (the write tick passes
- * it), against `budget`. A concurrent `tail_hint` refresh lands between
+ * it), against `budget`, at the host's fold width `parallelCalls`. A concurrent `tail_hint` refresh lands between
  * planning and publication, so the head CAS is lost and the fold pays
  * its fate re-read: the worst case the model's tick assumes. That
  * refresh goes to the bucket directly and is not counted.
@@ -663,6 +663,7 @@ export const measureFold = async (
   tailLength: number,
   mode: FaultMode,
   budget: number,
+  parallelCalls: number,
   depthZero?: TreeDepthZeroLimit,
 ): Promise<MeasuredFold> => {
   const m = meter(bucket, mode, Number.MAX_SAFE_INTEGER);
@@ -673,6 +674,7 @@ export const measureFold = async (
       budget,
       knownTail: tailLength,
       config: DEFAULT_TREE_CONFIG,
+      parallelCalls,
       // Counts must not depend on how fast this host plans, so the
       // tick budget never stops a measured fold.
       tickBudgetMs: Number.POSITIVE_INFINITY,

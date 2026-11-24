@@ -1,4 +1,10 @@
-import { MemoryStorage } from "@baerly/protocol";
+import {
+  MAINTENANCE_PROFILE_CF_PAID,
+  MAINTENANCE_PROFILE_NODE,
+  MemoryStorage,
+  type Storage,
+} from "@baerly/protocol";
+import { TREE_FOLD_TICK_BUDGET_MS } from "../../packages/server/src/tree/constants.ts";
 import { describe, expect, test, vi } from "vitest";
 import { cellByName, CELLS, FIXTURES, headKey, savedHeadKey, selectCells } from "./cells.ts";
 import { buildFixture, fixtureText } from "./fixtures.ts";
@@ -137,7 +143,10 @@ describe("fold tick and reset", () => {
     const cell = cellByName("d1b256-100-memory")!;
 
     for (let sample = 0; sample < 2; sample++) {
-      const result = await runFoldStep(retrying(storage), cell);
+      const result = await runFoldStep(retrying(storage), cell, {
+        profile: MAINTENANCE_PROFILE_CF_PAID,
+        startedAt: Date.now(),
+      });
       expect(sampleProblem(cell, result)).toBeNull();
       expect(result).toMatchObject({ outcome: "published", floor: 0, foldEnd: 100, folded: 100 });
       expect(result.nodesWritten).toBeGreaterThan(1);
@@ -151,6 +160,67 @@ describe("fold tick and reset", () => {
       });
       await expect(image(storage)).resolves.toEqual(fixture);
     }
+  });
+
+  /** A fresh bucket holding the d1b256 fixture with a `tail`-entry log. */
+  const fixtureBucket = async (tail: number): Promise<MemoryStorage> => {
+    const built = await buildFixture(
+      FIXTURES.find((f) => f.tenant === "d1b256")!,
+      tail,
+    );
+    const storage = new MemoryStorage();
+    const enc = new TextEncoder();
+    for (const [key, text] of built.objects) {
+      await storage.put(key, enc.encode(text));
+    }
+    return storage;
+  };
+
+  test("a tick creates nodes at most its host profile's fold width at once", async () => {
+    const cell = cellByName("d1b256-500-memory")!;
+    const widest: number[] = [];
+    for (const profile of [MAINTENANCE_PROFILE_CF_PAID, MAINTENANCE_PROFILE_NODE]) {
+      const inner = await fixtureBucket(500);
+      const seen = { inFlight: 0, max: 0 };
+      const storage: Storage = {
+        ...inner,
+        get: (key, opts) => inner.get(key, opts),
+        list: (prefix, opts) => inner.list(prefix, opts),
+        delete: (key, opts) => inner.delete(key, opts),
+        put: async (key, body, opts) => {
+          if (!key.includes("/_v99/n/")) {
+            return inner.put(key, body, opts);
+          }
+          seen.inFlight += 1;
+          seen.max = Math.max(seen.max, seen.inFlight);
+          try {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+            return await inner.put(key, body, opts);
+          } finally {
+            seen.inFlight -= 1;
+          }
+        },
+      };
+      const result = await runFoldStep(retrying(storage), cell, {
+        profile,
+        startedAt: Date.now(),
+      });
+      expect(sampleProblem(cell, result)).toBeNull();
+      widest.push(seen.max);
+    }
+    expect(widest).toEqual([
+      MAINTENANCE_PROFILE_CF_PAID.foldParallelCalls,
+      MAINTENANCE_PROFILE_NODE.foldParallelCalls,
+    ]);
+  });
+
+  test("a tick whose request arrived a whole tick budget ago folds one entry and stops on the tick budget", async () => {
+    const cell = cellByName("d1b256-100-memory")!;
+    const result = await runFoldStep(retrying(await fixtureBucket(300)), cell, {
+      profile: MAINTENANCE_PROFILE_CF_PAID,
+      startedAt: Date.now() - TREE_FOLD_TICK_BUDGET_MS,
+    });
+    expect(result).toMatchObject({ outcome: "published", folded: 1, stop: "tick-budget" });
   });
 
   test("reset refuses a tenant with no saved head", async () => {
