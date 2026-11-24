@@ -236,6 +236,8 @@
     "bench:tree-fold-cpu:fixtures": "node bench/tree-fold-cpu-worker/fixtures.ts",
     "bench:tree-fold-cpu:build": "node bench/tree-fold-cpu-worker/build.ts",
     "bench:tree-fold-cpu:node-baseline": "node bench/tree-fold-cpu-worker/node-baseline.ts",
+    "bench:tree-fold-cpu:drive": "node bench/tree-fold-cpu-worker/drive.ts",
+    "bench:tree-fold-cpu:analyze": "node bench/tree-fold-cpu-worker/analyze.ts",
     "eval": "node --import ./eval/resolve-package.mjs eval/cli.ts"
   },
   "dependencies": {
