@@ -65,6 +65,23 @@ describe("handleSpecRequest", () => {
   const accept: Verifier = async () => ({ tenantPrefix: "acme", identity: {} });
   const deny: Verifier = async () => null;
 
+  test("cookie-authenticated collection metadata cannot be stored by a shared cache", async () => {
+    const config: BaerlyConfig = {
+      collections: { notes: { indexes: [{ name: "by_author", on: ["author"] }] } },
+    };
+    const request = new Request("http://localhost/v1/spec", {
+      headers: { cookie: "session=valid" },
+    });
+    const verifier: Verifier = async (incoming) =>
+      incoming.headers.get("cookie") === "session=valid"
+        ? { tenantPrefix: "acme", identity: {} }
+        : null;
+    const res = await handleSpecRequest(request, async () => ({ verifier, config }));
+    const body = await res.json();
+    expect(body.collections).toEqual([{ name: "notes", indexes: ["by_author"] }]);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
   test("identity accepted: appends the declared collections", async () => {
     const config: BaerlyConfig = { collections: { notes: {}, tasks: {} } };
     const res = await handleSpecRequest(req(), async () => ({ verifier: accept, config }));

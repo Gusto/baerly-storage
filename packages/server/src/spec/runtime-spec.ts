@@ -74,6 +74,6 @@ export async function handleSpecRequest(
   }
   return new Response(JSON.stringify(buildSpecResponse(config)), {
     status: 200,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
 }
