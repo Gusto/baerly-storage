@@ -102,3 +102,5 @@ docs/whisper/
 bench/cpu-factor-worker/out/
 # Paid memory bench Worker: generated fixtures and manifest
 bench/paid-memory-worker/out/
+# Tree fold CPU bench Worker: generated fixtures, manifest, Node baseline, run logs
+bench/tree-fold-cpu-worker/out/

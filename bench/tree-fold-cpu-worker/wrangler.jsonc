@@ -1,0 +1,25 @@
+// Tree fold CPU bench Worker for Workers Paid. Synthetic data only,
+// workers.dev only: no routes, no account_id (wrangler deploys to the
+// account its token names). The one binding is a throwaway R2 bucket that
+// holds the synthetic fixtures; create it before deploying and delete it
+// (objects first, `drive.ts wipe`) afterwards. `BENCH_SECRET` is a wrangler
+// secret gating every route. See README.md.
+{
+  "name": "baerly-tree-fold-cpu-bench",
+  "main": "./dist/worker.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "upload_source_maps": false,
+  // The Paid maximum, so the platform never ends a tick before it finishes.
+  "limits": { "cpu_ms": 300000 },
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "baerly-tree-fold-cpu-synthetic" }],
+  "vars": {
+    // Bumped (`--var BENCH_EPOCH:<n>`) to force a new version, and with it
+    // fresh isolates, for a cold arm.
+    "BENCH_EPOCH": "0",
+  },
+  "observability": { "enabled": true },
+}
