@@ -580,6 +580,45 @@ export const gcTickCalls = (input: GcTickInput): Calls => {
   );
 };
 
+// ── Tree GC tick ─────────────────────────────────────────────────────────
+
+/**
+ * Charged calls of one tree GC candidate check at root level `depth`:
+ * its DELETE plus its membership GETs, each charged at every attempt.
+ * At depth 0 or 1 membership is decided from the key alone; above, a
+ * check GETs the candidate and at most `depth − 1` path nodes
+ * (`packages/server/src/tree/gc-member.ts`).
+ */
+export const treeGcCandidateCalls = (depth: number): number =>
+  depth <= 1 ? STORAGE_RETRY_MAX_ATTEMPTS : STORAGE_RETRY_MAX_ATTEMPTS * (depth + 1);
+
+/**
+ * The static bound on one tree GC tick's charged calls with `candidates`
+ * checks at root level `depth` (`packages/server/src/tree/gc.ts`): the
+ * state GET, the sweep and record LISTs, the head and root GETs, 4
+ * record GETs and 4 record DELETEs (each charged at every attempt), one
+ * state create (retried) and one state CAS (sent once), the checks, and
+ * log retirement (its gate GET alone, or 69 when it finds work).
+ */
+export const treeGcTickBound = (
+  candidates: number,
+  depth: number,
+  retirementFindsWork: boolean,
+): number => {
+  const a = STORAGE_RETRY_MAX_ATTEMPTS;
+  const fixed = 5 * a + 4 * a + 4 * a + a + 1;
+  const retire = retirementFindsWork ? 3 * a + 20 * a : a;
+  return fixed + candidates * treeGcCandidateCalls(depth) + retire;
+};
+
+/**
+ * Class A writes per minute that tree GC adds, at `foldsPerMinute` folds
+ * a minute: each fold attempt's record create, at most one state write
+ * to resolve its floor, and at most two state writes per clock probe,
+ * one probe a minute. Independent of the app's write rate.
+ */
+export const treeGcClassAPerMinute = (foldsPerMinute: number): number => foldsPerMinute * 2 + 2;
+
 // ── Reads ────────────────────────────────────────────────────────────────
 
 export interface ReadInput {
