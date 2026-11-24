@@ -877,7 +877,7 @@ const byteFuzz = (config: TreeConfig) =>
 interface RespellSites {
   /** Just after a structural `,` or `:`. */
   readonly whitespace: number[];
-  /** A plain (unescaped) character inside a string. */
+  /** A plain (unescaped) code point inside a string; an astral one is a single site. */
   readonly escape: number[];
   /** Just after an integer token. */
   readonly number: number[];
@@ -896,6 +896,10 @@ const respellSites = (text: string): RespellSites => {
         inString = false;
       } else {
         sites.escape.push(i);
+        // A surrogate pair is one code point: never a site on its low half.
+        if (c >= "\ud800" && c <= "\udbff") {
+          i++;
+        }
       }
     } else if (c === '"') {
       inString = true;
@@ -950,8 +954,17 @@ const respell = (text: string, r: Respelling): string | null => {
   if (r.kind === "number") {
     return `${text.slice(0, at)}${r.suffix}${text.slice(at)}`;
   }
-  const unit = text.charCodeAt(at).toString(16).padStart(4, "0");
-  return `${text.slice(0, at)}\\u${r.upper ? unit.toUpperCase() : unit}${text.slice(at + 1)}`;
+  // Escape every UTF-16 unit of the code point: a lone escaped surrogate
+  // beside a raw one would be replaced with U+FFFD when encoded to UTF-8.
+  const width = (text.codePointAt(at) ?? 0) > 0xffff ? 2 : 1;
+  const escaped = Array.from({ length: width }, (_, k) => {
+    const unit = text
+      .charCodeAt(at + k)
+      .toString(16)
+      .padStart(4, "0");
+    return `\\u${r.upper ? unit.toUpperCase() : unit}`;
+  }).join("");
+  return `${text.slice(0, at)}${escaped}${text.slice(at + width)}`;
 };
 
 /** A non-canonical respelling of a valid body: always refused. */
@@ -963,6 +976,8 @@ const respellFuzz = (config: TreeConfig) =>
       return;
     }
     const bytes = utf8.encode(text);
+    // The bytes carry the text unchanged: no lone surrogate was replaced.
+    expect(new TextDecoder().decode(bytes)).toBe(text);
     // Same value, different bytes: the respelling parses to the seed's value.
     expect(JSON.parse(text)).toEqual(JSON.parse(new TextDecoder().decode(s.bytes)));
     const key = treeNodeKey(P, s.attempt, await sha256Hex(bytes));
@@ -1023,6 +1038,37 @@ describe("tree node decoder fuzz", () => {
 
   test("a respelling with the same value (whitespace, escapes, number spellings) is always refused", async () => {
     await fc.assert(respellFuzz(PRODUCTION));
+  });
+
+  test("an escape respelling never splits a surrogate pair, and is refused at every site", async () => {
+    const node: TreeNode = {
+      kind: "leaf",
+      collection: COLLECTION,
+      attempt: A1,
+      level: 0,
+      root: null,
+      docs: [{ _id: "a", "\u{1f600}x": 1 }],
+    };
+    const s = await seedOf("astral key", node);
+    const canonical = new TextDecoder().decode(s.bytes);
+    expect(canonical).toContain("\u{1f600}x");
+    const sites = respellSites(canonical).escape;
+    // The pair is one site: the low surrogate is never offered on its own.
+    expect(sites.some((at) => canonical[at]! >= "\udc00" && canonical[at]! <= "\udfff")).toBe(
+      false,
+    );
+    for (const upper of [false, true]) {
+      for (let pick = 0; pick < sites.length; pick++) {
+        const text = respell(canonical, { kind: "escape", pick, upper })!;
+        const bytes = utf8.encode(text);
+        expect(new TextDecoder().decode(bytes)).toBe(text);
+        expect(JSON.parse(text)).toEqual(JSON.parse(canonical));
+        const key = treeNodeKey(P, s.attempt, await sha256Hex(bytes));
+        const outcome = await settle(decodeNode(key, bytes, s.expected, PRODUCTION));
+        expect(outcome.ok).toBe(false);
+        expect((outcome as { error: BaerlyError }).error.code).toBe("InvalidResponse");
+      }
+    }
   });
 
   fcTest.prop({ s: routedSeed, swap: fc.nat(), dup: fc.boolean() })(
