@@ -169,12 +169,41 @@ interface PlanSteps extends ChunkSteps {
   readonly resyncStops: (chunkerEmpty: boolean) => boolean;
 }
 
-const planSteps = (config: TreeConfig, key: ChunkKey): PlanSteps => ({
-  ...chunkSteps(config, key),
-  sortMutations: config.steps.sortMutations ?? sortMutationsById,
-  leafRestartsBefore: config.steps.leafRestartsBefore ?? leafIsIsolated,
-  resyncStops: config.steps.resyncStops ?? resyncWhenEmpty,
-});
+/**
+ * `hash` remembering every value it returns. The chunk hash is a pure
+ * function of the level, the `_id` and the salt, and a fold re-chunks
+ * the rows around every change, so without this each change would
+ * re-hash every row of the leaves it re-chunks: per-change work
+ * proportional to rows per leaf. A planner hashes each `_id` at each
+ * level at most once.
+ */
+const memoizedHash = (hash: ChunkSteps["hash"]): ChunkSteps["hash"] => {
+  const levels = new Map<number, Map<string, number>>();
+  return async (level, id) => {
+    let byId = levels.get(level);
+    if (byId === undefined) {
+      byId = new Map();
+      levels.set(level, byId);
+    }
+    let value = byId.get(id);
+    if (value === undefined) {
+      value = await hash(level, id);
+      byId.set(id, value);
+    }
+    return value;
+  };
+};
+
+const planSteps = (config: TreeConfig, key: ChunkKey): PlanSteps => {
+  const steps = chunkSteps(config, key);
+  return {
+    ...steps,
+    hash: memoizedHash(steps.hash),
+    sortMutations: config.steps.sortMutations ?? sortMutationsById,
+    leafRestartsBefore: config.steps.leafRestartsBefore ?? leafIsIsolated,
+    resyncStops: config.steps.resyncStops ?? resyncWhenEmpty,
+  };
+};
 
 const internal = (detail: string): never => {
   throw new BaerlyError("Internal", `tree fold plan: ${detail}`);
