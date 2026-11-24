@@ -160,3 +160,101 @@ export const TREE_MESSAGE_VALUE_CHARS = MAX_SEGMENT_BYTES;
  * long field list can add.
  */
 export const TREE_MESSAGE_DETAIL_CHARS = 4096;
+
+// ---------------------------------------------------------------------
+// Fold records and artifact GC
+// ---------------------------------------------------------------------
+
+/** The `format` tag of every fold-record body. */
+export const TREE_FOLD_RECORD_FORMAT = "baerly-tree-fold-record-proto";
+
+/** The `schema_version` of every fold-record body. */
+export const TREE_FOLD_RECORD_SCHEMA_VERSION = 1;
+
+/**
+ * Most node keys one fold record lists, `fresh` and `superseded`
+ * together. Far above what any host's request ledger lets a fold touch:
+ * the Workers Paid ledger admits at most about 1,500 fresh nodes and
+ * 3,000 read ones, and an unbudgeted Node fold at its largest snapshot
+ * ceiling stays near 9,000. Each listed key costs at most 100 body bytes,
+ * so a full record fits {@link TREE_GC_RECORD_MAX_BODY_BYTES}. The fold
+ * planner stops a fold before its record would pass this, as it stops
+ * one that would overrun its ledger.
+ */
+export const TREE_GC_RECORD_MAX_KEYS = 16_384;
+
+/**
+ * Decoder ceiling on a fold-record body, in body bytes: the leaf
+ * ceiling, so every tree object shares one read ceiling. It holds
+ * {@link TREE_GC_RECORD_MAX_KEYS} keys at 100 bytes each plus the
+ * envelope with room to spare.
+ */
+export const TREE_GC_RECORD_MAX_BODY_BYTES: number = LEAF_MAX_BODY_BYTES;
+
+/**
+ * Minutes a superseded tree node outlives the fold that replaced it, on
+ * the storage server's clock, counted from when GC first stamps the
+ * replacement. Sized to outlast one read: a complete scan at the largest
+ * fold ceiling is about 1,350 GETs, seconds at storage latency, so a
+ * quarter hour leaves wide room for a slow or suspended invocation. A
+ * read that outlives it restarts or refuses with a retriable error, so
+ * the delay is a margin, not a proof.
+ */
+export const TREE_GC_SUPERSEDED_DELAY_MINUTES = 15;
+
+/**
+ * Minutes, on the storage server's clock, that a tree node the leak
+ * sweep found unreachable and unpublishable waits before the sweep may
+ * delete it. A margin for reads through older roots; the deletion still
+ * needs a fresh reachability check. At least
+ * {@link TREE_GC_SUPERSEDED_DELAY_MINUTES}, so the sweep never deletes a
+ * node sooner after its supersession than the fold-record path would.
+ * The same age retires the records of a floor GC could not resolve.
+ */
+export const TREE_GC_SWEEP_AGE_MINUTES = 60;
+
+/**
+ * Least local-clock minutes between two GC state writes made only to
+ * read the storage server's time, judged against the local time of the
+ * previous one. Paces cost, about two writes a minute at most whatever
+ * the write rate; never decides a deletion. Coarse enough to be cheap
+ * and fine enough that it adds little to minute-scale delays.
+ */
+export const TREE_GC_CLOCK_PROBE_MINUTES = 1;
+
+/**
+ * Candidate checks one GC tick makes, the sweep page's listed keys
+ * included: the floor a tick uses wherever its ledger does not admit
+ * more. At depth 0 or 1 each check costs 3 calls, so a tick costs about
+ * 235 calls, inside the Cloudflare Free ledger with room for the commit
+ * and log retirement. At most `GC_MARK_LIST_PAGE_KEYS`, so one record
+ * page always holds a tick's work.
+ */
+export const TREE_GC_TICK_CANDIDATES = 64;
+
+/**
+ * Keys per leak-sweep LIST page, one page per clock probe. Small, so the
+ * sweep's checks leave most of {@link TREE_GC_TICK_CANDIDATES} to the
+ * fold records; a pass over 1,350 nodes then takes about 85 probes.
+ */
+export const TREE_GC_SWEEP_LIST_KEYS = 16;
+
+/**
+ * Most fold-record GETs one GC tick makes, and separately most record
+ * DELETEs. A fixed part of the tick's static call bound; a tick needs
+ * only a few records to fill its candidate checks.
+ */
+export const TREE_GC_TICK_RECORD_CALLS = 4;
+
+/**
+ * Most per-floor work entries the GC state holds. Bounds the state
+ * body; while it is full GC resolves no new floor, which delays
+ * reclamation and never makes a deletion unsafe.
+ */
+export const TREE_GC_MAX_WORK_ENTRIES = 256;
+
+/**
+ * Most leak-sweep marks the GC state holds. Bounds the state body; a
+ * key left unmarked is examined again on the next sweep pass.
+ */
+export const TREE_GC_MAX_SWEEP_MARKS = 256;
