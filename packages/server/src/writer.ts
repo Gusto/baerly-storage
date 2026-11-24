@@ -1220,11 +1220,10 @@ export class Writer {
         }
         try {
           entries.push(decodeJsonBytes<LogEntry>(got.body));
-        } catch (error) {
+        } catch {
           throw storedJsonParseError(
             `${errorPrefix}: malformed log entry at ${keys[i]!}`,
             got.body.byteLength,
-            error,
           );
         }
       }
@@ -1247,12 +1246,8 @@ export class Writer {
     let existing: unknown;
     try {
       existing = decodeJsonBytes(got.body);
-    } catch (error) {
-      throw storedJsonParseError(
-        `Writer: malformed log occupant at ${key}`,
-        got.body.byteLength,
-        error,
-      );
+    } catch {
+      throw storedJsonParseError(`Writer: malformed log occupant at ${key}`, got.body.byteLength);
     }
     if (!hasWriterIdentity(existing)) {
       // Parsed JSON alone cannot establish a conflicting writer's identity.

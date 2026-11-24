@@ -98,12 +98,8 @@ const readLogEntryWithBytes = async (
   let entry: unknown;
   try {
     entry = decodeJsonBytes<unknown>(got.body);
-  } catch (error) {
-    throw storedJsonParseError(
-      `log-walk: malformed log entry at ${key}`,
-      got.body.byteLength,
-      error,
-    );
+  } catch {
+    throw storedJsonParseError(`log-walk: malformed log entry at ${key}`, got.body.byteLength);
   }
   if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
     throw new BaerlyError("InvalidResponse", `log-walk: log entry at ${key} is not a JSON object`);

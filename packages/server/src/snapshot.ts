@@ -157,11 +157,10 @@ export const loadSnapshotAsMap = async (
   let parsed: unknown;
   try {
     parsed = decodeJsonBytes(got.body);
-  } catch (error) {
+  } catch {
     throw storedJsonParseError(
       `compact: snapshot ${key} body is not valid JSON`,
       got.body.byteLength,
-      error,
     );
   }
   if (parsed === null || typeof parsed !== "object") {

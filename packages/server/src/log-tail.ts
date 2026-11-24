@@ -117,7 +117,7 @@ export const probeTailChunk = async (
     opts?.onBody?.(got.body.byteLength);
     try {
       entries.push(decodeJsonBytes<LogEntry>(got.body));
-    } catch (error) {
+    } catch {
       if (opts?.tolerateMalformed === true) {
         complete = false;
         continue;
@@ -128,7 +128,6 @@ export const probeTailChunk = async (
       throw storedJsonParseError(
         `probeTailChunk: malformed log entry at ${key}`,
         got.body.byteLength,
-        error,
       );
     }
   }
