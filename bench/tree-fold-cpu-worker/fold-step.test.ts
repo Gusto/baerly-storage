@@ -144,7 +144,11 @@ describe("fold tick and reset", () => {
       await expect(image(storage)).resolves.not.toEqual(fixture);
 
       const reset = await resetTenant(bucket, spec.tenant);
-      expect(reset).toEqual({ deleted: result.nodesWritten, nodes: built.manifest.nodes });
+      expect(reset).toEqual({
+        deleted: result.nodesWritten,
+        records: 1,
+        nodes: built.manifest.nodes,
+      });
       await expect(image(storage)).resolves.toEqual(fixture);
     }
   });

@@ -440,6 +440,14 @@ export const leavesTouched = (input: FoldTickInput): number => {
 };
 
 /**
+ * Fold-record creates per fold attempt: one, before any node
+ * (`packages/server/src/tree/publish.ts`). Like a node create it is
+ * retried and may need one adoption readback, so under every-attempt
+ * charging it costs 6 calls.
+ */
+export const FOLD_RECORD_CREATES = 1;
+
+/**
  * One write-tick fold, as main's single-phase tick runs it
  * (`runBoundedMaintenance` Step 3 + `compact()`), with the snapshot GET/PUT
  * replaced by path and leaf calls:
@@ -449,12 +457,14 @@ export const leavesTouched = (input: FoldTickInput): number => {
  * - tail probe at the writer's observed tail (1 + concurrent commits);
  * - one GET per folded log entry;
  * - internal node GETs on the union of changed paths, and the touched leaves;
+ * - the fold record's create (1), before any node;
  * - node creates: every touched leaf and every union node, plus splits;
  * - the head CAS (1), and on a lost CAS the fate re-read of the head and
  *   the closing `tail_hint` refresh.
  *
  * At depth 0 with one leaf that is `MAINTENANCE_FOLD_BASE_REQUESTS + 1 + e`
- * (26 at e = 20), the `tick:fold` cells of `request-counts.json`.
+ * plus the fold record (27 at e = 20): the `tick:fold` cells of
+ * `request-counts.json`, which count main's compactor, plus one create.
  */
 export const foldTickCalls = (input: FoldTickInput): Calls => {
   const { shape, assumptions } = input;
@@ -465,7 +475,7 @@ export const foldTickCalls = (input: FoldTickInput): Calls => {
   return sumCalls(
     { gets: 1 + 1 + 1 + input.concurrentCommits + input.entriesFolded },
     input.emptyBase ? {} : { gets: union + leaves },
-    { creates: rewritten + splits, casPuts: 1 },
+    { creates: FOLD_RECORD_CREATES + rewritten + splits, casPuts: 1 },
     input.headCasLost ? { gets: 2, casPuts: 1 } : {},
   );
 };

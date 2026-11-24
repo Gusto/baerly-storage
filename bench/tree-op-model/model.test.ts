@@ -20,6 +20,7 @@ import {
   FLOOR_COLLECTION,
   FREE_R2_HOST,
   findLogTailGets,
+  FOLD_RECORD_CREATES,
   foldTickCalls,
   GC_WORST_STATE,
   gcTickCalls,
@@ -80,7 +81,9 @@ describe("depth 0 reproduces main's recorded request counts", () => {
       headCasLost: false,
       assumptions: DEFAULT_ASSUMPTIONS,
     });
-    expect(byKind(tick)).toEqual(recorded(`tick:fold tail=${tail} idx=0 snap=${snap}`));
+    // Main's compactor plus the tree's fold-record create.
+    const main = recorded(`tick:fold tail=${tail} idx=0 snap=${snap}`);
+    expect(byKind(tick)).toEqual({ ...main, put: main.put + FOLD_RECORD_CREATES });
   });
 
   test.each(states)("write route plus commit, tail=$tail snap=$snap", ({ tail, snap }) => {
@@ -95,7 +98,7 @@ describe("depth 0 reproduces main's recorded request counts", () => {
     expect(byKind(withCommit)).toEqual(recorded(`insert tail=${tail} idx=0 snap=${snap}`));
   });
 
-  test("the fold tick past the runner's GET is MAINTENANCE_FOLD_BASE_REQUESTS + e", () => {
+  test("the fold tick past the runner's GET is MAINTENANCE_FOLD_BASE_REQUESTS + e + the fold record", () => {
     const e = WRITE_TICK_FOLD_ENTRIES_PER_PASS;
     const tick = foldTickCalls({
       shape: DEPTH_0,
@@ -107,7 +110,9 @@ describe("depth 0 reproduces main's recorded request counts", () => {
       headCasLost: false,
       assumptions: DEFAULT_ASSUMPTIONS,
     });
-    expect(chargedRequests(tick, HAPPY_PATH)).toBe(1 + MAINTENANCE_FOLD_BASE_REQUESTS + e);
+    expect(chargedRequests(tick, HAPPY_PATH)).toBe(
+      1 + MAINTENANCE_FOLD_BASE_REQUESTS + e + FOLD_RECORD_CREATES,
+    );
   });
 });
 
@@ -203,8 +208,13 @@ describe("path sharing", () => {
         },
       });
     // Runner + compact head GETs, tail probe, 20 entries, path, 4 leaves.
-    expect(tick("distinct")).toMatchObject({ gets: 3 + 20 + 5 + 4, creates: 5 + 4, casPuts: 1 });
-    expect(tick("shared")).toMatchObject({ gets: 3 + 20 + 2 + 4, creates: 2 + 4, casPuts: 1 });
+    // Creates: the fold record, then the path and the leaves.
+    expect(tick("distinct")).toMatchObject({
+      gets: 3 + 20 + 5 + 4,
+      creates: 1 + 5 + 4,
+      casPuts: 1,
+    });
+    expect(tick("shared")).toMatchObject({ gets: 3 + 20 + 2 + 4, creates: 1 + 2 + 4, casPuts: 1 });
   });
 
   test("boundary neighbors and splits add leaves and creates at depth >= 1", () => {
@@ -220,7 +230,7 @@ describe("path sharing", () => {
     });
     // 4 changed + 4 neighbors = 8 leaves under 8 parents + the root.
     expect(calls.gets).toBe(3 + 20 + 9 + 8);
-    expect(calls.creates).toBe(2 * (9 + 8));
+    expect(calls.creates).toBe(1 + 2 * (9 + 8));
   });
 });
 

@@ -16,6 +16,7 @@ import {
 } from "../../packages/server/src/tree/layout.ts";
 import { sortMutationsById } from "../../packages/server/src/tree/plan.ts";
 import { readTreeTail } from "../../packages/server/src/tree/read.ts";
+import { foldRecordBase, foldRecordSuperseded } from "../../packages/server/src/tree/record.ts";
 
 export interface TreeMutant {
   /** Stable name for test titles. */
@@ -233,11 +234,67 @@ export const PUBLISH_ADOPTS_WITHOUT_COMPARE: TreeMutant = {
   options: { steps: { adoptionBytesMatch: () => true } },
 };
 
+/** A publisher that creates the fresh nodes before the fold record. */
+export const PUBLISH_NODES_BEFORE_RECORD: TreeMutant = {
+  name: "publish-nodes-before-record",
+  defect: "a fresh node is written before the fold record",
+  options: {
+    steps: {
+      publicationOrder: (writes) => [
+        ...writes.filter((write) => write.kind === "nodes"),
+        ...writes.filter((write) => write.kind === "record"),
+        ...writes.filter((write) => write.kind === "head"),
+      ],
+    },
+  },
+};
+
+/** A fold record that also lists one of the nodes the new tree reuses. */
+export const RECORD_NAMES_REUSED_NODE: TreeMutant = {
+  name: "record-names-reused-node",
+  defect: "the fold record lists a node the new tree reuses as superseded",
+  options: {
+    steps: {
+      recordSuperseded: (root, read, reused) => [
+        ...foldRecordSuperseded(root, read, reused),
+        ...reused.slice(0, 1).map((entry) => `${entry.attempt}/${entry.sha256}`),
+      ],
+    },
+  },
+};
+
+/** A fold record that leaves one superseded node out. */
+export const RECORD_OMITS_SUPERSEDED: TreeMutant = {
+  name: "record-omits-superseded",
+  defect: "the fold record leaves out a superseded node",
+  options: {
+    steps: {
+      recordSuperseded: (root, read, reused) =>
+        foldRecordSuperseded(root, read, reused).slice(0, -1),
+    },
+  },
+};
+
+/** A fold record whose base floor is one past the floor of the head the CAS is sent against. */
+export const RECORD_FLOOR_NOT_CAPTURED: TreeMutant = {
+  name: "record-floor-not-captured",
+  defect: "the fold record's base floor is not the floor of the head being CASed",
+  options: {
+    steps: {
+      recordBase: (head) => ({ ...foldRecordBase(head), floor: head.json.log_seq_start + 1 }),
+    },
+  },
+};
+
 /** The publication mutants the publish suite must catch. */
 export const PUBLISH_MUTANTS: readonly TreeMutant[] = [
   PUBLISH_HEAD_BEFORE_NODES,
   PUBLISH_REUSES_UNPROVEN_REF,
   PUBLISH_ADOPTS_WITHOUT_COMPARE,
+  PUBLISH_NODES_BEFORE_RECORD,
+  RECORD_NAMES_REUSED_NODE,
+  RECORD_OMITS_SUPERSEDED,
+  RECORD_FLOOR_NOT_CAPTURED,
 ];
 
 // ---------------------------------------------------------------------

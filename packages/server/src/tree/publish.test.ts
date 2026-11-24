@@ -27,6 +27,7 @@ import {
   type DocumentData,
   MemoryStorage,
   retryStorageCall,
+  sha256Hex,
   type Storage,
 } from "@baerly/protocol";
 import { abortingStorage } from "../../../../tests/fixtures/aborting-storage.ts";
@@ -40,7 +41,11 @@ import {
   PUBLISH_ADOPTS_WITHOUT_COMPARE,
   PUBLISH_HEAD_BEFORE_NODES,
   PUBLISH_MUTANTS,
+  PUBLISH_NODES_BEFORE_RECORD,
   PUBLISH_REUSES_UNPROVEN_REF,
+  RECORD_FLOOR_NOT_CAPTURED,
+  RECORD_NAMES_REUSED_NODE,
+  RECORD_OMITS_SUPERSEDED,
   type TreeMutant,
 } from "../../../../tests/fixtures/tree-mutants.ts";
 import {
@@ -63,15 +68,22 @@ import {
   type TreeHeadJson,
   treeHeadKey,
 } from "./head.ts";
-import { parseTreeNodeKey, treeNodeKeyPrefix } from "./key.ts";
+import {
+  parseTreeNodeKey,
+  parseTreeRecordKey,
+  treeNodeKeyPrefix,
+  treeRecordKeyPrefix,
+} from "./key.ts";
 import { createTreeConfig, type TreeConfig } from "./layout.ts";
 import { canonicalDocument, type DecodedTreeNode, type TreeChildEntry } from "./node-codec.ts";
 import { planFold, type TreeFoldPlan } from "./plan.ts";
 import { capturedLiveRefs, publishTree, type TreePublishOutcome } from "./publish.ts";
+import { type FoldRecordBase, foldRecordBase } from "./record.ts";
 
 const PREFIX = FOLD_PREFIX;
 const HEAD = treeHeadKey(PREFIX);
 const NODES = treeNodeKeyPrefix(PREFIX);
+const RECORDS = treeRecordKeyPrefix(PREFIX);
 const chunkKey = await testChunkKey();
 const secondChunkKey = await importChunkKey(Uint8Array.fromHex(TREE_SECOND_TEST_CHUNK_SALT));
 
@@ -142,6 +154,17 @@ const freshHead = (): CurrentJson => ({
   snapshot_bytes: 0,
   snapshot_rows: 0,
 });
+
+/** A fold record body as stored. */
+interface StoredRecord {
+  readonly format: string;
+  readonly schema_version: number;
+  readonly attempt: string;
+  readonly base: FoldRecordBase;
+  readonly result: { readonly floor: number; readonly root: string | null };
+  readonly fresh: readonly string[];
+  readonly superseded: readonly string[];
+}
 
 /** A row change: the row's new document, or `null` to delete it. */
 type Change = readonly [id: string, value: number | null];
@@ -287,6 +310,26 @@ class Bucket {
     return found;
   }
 
+  /** Node keys the oracle finds reachable from the head's root. */
+  async reachable(): Promise<ReadonlySet<string>> {
+    return new Set(
+      checkTreeImage({
+        image: await captureTreeImage(this.memory, PREFIX),
+        prefix: PREFIX,
+        layout: SMALL_LAYOUT,
+      }).reachableKeys,
+    );
+  }
+
+  /** The fold record stored at `key`, parsed. */
+  async record(key: string): Promise<StoredRecord> {
+    const got = await this.memory.get(key);
+    if (got === null) {
+      throw new Error(`no record at ${key}`);
+    }
+    return JSON.parse(new TextDecoder().decode(got.body)) as StoredRecord;
+  }
+
   /** Node keys the oracle finds unreachable from the head's root. */
   async unreachable(): Promise<readonly string[]> {
     return checkTreeImage({
@@ -377,21 +420,30 @@ const freshKeys = async (fold: PreparedFold, attempt: string): Promise<string[]>
 // ---------------------------------------------------------------------
 
 /**
- * Children before parents, the head CAS last: every fresh node is a
- * create, each branch after every fresh child it names, then one head
- * CAS `If-Match` the captured ETag.
+ * The fold record first, children before parents, the head CAS last:
+ * the record and every fresh node are creates, each branch comes after
+ * every fresh child it names, then one head CAS `If-Match` the captured
+ * ETag.
  */
 const writeOrderFailure = async (mutant?: TreeMutant): Promise<string | undefined> => {
   const bucket = await Bucket.seeded();
   const fold = await bucket.prepare(MIXED);
   const start = bucket.applied.length;
-  await bucket.publish(fold, { mutant });
+  try {
+    await bucket.publish(fold, { mutant });
+  } catch (error) {
+    return `the publication failed: ${String(error)}`;
+  }
   const writes = bucket.applied.slice(start);
+  const [first] = writes;
+  if (first === undefined || !first.key.startsWith(RECORDS) || first.ifNoneMatch !== "*") {
+    return `the first write is ${first?.key ?? "nothing"}, not a fold-record create`;
+  }
   const done = new Set<string>();
-  for (const [i, write] of writes.entries()) {
+  for (const [i, write] of writes.slice(1).entries()) {
     if (write.key === HEAD) {
-      if (i !== writes.length - 1) {
-        return `the head CAS is write ${i + 1} of ${writes.length}`;
+      if (i !== writes.length - 2) {
+        return `the head CAS is write ${i + 2} of ${writes.length}`;
       }
       if (write.ifMatch !== fold.head.etag) {
         return "the head CAS is not If-Match the captured ETag";
@@ -413,6 +465,90 @@ const writeOrderFailure = async (mutant?: TreeMutant): Promise<string | undefine
     done.add(write.key);
   }
   return writes.at(-1)?.key === HEAD ? undefined : "the publication wrote no head";
+};
+
+/**
+ * The record of the seeded tree's mixed fold, against the physical
+ * oracle: `fresh` is exactly the nodes the new root reaches and the
+ * captured one does not, `superseded` exactly the reverse, and `base`
+ * and `result` name the captured head and the published root.
+ */
+const recordExactnessFailure = async (mutant?: TreeMutant): Promise<string | undefined> => {
+  const bucket = await Bucket.seeded();
+  const fold = await bucket.prepare(MIXED);
+  const before = await bucket.reachable();
+  let outcome: TreePublishOutcome;
+  try {
+    outcome = await bucket.publish(fold, { mutant });
+  } catch (error) {
+    return `the publication failed: ${String(error)}`;
+  }
+  if (outcome.kind !== "published") {
+    return `the publication was ${outcome.kind}`;
+  }
+  return exactnessFailure(bucket, fold, outcome, before);
+};
+
+/**
+ * How the record of `outcome`, a published fold of `fold`, departs from
+ * the oracle's reachable sets before (`before`) and after publication.
+ */
+const exactnessFailure = async (
+  bucket: Bucket,
+  fold: PreparedFold,
+  outcome: TreePublishOutcome,
+  before: ReadonlySet<string>,
+): Promise<string | undefined> => {
+  const after = await bucket.reachable();
+  const record = await bucket.record(outcome.record);
+  const fresh = record.fresh.map((sha) => `${NODES}${outcome.attempt}/${sha}`);
+  const superseded = record.superseded.map((ref) => `${NODES}${ref}`);
+  const expectedFresh = [...after].filter((key) => !before.has(key)).toSorted();
+  const expectedSuperseded = [...before].filter((key) => !after.has(key)).toSorted();
+  const capturedRoot = fold.head.root === null ? null : parseTreeNodeKey(PREFIX, fold.head.root);
+  const expectedBase: FoldRecordBase = {
+    floor: fold.head.json.log_seq_start,
+    root: capturedRoot === null ? null : `${capturedRoot.attempt}/${capturedRoot.sha256}`,
+    attempt: fold.head.attempt,
+    generation: fold.head.json.generation ?? null,
+  };
+  const found: string[] = [];
+  if (JSON.stringify(fresh) !== JSON.stringify(expectedFresh)) {
+    found.push(`fresh ${JSON.stringify(fresh)}, oracle ${JSON.stringify(expectedFresh)}`);
+  }
+  if (JSON.stringify(superseded) !== JSON.stringify(expectedSuperseded)) {
+    found.push(
+      `superseded ${JSON.stringify(superseded)}, oracle ${JSON.stringify(expectedSuperseded)}`,
+    );
+  }
+  if (JSON.stringify(record.base) !== JSON.stringify(expectedBase)) {
+    found.push(`base ${JSON.stringify(record.base)}, captured ${JSON.stringify(expectedBase)}`);
+  }
+  const rootSha = outcome.root === null ? null : parseTreeNodeKey(PREFIX, outcome.root)!.sha256;
+  if (record.result.floor !== fold.floor || record.result.root !== rootSha) {
+    found.push(`result ${JSON.stringify(record.result)}`);
+  }
+  const key = parseTreeRecordKey(PREFIX, outcome.record);
+  if (key?.floor !== expectedBase.floor || key.attempt !== outcome.attempt) {
+    found.push(`record key ${outcome.record}`);
+  }
+  return found.length === 0 ? undefined : found.join("; ");
+};
+
+/**
+ * A publication of the mixed fold either publishes or is refused;
+ * returns how it was refused. Unmutated it must publish: the record's
+ * base is the captured head, so the record tripwire stays quiet.
+ */
+const recordTripwireFailure = async (mutant?: TreeMutant): Promise<string | undefined> => {
+  const bucket = await Bucket.seeded();
+  const fold = await bucket.prepare(MIXED);
+  try {
+    await bucket.publish(fold, { mutant });
+    return undefined;
+  } catch (error) {
+    return `refused: ${String(error)}`;
+  }
 };
 
 /**
@@ -555,7 +691,9 @@ describe("write order", () => {
     const storage: Storage = {
       ...bucket.storage,
       put: async (key, body, opts) => {
-        const level = levelOf.get(key) ?? Number.POSITIVE_INFINITY;
+        const level = key.startsWith(RECORDS)
+          ? Number.NEGATIVE_INFINITY
+          : (levelOf.get(key) ?? Number.POSITIVE_INFINITY);
         for (const other of pending) {
           if (levelOf.get(other)! < level) {
             early.push(`${key} sent before ${other} completed`);
@@ -596,15 +734,23 @@ describe("write order", () => {
     }
   });
 
-  test("the publisher never re-sends a write: one create per node and one head CAS", async () => {
-    const bucket = await Bucket.seeded();
-    const fold = await bucket.prepare(MIXED);
-    const fresh = await freshKeys(fold, attemptOf(2));
-    bucket.faults.armPostApplyAt(1, { prefix: NODES, ops: ["put"] });
-    const start = bucket.calls.length;
-    await expect(bucket.publish(fold)).resolves.toMatchObject({ kind: "published", adopted: 1 });
-    const puts = bucket.calls.slice(start).filter((call) => call.op === "put");
-    expect(puts.map((call) => call.key).toSorted()).toEqual([...fresh, HEAD].toSorted());
+  test("the publisher never re-sends a write: one record create, one create per node and one head CAS", async () => {
+    for (const prefix of [NODES, RECORDS]) {
+      const bucket = await Bucket.seeded();
+      const fold = await bucket.prepare(MIXED);
+      const fresh = await freshKeys(fold, attemptOf(2));
+      bucket.faults.armPostApplyAt(1, { prefix, ops: ["put"] });
+      const start = bucket.calls.length;
+      const outcome = await bucket.publish(fold);
+      expect(outcome).toMatchObject({ kind: "published", adopted: prefix === NODES ? 1 : 0 });
+      expect(bucket.faults.postApplied().map((fault) => fault.key.startsWith(prefix))).toEqual([
+        true,
+      ]);
+      const puts = bucket.calls.slice(start).filter((call) => call.op === "put");
+      expect(puts.map((call) => call.key).toSorted()).toEqual(
+        [...fresh, HEAD, outcome.record].toSorted(),
+      );
+    }
   });
 });
 
@@ -759,6 +905,166 @@ describe("head CAS fate", () => {
 });
 
 // ---------------------------------------------------------------------
+// Fold record
+// ---------------------------------------------------------------------
+
+describe("fold record", () => {
+  test("the mixed fold's record names exactly what it creates and what it supersedes", async () => {
+    await expect(recordExactnessFailure()).resolves.toBeUndefined();
+  });
+
+  test("the record is canonical JSON of its fields, in order, keyed by the hash of its body", async () => {
+    const bucket = await Bucket.seeded();
+    const outcome = await bucket.publish(await bucket.prepare(MIXED));
+    const body = (await bucket.memory.get(outcome.record))!.body;
+    const record = await bucket.record(outcome.record);
+    expect(Object.keys(record)).toEqual([
+      "format",
+      "schema_version",
+      "attempt",
+      "base",
+      "result",
+      "fresh",
+      "superseded",
+    ]);
+    expect(Object.keys(record.base)).toEqual(["floor", "root", "attempt", "generation"]);
+    expect(Object.keys(record.result)).toEqual(["floor", "root"]);
+    expect(record).toMatchObject({
+      format: "baerly-tree-fold-record-proto",
+      schema_version: 1,
+      attempt: outcome.attempt,
+    });
+    expect(new TextDecoder().decode(body)).toBe(JSON.stringify(record));
+    expect(parseTreeRecordKey(PREFIX, outcome.record)?.sha256).toBe(await sha256Hex(body));
+    expect(record.fresh).toEqual(record.fresh.toSorted());
+    expect(record.superseded).toEqual(record.superseded.toSorted());
+  });
+
+  test("the first fold of a fresh collection supersedes nothing; its base has no root or installer", async () => {
+    const bucket = await Bucket.open({ ...freshHead(), generation: "0a1b" });
+    const fold = await bucket.prepare([["a", 1]]);
+    const outcome = await bucket.publish(fold);
+    const record = await bucket.record(outcome.record);
+    expect(record.base).toEqual({ floor: 0, root: null, attempt: null, generation: "0a1b" });
+    expect(record.superseded).toEqual([]);
+    expect(record.fresh).toEqual([parseTreeNodeKey(PREFIX, outcome.root!)!.sha256]);
+    expect(outcome.record.startsWith(`${RECORDS}0000000000000000/`)).toBe(true);
+  });
+
+  test("a fold that empties the collection still writes a record, superseding the whole captured tree", async () => {
+    const bucket = await Bucket.seeded();
+    const fold = await bucket.prepare([...bucket.rows.keys()].map((id) => [id, null] as const));
+    const before = await bucket.reachable();
+    const outcome = await bucket.publish(fold);
+    expect(outcome).toMatchObject({ kind: "published", root: null });
+    const record = await bucket.record(outcome.record);
+    expect(record.result).toEqual({ floor: fold.floor, root: null });
+    expect(record.fresh).toEqual([]);
+    expect(record.superseded.map((ref) => `${NODES}${ref}`)).toEqual([...before].toSorted());
+    expect(record.base.attempt).toBe(fold.head.attempt);
+  });
+
+  test("every record of a sequence of folds names the installer it captured", async () => {
+    const bucket = await Bucket.seeded();
+    const first = await bucket.publish(await bucket.prepare([["k01", 1]]));
+    const second = await bucket.publish(await bucket.prepare([["k02", 2]]));
+    await expect(bucket.record(second.record)).resolves.toMatchObject({
+      base: { attempt: first.attempt },
+    });
+  });
+
+  test("a record whose base is not the head the CAS is sent against is Internal before any write", async () => {
+    const tamper: Record<keyof FoldRecordBase, (base: FoldRecordBase) => FoldRecordBase> = {
+      floor: (base) => ({ ...base, floor: base.floor + 1 }),
+      root: (base) => ({ ...base, root: `${attemptOf(0xbad)}/${"0".repeat(64)}` }),
+      attempt: (base) => ({ ...base, attempt: attemptOf(0xbad) }),
+      generation: (base) => ({ ...base, generation: "another" }),
+    };
+    const found: Record<string, string | undefined> = {};
+    for (const [field, change] of Object.entries(tamper)) {
+      const bucket = await Bucket.seeded();
+      const fold = await bucket.prepare(MIXED);
+      const mutant: TreeMutant = {
+        name: `record-base-${field}`,
+        defect: `the record's base ${field} is wrong`,
+        options: { steps: { recordBase: (head) => change(foldRecordBase(head)) } },
+      };
+      found[field] = await refusal(bucket, fold, `the record's base ${field}`, { mutant });
+    }
+    expect(found).toEqual({
+      floor: undefined,
+      root: undefined,
+      attempt: undefined,
+      generation: undefined,
+    });
+  });
+
+  test("record-floor-not-captured is refused by the tripwire, with no write", async () => {
+    const bucket = await Bucket.seeded();
+    const fold = await bucket.prepare(MIXED);
+    await expect(
+      refusal(bucket, fold, "the record's base floor", { mutant: RECORD_FLOOR_NOT_CAPTURED }),
+    ).resolves.toBeUndefined();
+  });
+
+  test("a write order that does not put the record first and the head last is Internal before any write", async () => {
+    const found: Record<string, string | undefined> = {};
+    for (const mutant of [PUBLISH_NODES_BEFORE_RECORD, PUBLISH_HEAD_BEFORE_NODES]) {
+      const bucket = await Bucket.seeded();
+      found[mutant.name] = await refusal(
+        bucket,
+        await bucket.prepare(MIXED),
+        "a publication must write exactly one",
+        { mutant },
+      );
+    }
+    expect(found).toEqual({
+      [PUBLISH_NODES_BEFORE_RECORD.name]: undefined,
+      [PUBLISH_HEAD_BEFORE_NODES.name]: undefined,
+    });
+  });
+
+  test("a record create that conflicts with different bytes is InvalidResponse; one that reads back empty is WriteConflict", async () => {
+    for (const [plant, code] of [
+      [true, "InvalidResponse"],
+      [false, "WriteConflict"],
+    ] as const) {
+      const bucket = await Bucket.seeded();
+      const fold = await bucket.prepare(MIXED);
+      const start = bucket.applied.length;
+      const storage: Storage = {
+        ...bucket.storage,
+        put: async (key, body, opts) => {
+          if (!key.startsWith(RECORDS)) {
+            return bucket.storage.put(key, body, opts);
+          }
+          if (plant) {
+            await bucket.memory.put(key, new TextEncoder().encode("{}"));
+          }
+          throw new BaerlyError("WriteConflict", "injected: precondition failed");
+        },
+      };
+      await expect(bucket.publish(fold, { storage })).rejects.toMatchObject({ code });
+      expect(bucket.applied.slice(start).filter((write) => !write.key.startsWith(RECORDS))).toEqual(
+        [],
+      );
+    }
+  });
+
+  test("a crash after the record and before the head leaves the record, and the captured head", async () => {
+    const bucket = await Bucket.seeded();
+    const fold = await bucket.prepare(MIXED);
+    // The record create is the first storage call; crash on the second.
+    bucket.faults.armAt(2);
+    await expect(bucket.publish(fold)).rejects.toMatchObject({ name: "AbortError" });
+    const image = await captureTreeImage(bucket.memory, PREFIX);
+    // The seeding fold's record, and this attempt's.
+    expect([...image.keys()].filter((key) => key.startsWith(RECORDS))).toHaveLength(2);
+    await expect(bucket.head()).resolves.toMatchObject({ etag: fold.head.etag });
+  });
+});
+
+// ---------------------------------------------------------------------
 // Reuse and attempt identity
 // ---------------------------------------------------------------------
 
@@ -885,7 +1191,9 @@ describe("attempt identity", () => {
       expect(outcome.attempt).toMatch(/^[0-9a-f]{32}$/);
       for (const write of bucket.applied.slice(start)) {
         if (write.key !== HEAD) {
-          expect(parseTreeNodeKey(PREFIX, write.key)?.attempt).toBe(outcome.attempt);
+          const parsed =
+            parseTreeNodeKey(PREFIX, write.key) ?? parseTreeRecordKey(PREFIX, write.key);
+          expect(parsed?.attempt).toBe(outcome.attempt);
         }
       }
       attempts.push(outcome.attempt);
@@ -1059,13 +1367,16 @@ describe("published trees", () => {
   );
 
   fcTest.prop({ ticks: tickArbitrary }, { numRuns: 40 })(
-    "every published tree passes the physical oracle, each entry matching its child's body",
+    "every published tree passes the physical oracle, each entry matching its child's body, and its record is exact",
     async ({ ticks }) => {
       const bucket = await Bucket.open();
       for (const tick of ticks) {
-        const outcome = await bucket.publish(await bucket.prepare(tick));
+        const fold = await bucket.prepare(tick);
+        const before = await bucket.reachable();
+        const outcome = await bucket.publish(fold);
         expect(outcome.kind).toBe("published");
         await expect(bucket.violations()).resolves.toEqual([]);
+        await expect(exactnessFailure(bucket, fold, outcome, before)).resolves.toBeUndefined();
       }
     },
   );
@@ -1080,6 +1391,10 @@ describe("mutation", () => {
     [PUBLISH_HEAD_BEFORE_NODES, [writeOrderFailure, crashSweepFailure]],
     [PUBLISH_REUSES_UNPROVEN_REF, [staleReuseFailure, unreachableReadFailure]],
     [PUBLISH_ADOPTS_WITHOUT_COMPARE, [foreignBodyFailure]],
+    [PUBLISH_NODES_BEFORE_RECORD, [writeOrderFailure, crashSweepFailure]],
+    [RECORD_NAMES_REUSED_NODE, [recordExactnessFailure]],
+    [RECORD_OMITS_SUPERSEDED, [recordExactnessFailure]],
+    [RECORD_FLOOR_NOT_CAPTURED, [recordTripwireFailure]],
   ]);
 
   test("every publication mutant has checks", () => {

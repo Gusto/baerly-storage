@@ -16,8 +16,10 @@
  */
 import { BaerlyError } from "@baerly/protocol";
 import type { ChunkKey } from "./chunk.ts";
-import type { TreeChildEntry } from "./node-codec.ts";
+import type { TreeHead } from "./head.ts";
+import type { DecodedTreeNode, TreeChildEntry } from "./node-codec.ts";
 import type { LiveTreeRef, TreePublicationWrite } from "./publish.ts";
+import type { FoldRecordBase } from "./record.ts";
 import type { TreeRange, TreeTail, TreeTailRead } from "./read.ts";
 
 /** Leaf target size: 16 KiB. */
@@ -281,8 +283,8 @@ export interface TreeSteps {
   readonly mintAttempt?: () => string;
   /**
    * The order a publication issues its writes in, given the writes in
-   * their required order: each level of fresh nodes from the leaves up,
-   * then the head CAS.
+   * their required order: the fold record, each level of fresh nodes
+   * from the leaves up, then the head CAS.
    */
   readonly publicationOrder?: (
     writes: readonly TreePublicationWrite[],
@@ -304,6 +306,18 @@ export interface TreeSteps {
    * for byte.
    */
   readonly adoptionBytesMatch?: (stored: Uint8Array, created: Uint8Array) => boolean;
+  /**
+   * The nodes a fold record lists as superseded, as `<attempt>/<sha256>`,
+   * given the captured root, every node the plan read and the new
+   * tree's reused refs: every captured node the new tree does not reach.
+   */
+  readonly recordSuperseded?: (
+    root: DecodedTreeNode | null,
+    read: readonly DecodedTreeNode[],
+    reused: readonly TreeChildEntry[],
+  ) => readonly string[];
+  /** The base a fold record names for an attempt that captured `head`. */
+  readonly recordBase?: (head: TreeHead) => FoldRecordBase;
   /**
    * The reader's tail step: walk and probe the unfolded log tail of the
    * head it is given, and fold it into a per-`_id` overlay.
