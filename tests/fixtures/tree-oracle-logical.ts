@@ -95,8 +95,8 @@
  *   at most {@link DOC_ID_MAX_UTF8_BYTES} UTF-8 bytes, with no `/`, not `.`
  *   or `..`, no C0, DEL or C1 control character, and no leading `_`.
  * - The body is a plain non-array object whose own `_id` equals the row's.
- * - Every value is a string, finite number, boolean, array or plain object:
- *   no `null`, `undefined`, function, symbol, bigint, accessor property or
+ * - Every value is `null`, a string, finite number, boolean, array or plain
+ *   object: no `undefined`, function, symbol, bigint, accessor property or
  *   array hole.
  * - Objects and arrays nest at most {@link MAX_DOCUMENT_DEPTH} levels, counting the root as 1.
  * - The body's canonical bytes are at most {@link MAX_DOCUMENT_BYTES}.
@@ -484,7 +484,7 @@ const assertSurvivor = (id: string, body: DocumentData, origin: string): void =>
 };
 
 const assertDocumentValue = (value: unknown, origin: string, id: string, depth: number): void => {
-  if (typeof value === "string" || typeof value === "boolean") {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
     return;
   }
   if (typeof value === "number") {
@@ -493,7 +493,7 @@ const assertDocumentValue = (value: unknown, origin: string, id: string, depth: 
     }
     return;
   }
-  if (typeof value === "object" && value !== null && depth > MAX_DOCUMENT_DEPTH) {
+  if (typeof value === "object" && depth > MAX_DOCUMENT_DEPTH) {
     throw domainError(origin, id, `nests deeper than ${MAX_DOCUMENT_DEPTH} container levels`);
   }
   if (Array.isArray(value)) {
@@ -508,7 +508,7 @@ const assertDocumentValue = (value: unknown, origin: string, id: string, depth: 
     }
     return;
   }
-  throw domainError(origin, id, `holds a ${value === null ? "null" : typeof value} value`);
+  throw domainError(origin, id, `holds a ${typeof value} value`);
 };
 
 /** Check a property's value without running a getter: accessors and holes are refused. */
@@ -545,6 +545,11 @@ const copyDocument = (body: DocumentData, sortKeys = false): DocumentData =>
   copyValue(body, sortKeys) as DocumentData;
 
 const copyValue = (value: DocumentValue, sortKeys: boolean): DocumentValue => {
+  // A stored document may hold `null`, which the typed write contract
+  // (`DocumentValue`) leaves out.
+  if (value === null) {
+    return value;
+  }
   if (Array.isArray(value)) {
     return value.map((item) => copyValue(item, sortKeys));
   }

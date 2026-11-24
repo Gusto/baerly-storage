@@ -156,8 +156,20 @@ describe("canonical document encoding", () => {
     expect(canonicalDocument({ _id: "x" }, "test").bytes).toBe(11);
   });
 
+  test("null is a value: kept at the top level, in arrays and in nested objects", async () => {
+    const { doc, bytes } = canonicalDocument(
+      JSON.parse('{"_id":"x","n":null,"a":[null,{"z":null}]}'),
+      "test",
+    );
+    const encoded = JSON.stringify(doc);
+    expect(encoded).toBe('{"_id":"x","n":null,"a":[null,{"z":null}]}');
+    expect(bytes).toBe(42);
+    await expect(sha256Hex(utf8.encode(encoded))).resolves.toBe(
+      "a5329eea8932321291f63e59cfd1e9915de316218c8f19bc18085a54b095cd07",
+    );
+  });
+
   test.each([
-    ["null value", { _id: "x", v: null }],
     ["undefined value", { _id: "x", v: undefined }],
     ["NaN", { _id: "x", v: Number.NaN }],
     ["Infinity", { _id: "x", v: Number.POSITIVE_INFINITY }],
@@ -305,6 +317,20 @@ describe("node body vectors", () => {
     await expect(sha256Hex(bytes)).resolves.toBe(
       "32bf9f0fc5b580449b1a4b82b5b9ac81ccdbc64b463074cc0242fa91b5266e28",
     );
+  });
+
+  test("a leaf holding nulls encodes and decodes them unchanged", async () => {
+    const doc = { _id: "x", n: null, a: [null, { z: null }] } as unknown as TreeDocument;
+    const bytes = encodeNode(leaf([doc]));
+    expect(text.decode(bytes)).toBe(
+      '{"format":"baerly-tree-node-proto","schema_version":1,"collection":"tickets","attempt":"00112233445566778899aabbccddeeff","level":0,"docs":[{"_id":"x","n":null,"a":[null,{"z":null}]}]}',
+    );
+    expect(bytes.byteLength).toBe(184);
+    await expect(sha256Hex(bytes)).resolves.toBe(
+      "7b8e0082efcbeadef0692b316bda2cdc79f03f3e47b4bc44fe3023afa350b5c1",
+    );
+    const decoded = await decodeBody(bytes, { root: false });
+    expect((decoded.node as TreeLeafNode).docs).toStrictEqual([doc]);
   });
 
   test("leaf A2 with doc c", async () => {
@@ -502,7 +528,6 @@ describe("strict decode", () => {
     ["unsorted IDs", leafBody('{"_id":"b"},{"_id":"a"}')],
     ["duplicate IDs", leafBody('{"_id":"a"},{"_id":"a"}')],
     ["UTF-16 order instead of UTF-8 order", leafBody('{"_id":"😀"},{"_id":"\uffff"}')],
-    ["a null value", leafBody('{"_id":"a","n":null}')],
     ["a non-finite number", leafBody('{"_id":"a","n":1e999}')],
     ["an unpaired-surrogate _id", leafBody('{"_id":"\\ud800"}')],
     ["a reserved _id", leafBody('{"_id":"_a"}')],
@@ -930,7 +955,6 @@ describe("encodeNode", () => {
     ["unsorted docs", leaf([{ _id: "b" }, { _id: "a" }])],
     ["a bad attempt", leaf([{ _id: "a" }], "xyz")],
     ["root totals that disagree", { ...LEAF_A1, root: { floor: 0, rows: 1, bytes: 34 } }],
-    ["a null value", leaf([{ _id: "a", v: null } as unknown as TreeDocument])],
     ["a branch at level 0", { ...ROOT_BRANCH_A1, level: 0 }],
     [
       "a level_nodes count other than the child count",

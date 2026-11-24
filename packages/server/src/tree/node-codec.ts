@@ -64,8 +64,9 @@ import { DEFAULT_TREE_CONFIG, type TreeConfig } from "./layout.ts";
 // Types
 // ---------------------------------------------------------------------
 
-/** A value inside a canonical document. There is no `null`. */
+/** A value inside a canonical document. */
 export type TreeValue =
+  | null
   | string
   | number
   | boolean
@@ -199,7 +200,7 @@ const preview = (value: unknown): string => {
  * deep input is refused before it can exhaust the stack.
  */
 const canonValue = (value: unknown, depth: number, fail: Fail): TreeValue => {
-  if (typeof value === "string" || typeof value === "boolean") {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
     return value;
   }
   if (typeof value === "number") {
@@ -210,9 +211,6 @@ const canonValue = (value: unknown, depth: number, fail: Fail): TreeValue => {
   }
   if (typeof value !== "object") {
     fail(`document value of type ${typeof value} is not allowed`);
-  }
-  if (value === null) {
-    fail("document value null is not allowed");
   }
   if (depth > MAX_DOCUMENT_DEPTH) {
     fail(`document nests deeper than ${MAX_DOCUMENT_DEPTH} levels`);
@@ -277,8 +275,8 @@ const canonValue = (value: unknown, depth: number, fail: Fail): TreeValue => {
 /**
  * Validate and canonicalize one stored document. Valid means: a plain
  * non-array object with an own string `_id` in the document-ID domain,
- * every value a string, finite number, boolean, array or plain object
- * (no `null`), nesting at most `MAX_DOCUMENT_DEPTH`, and at most
+ * every value `null`, a string, finite number, boolean, array or plain
+ * object, nesting at most `MAX_DOCUMENT_DEPTH`, and at most
  * `MAX_DOCUMENT_BYTES` canonical bytes. The `_id` is checked before it
  * is compared or hashed anywhere.
  */
