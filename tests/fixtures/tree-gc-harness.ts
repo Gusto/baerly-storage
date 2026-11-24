@@ -23,6 +23,7 @@
  * injection (`aborting-storage.ts`) → server clock → memory.
  */
 import {
+  RequestLedger,
   type DocumentData,
   MemoryStorage,
   retryStorageCall,
@@ -59,6 +60,7 @@ import {
 import { planFold, type TreeFoldPlan } from "../../packages/server/src/tree/plan.ts";
 import { publishTree, type TreePublishOutcome } from "../../packages/server/src/tree/publish.ts";
 import { abortingStorage } from "./aborting-storage.ts";
+import { ledgeredStorage } from "./ledgered-storage.ts";
 import { TREE_TEST_CHUNK_SALT, testChunkKey } from "./tree-chunk-salt.ts";
 import { FOLD_PREFIX, SMALL_LAYOUT } from "./tree-fold-harness.ts";
 import type { TreeMutant } from "./tree-mutants.ts";
@@ -140,6 +142,11 @@ export class GcBucket {
   serverTime = true;
   /** Runs once before the next LIST of the prefix it is keyed by. */
   readonly onList = new Map<string, () => Promise<void>>();
+  /**
+   * Fold-record attempts a LIST does not show yet, as a lagging LIST
+   * hides a create it has not caught up with. GETs still see them.
+   */
+  readonly listLag = new Set<string>();
   /** Replaces a GET's body: return `undefined` to read the bucket. */
   getOverride: ((key: string) => Uint8Array | null | undefined) | undefined;
   /** The rows the head's tree must hold. */
@@ -175,13 +182,16 @@ export class GcBucket {
       delete: (key, opts) => inner.delete(key, opts),
       list: (prefix, opts) => {
         const hook = this.onList.get(prefix);
-        if (hook === undefined) {
-          return inner.list(prefix, opts);
-        }
         this.onList.delete(prefix);
+        const lag = this.listLag;
         return (async function* () {
-          await hook();
-          yield* inner.list(prefix, opts);
+          await hook?.();
+          for await (const entry of inner.list(prefix, opts)) {
+            const tail = entry.key.slice(GC_RECORDS.length);
+            if (!(entry.key.startsWith(GC_RECORDS) && lag.has(tail.slice(17, 49)))) {
+              yield entry;
+            }
+          }
         })();
       },
     };
@@ -371,6 +381,23 @@ export class GcBucket {
       counters.set(c.name, (counters.get(c.name) ?? 0) + c.value);
     }
     return { result, counters, warnings };
+  }
+
+  /**
+   * One GC tick charged to a request ledger of `limit` calls, as a host
+   * with a per-invocation cap runs it. Returns the tick and the calls
+   * the ledger was charged.
+   */
+  async tickWithLedger(
+    limit: number,
+    config: TreeConfig = gcConfig(),
+  ): Promise<{ readonly result: TreeGcTickResult; readonly charged: number }> {
+    const ledger = new RequestLedger({ internal: limit, external: limit });
+    const storage = ledgeredStorage(this.storage, "internal");
+    const result = await runWithContext(createObservabilityContext({ ledger }), () =>
+      runTreeGcTick({ storage, prefix: GC_PREFIX, config, now: () => new Date(this.local) }),
+    );
+    return { result, charged: limit - ledger.storageRemaining() };
   }
 
   /** Tick once a minute for `minutes` minutes, both clocks moving together. */

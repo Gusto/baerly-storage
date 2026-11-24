@@ -362,6 +362,16 @@ export interface TreeSteps {
   readonly sweepPassesFloorGate?: (markFloor: number, headFloor: number) => boolean;
   /** Whether the sweep starts a mark's age in `phase`. */
   readonly sweepStartsAge?: (phase: "note" | "stamp") => boolean;
+  /**
+   * Whether GC may delete by attempt `attempt`, given the attempts that
+   * appear in more than one listed fold record and those with a record
+   * on an open floor.
+   */
+  readonly gcTrustsIdentity?: (
+    attempt: string,
+    duplicates: ReadonlySet<string>,
+    open: ReadonlySet<string>,
+  ) => boolean;
   /** Whether a probe tick lists its sweep page before it reads the head. */
   readonly sweepListsBeforeHead?: () => boolean;
   /**

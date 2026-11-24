@@ -252,12 +252,13 @@ const malformed = (reason: string): TreeGcStateDecode => ({ kind: "malformed", r
 
 /**
  * Strictly decode the state body `bytes` read from `key`. A malformed
- * state is a value, because GC replaces it leak-only; only a state of
- * this format with a `schema_version` this build does not know throws.
+ * state is a value, because GC replaces it leak-only. A state that names
+ * a format this build does not read, or this format at another
+ * `schema_version`, throws instead: it may be a newer release's, and GC
+ * pauses rather than wipe it.
  *
- * @throws BaerlyError code="InvalidResponse" — the state has this
- *   format and an unknown `schema_version`: it was written by another
- *   release, so GC for this collection is paused.
+ * @throws BaerlyError code="InvalidResponse" — the state names another
+ *   format or schema version, so GC for this collection is paused.
  */
 export const decodeTreeGcState = (key: string, bytes: Uint8Array): TreeGcStateDecode => {
   if (bytes.byteLength > TREE_GC_STATE_MAX_BODY_BYTES) {
@@ -269,21 +270,26 @@ export const decodeTreeGcState = (key: string, bytes: Uint8Array): TreeGcStateDe
   } catch {
     return malformed("the body is not UTF-8 JSON");
   }
-  if (!isPlainObject(value) || value["format"] !== TREE_GC_STATE_FORMAT) {
+  if (!isPlainObject(value) || typeof value["format"] !== "string") {
     return malformed("the body is not a tree GC state");
   }
+  // Another format, or this one at another schema version, may be a newer
+  // release's state: pause rather than replace it, so no build ever wipes
+  // a state it cannot read.
   const version = value["schema_version"];
-  if (typeof version !== "number") {
-    return malformed("schema_version is not a number");
-  }
-  if (version !== TREE_GC_STATE_SCHEMA_VERSION) {
+  if (value["format"] !== TREE_GC_STATE_FORMAT || version !== TREE_GC_STATE_SCHEMA_VERSION) {
+    const where = `tree GC state ${JSON.stringify(key)}`;
+    const detail =
+      value["format"] === TREE_GC_STATE_FORMAT
+        ? unsupportedSchemaVersionMessage(
+            where,
+            typeof version === "number" ? version : "a non-number",
+            TREE_GC_STATE_SCHEMA_VERSION,
+          )
+        : `${where}: format ${JSON.stringify(String(value["format"]).slice(0, 64))} is not one this build reads.`;
     throw new BaerlyError(
       "InvalidResponse",
-      `${unsupportedSchemaVersionMessage(
-        `tree GC state ${JSON.stringify(key)}`,
-        version,
-        TREE_GC_STATE_SCHEMA_VERSION,
-      )} GC for this collection was written by a newer release and is paused.`,
+      `${detail} GC for this collection was written by a newer release and is paused.`,
       { resolution: "Run the app or operator CLI at that release or later." },
     );
   }

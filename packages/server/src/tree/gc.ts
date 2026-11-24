@@ -32,8 +32,9 @@
  * **State.** `<P>/_v99/gc-pending.json` (`./gc-state.ts`) holds
  * progress, bound to the head's `generation` and floor. A state of
  * another history, or a malformed one, is replaced leak-only by the
- * empty state; one of an unknown schema version stops the tick with
- * `InvalidResponse`.
+ * empty state; one that names another format or schema version, which
+ * may be a newer release's, stops the tick with `InvalidResponse` and is
+ * left as it is.
  *
  * **Clock.** The only clock is the `serverDate` of GC's own state write.
  * A tick probes it (a state CAS) at most once per
@@ -125,6 +126,17 @@ export const classifyFloor = (
   return { winner, losers: eligible.filter((attempt) => attempt !== winner), ambiguous: false };
 };
 
+/**
+ * Whether GC may delete by attempt `attempt`: not when it appears in
+ * more than one listed record (an identity reused), nor while it has a
+ * record on an open floor (it may still publish and adopt its keys).
+ */
+export const trustsIdentity = (
+  attempt: string,
+  duplicates: ReadonlySet<string>,
+  open: ReadonlySet<string>,
+): boolean => !duplicates.has(attempt) && !open.has(attempt);
+
 /** Whether `dueAt` is at or before server time `now`; nothing is due without both. */
 export const isDueAt = (dueAt: string | null, now: Date | undefined): boolean =>
   dueAt !== null && now !== undefined && Date.parse(dueAt) <= now.getTime();
@@ -162,6 +174,7 @@ interface GcSteps {
   readonly passesFloorGate: NonNullable<TreeConfig["steps"]["sweepPassesFloorGate"]>;
   readonly startsAge: NonNullable<TreeConfig["steps"]["sweepStartsAge"]>;
   readonly listsBeforeHead: NonNullable<TreeConfig["steps"]["sweepListsBeforeHead"]>;
+  readonly trustsIdentity: NonNullable<TreeConfig["steps"]["gcTrustsIdentity"]>;
 }
 
 const gcSteps = (config: TreeConfig): GcSteps => {
@@ -180,6 +193,7 @@ const gcSteps = (config: TreeConfig): GcSteps => {
     passesFloorGate: s.sweepPassesFloorGate ?? ((markFloor, headFloor) => headFloor > markFloor),
     startsAge: s.sweepStartsAge ?? ((phase) => phase === "stamp"),
     listsBeforeHead: s.sweepListsBeforeHead ?? (() => true),
+    trustsIdentity: s.gcTrustsIdentity ?? trustsIdentity,
   };
 };
 
@@ -276,8 +290,8 @@ const isUnknownFate = (error: unknown): boolean =>
  * module comment.
  *
  * @throws BaerlyError code="InvalidResponse" — the head or root is not a
- *   valid tree, or the GC state was written by a release with a newer
- *   state schema.
+ *   valid tree, or the GC state names a format or schema version this
+ *   build does not read.
  * @throws BaerlyError — a storage call fails, with its code. A lost
  *   state write is an outcome, not an error.
  */
@@ -475,9 +489,19 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
   }
   const order = [...floors.keys()].toSorted((a, b) => a - b);
   const evidence = new Set<string>(head.attempt === null ? [] : [head.attempt]);
-  const work: TreeGcWork[] = base.work.map((entry) =>
-    duplicates.has(entry.winner.slice(0, 32)) ? { ...entry, quarantined: true } : entry,
+  // An identity found in two records, or one still publishing on an open
+  // floor, is never a deletion source: a later attempt may hold its keys.
+  const open = new Set(
+    records.filter((record) => !steps.isClosed(record.floor, h)).map((r) => r.attempt),
   );
+  const deletable = (attempt: string): boolean => steps.trustsIdentity(attempt, duplicates, open);
+  const untrusted = new Set([...duplicates].filter((attempt) => !deletable(attempt)));
+  const work: TreeGcWork[] = base.work.map((entry) => {
+    const quarantined = entry.quarantined || !deletable(entry.winner.slice(0, 32));
+    const loser =
+      entry.loser !== null && deletable(entry.loser.record.slice(0, 32)) ? entry.loser : null;
+    return { ...entry, quarantined, loser };
+  });
   let resolvedThrough = base.resolved_through;
   let stuck = base.stuck;
   const lastClock = base.clock === null ? undefined : new Date(base.clock);
@@ -493,7 +517,7 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
         const { losers } = steps.classify(
           members.map((record) => record.attempt),
           new Set([...evidence, entry.winner.slice(0, 32)]),
-          duplicates,
+          untrusted,
         );
         const loser = members.find(
           (record) => record.tail !== entry.winner && losers.includes(record.attempt),
@@ -529,7 +553,7 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
     const verdict = steps.classify(
       members.map((record) => record.attempt),
       evidence,
-      duplicates,
+      untrusted,
     );
     if (verdict.winner !== null) {
       const winner = members.find((record) => record.attempt === verdict.winner)!;
@@ -569,12 +593,9 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
     }
     break;
   }
-  // Duplicate identities are never a deletion source, from either list.
+  // Records of an untrusted identity are retired leak-only, named or not.
   for (const record of records) {
-    const named = work.some(
-      (entry) => entry.floor === record.floor && entry.loser?.record === record.tail,
-    );
-    if (duplicates.has(record.attempt) && !named) {
+    if (untrusted.has(record.attempt)) {
       await retireRecord(record.key);
     }
   }
@@ -621,8 +642,10 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
     }
   }
 
-  // 8. Checks and DELETEs.
-  let budget = Math.max(0, candidates - listed.length);
+  // 8. Checks and DELETEs. The sweep page's notes are held back from the
+  // candidate budget first, so a short ledger shortens the page instead.
+  const noteBudget = Math.min(listed.length, candidates);
+  let budget = candidates - noteBudget;
   let halted = false;
   const view = createTreeGcRootView(storage, prefix, root, config, signal);
   const rootChildAttempts = new Set(
@@ -680,6 +703,10 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
       break;
     }
     if (entry.loser === null) {
+      continue;
+    }
+    if (!deletable(entry.loser.record.slice(0, 32))) {
+      work[i] = { ...entry, loser: null };
       continue;
     }
     const key = recordKeyOf(entry.floor, entry.loser.record);
@@ -764,7 +791,13 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
   let marks: TreeGcMark[] = [...base.sweep.marks];
   const keep: TreeGcMark[] = [];
   for (const mark of marks) {
-    if (halted || budget <= 0 || mark.due_at === null || !steps.isDue(mark.due_at, now)) {
+    if (
+      halted ||
+      budget <= 0 ||
+      mark.due_at === null ||
+      !steps.isDue(mark.due_at, now) ||
+      !deletable(mark.key.slice(0, 32))
+    ) {
       keep.push(mark);
       continue;
     }
@@ -785,16 +818,28 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
   let cursor = base.sweep.cursor;
   if (probe) {
     const marked = new Set(marks.map((mark) => mark.key));
+    let notes = 0;
+    /** How many listed keys this tick examined; the cursor moves past only those. */
+    let examined = 0;
     for (const key of listed) {
+      if (halted || notes >= noteBudget) {
+        break;
+      }
+      examined += 1;
       const parts = steps.parsesKey(prefix, key);
       if (parts === null) {
         counter("unknown_key_total");
         continue;
       }
       const tail = key.slice(nodePrefix.length);
-      if (halted || marked.has(tail) || marks.length >= TREE_GC_MAX_SWEEP_MARKS) {
+      if (
+        marked.has(tail) ||
+        marks.length >= TREE_GC_MAX_SWEEP_MARKS ||
+        !deletable(parts.attempt)
+      ) {
         continue;
       }
+      notes += 1;
       const found = await steps.sweepIsMember(key, view, "note");
       if (found === "corrupt") {
         // Counted and warned; a sweep candidate GC cannot authenticate stays.
@@ -820,6 +865,7 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
         serverTime === undefined ||
         !steps.startsAge("stamp") ||
         !steps.passesFloorGate(mark.floor, h) ||
+        !deletable(mark.key.slice(0, 32)) ||
         budget <= 0
       ) {
         stamped.push(mark);
@@ -841,7 +887,11 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
       // A member, a gone node or a corrupt one leaves the sweep's list.
     }
     marks = stamped;
-    cursor = listed.length < TREE_GC_SWEEP_LIST_KEYS ? null : listed.at(-1)!;
+    if (examined < listed.length) {
+      cursor = examined === 0 ? cursor : listed[examined - 1]!;
+    } else {
+      cursor = listed.length < TREE_GC_SWEEP_LIST_KEYS ? null : listed.at(-1)!;
+    }
   }
 
   // 10. The state write, when the tick changed anything.

@@ -68,6 +68,8 @@ import { runTreeGcTick, treeGcCandidateCharge, treeGcCandidates } from "./gc.ts"
 import { createTreeGcRootView, type TreeGcMembership, treeGcMembership } from "./gc-member.ts";
 import { emptyTreeGcState, encodeTreeGcState } from "./gc-state.ts";
 import { readTreeHead, readTreeRoot } from "./head.ts";
+import { createTreeConfig } from "./layout.ts";
+import { sealFoldRecord } from "./record.ts";
 import { openTreeView } from "./read.ts";
 
 const MIXED: readonly GcChange[] = [
@@ -77,14 +79,33 @@ const MIXED: readonly GcChange[] = [
 ];
 
 const DELAY = TREE_GC_SUPERSEDED_DELAY_MINUTES;
+
+/**
+ * A ledger with room for exactly one candidate check at depth 3, after
+ * the four calls a probe tick makes before it sizes its checks (the
+ * state GET, the sweep LIST, the head and root GETs), each charged at
+ * every attempt.
+ */
+const ONE_CHECK_LEDGER = TREE_GC_TICK_RESERVED_CALLS + 4 * 3 + 12;
 const AGE = TREE_GC_SWEEP_AGE_MINUTES;
 const LONG = 60_000;
 
-/** Run `check`, turning a throw into a failure message. */
+/**
+ * Run `check`, turning a throw into a failure message: a read that found
+ * a node the root names missing is reported as that, anything else as a
+ * throw, which the mutation block accepts only where it says so.
+ */
 const guarded = async (check: () => Promise<string | undefined>): Promise<string | undefined> => {
   try {
     return await check();
   } catch (error) {
+    if (
+      error instanceof BaerlyError &&
+      error.code === "InvalidResponse" &&
+      /missing|absent/.test(error.message)
+    ) {
+      return `a read met a missing node: ${error.message}`;
+    }
     return `threw ${String(error)}`;
   }
 };
@@ -304,23 +325,35 @@ const reuseCounterFailure = (mutant?: TreeMutant) =>
     return duplicates === 0 ? undefined : `${duplicates} duplicate identities`;
   });
 
-/** An attempt in flight at the head's floor is neither resolved nor stuck, and its nodes survive. */
+/**
+ * An attempt in flight at the head's floor for longer than the sweep
+ * age is neither resolved nor stuck, and once it lands everything it
+ * recorded is reclaimed. Treating the open floor as closed cannot
+ * delete here (no evidence ever names an attempt still in flight), but
+ * it marks the floor stuck, ages it out and retires the attempt's
+ * record leak-only, so what the attempt superseded leaks.
+ */
 const openFloorFailure = (mutant?: TreeMutant) =>
   guarded(async () => {
     const bucket = await GcBucket.seeded();
     const flight = await bucket.startFold([["k05", 55]]);
     const problems: string[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < AGE + 5; i++) {
       bucket.advance(1);
       await bucket.tick(gcConfig(mutant));
       const state = await bucket.state();
       const stuck = state?.stuck ?? null;
-      if (stuck !== null) {
+      if (stuck !== null && i === 0) {
         problems.push(`floor ${stuck.floor} marked stuck`);
       }
     }
     await flight.release();
-    problems.push(...(await bucket.violations()));
+    bucket.advance(1);
+    await reclaim(bucket, gcConfig(mutant));
+    const left = await reclaimedProblems(bucket);
+    if (left !== undefined) {
+      problems.push(left);
+    }
     return joined(problems);
   });
 
@@ -357,7 +390,10 @@ const regenerationFailure = (mutant?: TreeMutant) =>
  * The sweep reclaims nodes no record names (a lost attempt whose record
  * is gone), leaves keys that do not parse, counting them, and never
  * deletes a node the root reaches or one sooner than the delay after it
- * became unreachable.
+ * became unreachable. A sweep that took a stray key for a node would
+ * not count it, and would hand it to the membership check, which never
+ * answers "delete" for a key that does not parse; so that defect shows
+ * here as the missing count, with the strays still in place.
  */
 const sweepFailure = (mutant?: TreeMutant) =>
   guarded(async () => {
@@ -417,9 +453,12 @@ const sweepInFlightFailure = (mutant?: TreeMutant) =>
     const bucket = await GcBucket.seeded();
     const watch = new MarginWatch(bucket);
     await watch.observe();
+    // The attempt's record lags in LIST, so only the floor gate protects its nodes.
+    bucket.listLag.add("0".repeat(32));
     const flight = await bucket.startFold([["k08", 88]], { attempt: "0".repeat(32) });
     await bucket.tickFor(AGE + 10, gcConfig(mutant), watch);
     await flight.release();
+    bucket.listLag.clear();
     const problems = [...(await bucket.violations())];
     await watch.observe();
     await bucket.fold([["k12", 12]]);
@@ -439,9 +478,11 @@ const supersededAfterNoteFailure = (mutant?: TreeMutant) =>
     const bucket = await GcBucket.seeded();
     const watch = new MarginWatch(bucket);
     await watch.observe();
+    bucket.listLag.add("0".repeat(32));
     const flight = await bucket.startFold([["k08", 88]], { attempt: "0".repeat(32) });
     await bucket.tickFor(30, gcConfig(mutant), watch);
     await flight.release();
+    bucket.listLag.clear();
     await watch.observe();
     await bucket.tickFor(28, gcConfig(mutant), watch);
     await bucket.fold([["k08", 89]]);
@@ -459,6 +500,7 @@ const floorBeforeListFailure = (mutant?: TreeMutant) =>
   guarded(async () => {
     const bucket = await GcBucket.seeded();
     let flight: Awaited<ReturnType<GcBucket["startFold"]>> | undefined;
+    bucket.listLag.add("0".repeat(32));
     bucket.onList.set(GC_NODES, async () => {
       await bucket.fold([["k19", 1]]);
       flight = await bucket.startFold([["k02", 2]], { attempt: "0".repeat(32) });
@@ -470,6 +512,7 @@ const floorBeforeListFailure = (mutant?: TreeMutant) =>
       return "setup: the LIST hook never ran";
     }
     await flight.release();
+    bucket.listLag.clear();
     return joined([...watch.problems, ...(await bucket.violations())]);
   });
 
@@ -552,6 +595,196 @@ const freshOf = async (bucket: GcBucket, attempt: string): Promise<string[]> => 
   const keys = await bucket.keys(GC_NODES);
   return keys.filter((key) => key.startsWith(`${GC_NODES}${attempt}/`));
 };
+
+/**
+ * A duplicate identity found only after its loser entry was assigned:
+ * X loses a floor; a tick with room for one check resolves the floor and
+ * names X's record as the loser to drain, but drains nothing; then an
+ * attempt reusing X starts, adopting X's existing leaf. The next tick
+ * must not drain X's fresh nodes, and the reusing attempt's CAS lands on
+ * a complete tree.
+ */
+const lateDuplicateFailure = (mutant?: TreeMutant) =>
+  guarded(async () => {
+    const bucket = await GcBucket.seeded();
+    const reused = "a".repeat(32);
+    const loser = await bucket.prepare([["k03", 5]]);
+    await bucket.fold([["k19", 119]], { attempt: "b".repeat(32) });
+    await bucket.publish(loser, { attempt: reused });
+    // Room for one check: the probe's sweep page takes it.
+    const first = await bucket.tickWithLedger(ONE_CHECK_LEDGER, gcConfig(mutant));
+    const state = await bucket.state();
+    const entry = state?.work.find((w) => w.floor === 20);
+    if (first.result.candidates !== 1 || entry?.loser?.record.slice(0, 32) !== reused) {
+      return `setup: candidates ${first.result.candidates}, entry ${JSON.stringify(entry)}`;
+    }
+    const retry = await bucket.startFold([["k03", 5]], { attempt: reused });
+    bucket.advance(1);
+    await bucket.tick(gcConfig(mutant));
+    const outcome = await retry.release();
+    if (outcome.kind !== "published" || outcome.adopted === 0) {
+      return `setup: the retry was ${outcome.kind}, adopting ${outcome.adopted}`;
+    }
+    return joined(await bucket.violations());
+  });
+
+/**
+ * A lost attempt's record is gone, so the sweep marks and stamps its
+ * nodes; before they are due an attempt reusing its identity starts and
+ * adopts one of them. The sweep must not delete it while that attempt
+ * can still land.
+ */
+const sweepReuseFailure = (mutant?: TreeMutant) =>
+  guarded(async () => {
+    const bucket = await GcBucket.seeded();
+    const reused = "a".repeat(32);
+    const loser = await bucket.prepare([["k07", 77]]);
+    await bucket.fold([["k12", 12]]);
+    const lost = await bucket.publish(loser, { attempt: reused });
+    await bucket.memory.delete(lost.record);
+    let stamped = false;
+    for (let minute = 0; minute < 40 && !stamped; minute++) {
+      if (minute === 5) {
+        await bucket.fold([["k19", 19]]);
+      }
+      bucket.advance(1);
+      await bucket.tick(gcConfig(mutant));
+      const state = await bucket.state();
+      stamped = (state?.sweep.marks ?? []).some(
+        (mark) => mark.key.startsWith(reused) && mark.due_at !== null,
+      );
+    }
+    if (!stamped) {
+      return "setup: no mark of the lost attempt was stamped";
+    }
+    const retry = await bucket.startFold([["k07", 77]], { attempt: reused });
+    await bucket.tickFor(AGE + 5, gcConfig(mutant));
+    const outcome = await retry.release();
+    if (outcome.kind !== "published" || outcome.adopted === 0) {
+      return `setup: the retry was ${outcome.kind}, adopting ${outcome.adopted}`;
+    }
+    return joined(await bucket.violations());
+  });
+
+/**
+ * A probe tick on a nearly spent ledger, at depth 3 with room for one
+ * check, stays within the static bound for that one check: the sweep
+ * page shrinks to fit instead of checking every listed key.
+ */
+const nearFullLedgerFailure = (mutant?: TreeMutant) =>
+  guarded(async () => {
+    const bucket = await GcBucket.seeded();
+    await bucket.fold(MIXED);
+    let checks = 0;
+    const counted = gcConfig(mutant);
+    const isMember = counted.steps.gcIsMember ?? treeGcMembership;
+    const config = createTreeConfig({
+      layout: counted.layout,
+      steps: {
+        ...counted.steps,
+        gcIsMember: (x, view) => {
+          checks += 1;
+          return isMember(x, view);
+        },
+      },
+    });
+    const { result, charged } = await bucket.tickWithLedger(ONE_CHECK_LEDGER, config);
+    if (result.candidates !== 1 || !result.probed) {
+      return `setup: ${result.candidates} candidates, probed ${result.probed}`;
+    }
+    const bound = TREE_GC_TICK_RESERVED_CALLS + result.candidates * treeGcCandidateCharge(3);
+    const problems: string[] = [];
+    if (checks > result.candidates) {
+      problems.push(`${checks} candidate checks with room for ${result.candidates}`);
+    }
+    if (charged > bound) {
+      problems.push(`charged ${charged} of a ${bound}-call bound`);
+    }
+    return joined(problems);
+  });
+
+/**
+ * A record of another head history at the floor a new history's floor
+ * resolves against: it is never the evidence that names the new floor's
+ * winner, so the new winner's fresh nodes are not deleted as a loser's.
+ */
+const generationWitnessFailure = (mutant?: TreeMutant) =>
+  guarded(async () => {
+    const bucket = await GcBucket.seeded("0a");
+    await bucket.fold(MIXED);
+    // Re-seed a new history over the old records, none reclaimed.
+    await bucket.memory.put(GC_HEAD, encodeJsonBytes(freshGcHead("0b")));
+    bucket.rows.clear();
+    const watch = new MarginWatch(bucket);
+    await bucket.fold(GC_SEED);
+    await watch.observe();
+    await bucket.fold(MIXED);
+    await watch.observe();
+    for (let i = 0; i < 4; i++) {
+      bucket.advance(1);
+      const { result } = await bucket.tick(gcConfig(mutant));
+      await watch.afterTick(result.deleted);
+    }
+    return joined(watch.problems);
+  });
+
+/**
+ * A node noted while its attempt was in flight is a member once the
+ * attempt lands, so it is dropped, not stamped: a fold that supersedes
+ * it late in what would have been its age leaves it the full delay.
+ */
+const lateSupersedeFailure = (mutant?: TreeMutant) =>
+  guarded(async () => {
+    const bucket = await GcBucket.seeded();
+    const watch = new MarginWatch(bucket);
+    await watch.observe();
+    bucket.listLag.add("0".repeat(32));
+    const flight = await bucket.startFold([["k08", 88]], { attempt: "0".repeat(32) });
+    await bucket.tickFor(10, gcConfig(mutant), watch);
+    await flight.release();
+    bucket.listLag.clear();
+    await watch.observe();
+    // A fold moves the floor, so the next probe judges every noted mark.
+    await bucket.fold([["k19", 19]]);
+    await watch.observe();
+    await bucket.tickFor(AGE - 8, gcConfig(mutant), watch);
+    await bucket.fold([["k08", 89]]);
+    await watch.observe();
+    await bucket.tickFor(30, gcConfig(mutant), watch);
+    return joined(watch.problems);
+  });
+
+/**
+ * A winner whose identity shows up in other records while its list is
+ * still pending is never a deletion source, even in a tick whose record
+ * DELETEs run out before its own record is retired.
+ */
+const quarantineFailure = (mutant?: TreeMutant) =>
+  guarded(async () => {
+    const bucket = await GcBucket.seeded();
+    const winner = "c".repeat(32);
+    const before = await bucket.reachable();
+    await bucket.fold(MIXED, { attempt: winner });
+    const superseded = await supersededSince(bucket, before);
+    await bucket.tick(gcConfig(mutant));
+    // Five more records under the winner's identity, all sorting before its own.
+    for (let floor = 1; floor <= 5; floor++) {
+      const sealed = await sealFoldRecord(GC_PREFIX, {
+        attempt: winner,
+        base: { floor, root: null, attempt: null, generation: null },
+        result: { floor: floor + 1, root: null },
+        fresh: [],
+        superseded: [],
+      });
+      await bucket.memory.put(sealed.key, sealed.bytes);
+    }
+    bucket.advance(DELAY + 1);
+    const { result } = await bucket.tick(gcConfig(mutant));
+    const taken = result.deleted.filter((key) => superseded.includes(key));
+    return taken.length === 0
+      ? undefined
+      : `deleted ${taken.length} of the winner's superseded nodes`;
+  });
 
 // ---------------------------------------------------------------------
 // Record path
@@ -692,6 +925,21 @@ describe("membership", () => {
     await expect(membershipFailure()).resolves.toBeUndefined();
   });
 
+  test("a key that does not parse as a node key is never answered with non-member", async () => {
+    const bucket = await GcBucket.seeded();
+    const config = gcConfig();
+    const head = (await readTreeHead(bucket.storage, GC_PREFIX))!;
+    const root = await readTreeRoot(bucket.storage, head, config);
+    const view = createTreeGcRootView(bucket.storage, GC_PREFIX, root, config);
+    for (const key of [
+      `${GC_NODES}${gcAttemptOf(9)}/${"0".repeat(64)}.json`,
+      `${GC_NODES}${"A".repeat(32)}/${"0".repeat(64)}`,
+      `${GC_RECORDS}0000000000000000/${gcAttemptOf(9)}/${"0".repeat(64)}`,
+    ]) {
+      await expect(treeGcMembership(key, view)).resolves.toBe("not-a-node");
+    }
+  });
+
   test("at depth 0 and 1 membership reads no body", async () => {
     const bucket = await GcBucket.open();
     await bucket.fold([
@@ -726,6 +974,26 @@ describe("membership", () => {
 describe("attempt identity and closure", () => {
   test("a reused identity is never a deletion source, from either list", async () => {
     await expect(reuseFailure()).resolves.toBeUndefined();
+  });
+
+  test("a duplicate found after its loser entry was assigned stops that loser's drain", async () => {
+    await expect(lateDuplicateFailure()).resolves.toBeUndefined();
+  });
+
+  test(
+    "the sweep never deletes a node of an identity a publication still in flight holds",
+    async () => {
+      await expect(sweepReuseFailure()).resolves.toBeUndefined();
+    },
+    LONG,
+  );
+
+  test("a winner whose identity reappears is quarantined even when its record outlives the tick", async () => {
+    await expect(quarantineFailure()).resolves.toBeUndefined();
+  });
+
+  test("a record of another head history is never evidence for the new history's winner", async () => {
+    await expect(generationWitnessFailure()).resolves.toBeUndefined();
   });
 
   test("an identity in two records is counted, warned and its records retired leak-only", async () => {
@@ -806,6 +1074,14 @@ describe("leak sweep", () => {
   );
 
   test(
+    "a noted node that becomes a member is dropped, so a late supersession still gets the full delay",
+    async () => {
+      await expect(lateSupersedeFailure()).resolves.toBeUndefined();
+    },
+    LONG,
+  );
+
+  test(
     "a fold that lands around a probe's LIST and head GET cannot expose an attempt in flight",
     async () => {
       await expect(floorBeforeListFailure()).resolves.toBeUndefined();
@@ -845,7 +1121,10 @@ describe("state and clock", () => {
     const bucket = await GcBucket.seeded();
     await bucket.fold(MIXED);
     const nodes = await bucket.keys(GC_NODES);
-    await bucket.memory.put(GC_STATE, encodeJsonBytes({ format: "baerly-tree-gc-state-proto" }));
+    await bucket.memory.put(
+      GC_STATE,
+      encodeJsonBytes({ format: "baerly-tree-gc-state-proto", schema_version: 1, ticks: -1 }),
+    );
     await expect(bucket.tick()).resolves.toMatchObject({
       result: { outcome: "reset", deleted: [] },
     });
@@ -853,12 +1132,13 @@ describe("state and clock", () => {
     await expect(bucket.keys(GC_NODES)).resolves.toEqual(nodes);
   });
 
-  test("a state of a newer schema stops the tick with InvalidResponse and no write", async () => {
+  test.each([
+    ["a newer schema", { format: "baerly-tree-gc-state-proto", schema_version: 2 }],
+    ["a non-number schema", { format: "baerly-tree-gc-state-proto", schema_version: "2" }],
+    ["another format", { format: "baerly-tree-gc-state-next", schema_version: 1 }],
+  ])("a state of %s stops the tick with InvalidResponse and no write", async (_name, body) => {
     const bucket = await GcBucket.seeded();
-    await bucket.memory.put(
-      GC_STATE,
-      encodeJsonBytes({ format: "baerly-tree-gc-state-proto", schema_version: 2 }),
-    );
+    await bucket.memory.put(GC_STATE, encodeJsonBytes(body));
     const before = await bucket.memory.get(GC_STATE);
     const error = await bucket.tick().catch((error_: unknown) => error_);
     expect(error).toBeInstanceOf(BaerlyError);
@@ -894,6 +1174,10 @@ describe("budget", () => {
     expect(treeGcCandidates(0, 900)).toBe(TREE_GC_TICK_CANDIDATES);
     expect(treeGcCandidates(2, TREE_GC_TICK_RESERVED_CALLS + 9 * 10)).toBe(10);
     expect(treeGcCandidates(0, TREE_GC_TICK_RESERVED_CALLS + 2)).toBe(0);
+  });
+
+  test("a probe tick on a nearly spent ledger shortens its sweep page to fit its one check", async () => {
+    await expect(nearFullLedgerFailure()).resolves.toBeUndefined();
   });
 
   test("a ledger with no room for one candidate check skips the tick, counted", async () => {
@@ -986,7 +1270,7 @@ describe("mutation", () => {
     [SWEEP_MEMBER_AGAINST_MARK_ROOT, [sweepInFlightFailure]],
     [GC_SKIPS_MEMBERSHIP_CHECK, [membershipFailure, withReusedNode(reclaimFailure)]],
     [PUBLISH_REUSES_ATTEMPT, [reuseCounterFailure]],
-    [GC_IGNORES_DUPLICATE_IDENTITY, [reuseFailure]],
+    [GC_IGNORES_DUPLICATE_IDENTITY, [reuseFailure, lateDuplicateFailure, sweepReuseFailure]],
     [GC_PROCESSES_OPEN_FLOOR, [openFloorFailure]],
     [GC_IGNORES_GENERATION, [regenerationFailure]],
     [GC_WINNER_AS_LOSER, [raceFailure]],
@@ -1008,11 +1292,21 @@ describe("mutation", () => {
     await expect(withReusedNode(reclaimFailure)()).resolves.toBeUndefined();
   });
 
+  /** Mutants whose only consequence is a throw, and the throw each must raise; none today. */
+  const throws = new Map<TreeMutant, RegExp>();
+
   test.each(GC_MUTANTS.map((mutant) => [mutant.name, mutant] as const))(
     "%s turns its checks red",
     async (_name, mutant) => {
       for (const check of checks.get(mutant)!) {
-        await expect(check(mutant)).resolves.toBeDefined();
+        const found = await check(mutant);
+        expect(found).toBeDefined();
+        const expected = throws.get(mutant);
+        if (expected === undefined) {
+          expect(found).not.toMatch(/^threw /);
+        } else {
+          expect(found).toMatch(expected);
+        }
       }
     },
     2 * LONG,

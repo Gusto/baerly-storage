@@ -44,7 +44,9 @@ export type TreeGcMembership =
   /** The node's body failed once and decoded on the re-read: left for later. */
   | "deferred"
   /** A node on the path from the root is missing or undecodable: proves nothing. */
-  | "path-unreadable";
+  | "path-unreadable"
+  /** The key is not a node key of the collection: never deleted. */
+  | "not-a-node";
 
 /** The root a GC tick read, and how to fetch what a check needs. */
 export interface TreeGcRootView {
@@ -185,7 +187,10 @@ export const treeGcMembershipVia = async (
   retriesCorrupt: boolean,
 ): Promise<TreeGcMembership> => {
   const parts = parseTreeNodeKey(view.prefix, x);
-  if (parts === null || view.root === null) {
+  if (parts === null) {
+    return "not-a-node";
+  }
+  if (view.root === null) {
     return "non-member";
   }
   if (x === view.root.key) {
