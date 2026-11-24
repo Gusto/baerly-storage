@@ -612,12 +612,16 @@ export const treeGcTickBound = (
 };
 
 /**
- * Class A writes per minute that tree GC adds, at `foldsPerMinute` folds
- * a minute: each fold attempt's record create, at most one state write
- * to resolve its floor, and at most two state writes per clock probe,
- * one probe a minute. Independent of the app's write rate.
+ * Class A operations per minute that tree GC adds, at `foldsPerMinute`
+ * folds and `ticksPerMinute` GC ticks a minute: each fold attempt's
+ * record create and at most one state write to resolve its floor; per
+ * clock probe (at most one a minute) two state writes and the sweep's
+ * LIST page; and per tick one LIST page of the fold records. Only that
+ * last term grows with the tick rate, so with in-band ticks it grows
+ * with the write rate.
  */
-export const treeGcClassAPerMinute = (foldsPerMinute: number): number => foldsPerMinute * 2 + 2;
+export const treeGcClassAPerMinute = (foldsPerMinute: number, ticksPerMinute: number): number =>
+  foldsPerMinute * 2 + 3 + ticksPerMinute;
 
 // ── Reads ────────────────────────────────────────────────────────────────
 
