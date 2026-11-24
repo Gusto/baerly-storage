@@ -16,7 +16,11 @@
  */
 import { BaerlyError } from "@baerly/protocol";
 import type { ChunkKey } from "./chunk.ts";
+import type { TreeGcClassification } from "./gc.ts";
+import type { TreeGcMembership, TreeGcRootView } from "./gc-member.ts";
+import type { TreeGcState } from "./gc-state.ts";
 import type { TreeHead } from "./head.ts";
+import type { TreeNodeKeyParts } from "./key.ts";
 import type { DecodedTreeNode, TreeChildEntry } from "./node-codec.ts";
 import type { LiveTreeRef, TreePublicationWrite } from "./publish.ts";
 import type { FoldRecordBase } from "./record.ts";
@@ -318,6 +322,48 @@ export interface TreeSteps {
   ) => readonly string[];
   /** The base a fold record names for an attempt that captured `head`. */
   readonly recordBase?: (head: TreeHead) => FoldRecordBase;
+  /** GC's reachability check of node key `x` against the view's root; see `gc-member.ts`. */
+  readonly gcIsMember?: (x: string, view: TreeGcRootView) => Promise<TreeGcMembership>;
+  /** Whether GC reads a candidate whose body failed its decode once more before calling it corrupt. */
+  readonly gcRetriesCorrupt?: () => boolean;
+  /**
+   * Whether GC deletes a corrupt candidate, given its role and whether
+   * the key-only guard holds (its attempt is neither the head's
+   * installer nor that of any child ref of the root).
+   */
+  readonly gcOnCorrupt?: (role: "loser" | "superseded" | "sweep", guardHolds: boolean) => boolean;
+  /** The parts of a key the leak sweep listed, or `null` when it is not a node key. */
+  readonly gcParsesKey?: (prefix: string, key: string) => TreeNodeKeyParts | null;
+  /**
+   * The winner and losers among the attempts recorded at one closed
+   * floor, given the attempts the tick's evidence names and the attempts
+   * that appear in more than one listed record.
+   */
+  readonly gcClassify?: (
+    members: readonly string[],
+    evidence: ReadonlySet<string>,
+    duplicates: ReadonlySet<string>,
+  ) => TreeGcClassification;
+  /** Whether the records at `floor` are closed under a head at `headFloor`. */
+  readonly gcIsClosed?: (floor: number, headFloor: number) => boolean;
+  /** Whether an item due at `dueAt` (server time) is due at server time `now`. */
+  readonly gcIsDue?: (dueAt: string | null, now: Date | undefined) => boolean;
+  /** The server time a probe reads, from the probe write's `serverDate` and the local clock. */
+  readonly gcNow?: (serverDate: Date | undefined, local: Date) => Date | undefined;
+  /** Whether the GC state as read still belongs to the history of `head`. */
+  readonly gcBindsHead?: (state: TreeGcState, head: TreeHead) => boolean;
+  /** The leak sweep's membership check, by phase. */
+  readonly sweepIsMember?: (
+    x: string,
+    view: TreeGcRootView,
+    phase: "note" | "stamp" | "delete",
+  ) => Promise<TreeGcMembership>;
+  /** Whether a mark noted under a head at `markFloor` may be stamped under a head at `headFloor`. */
+  readonly sweepPassesFloorGate?: (markFloor: number, headFloor: number) => boolean;
+  /** Whether the sweep starts a mark's age in `phase`. */
+  readonly sweepStartsAge?: (phase: "note" | "stamp") => boolean;
+  /** Whether a probe tick lists its sweep page before it reads the head. */
+  readonly sweepListsBeforeHead?: () => boolean;
   /**
    * The reader's tail step: walk and probe the unfolded log tail of the
    * head it is given, and fold it into a per-`_id` overlay.
