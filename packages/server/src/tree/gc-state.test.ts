@@ -89,13 +89,12 @@ describe("tree GC state", () => {
     expect(decodeTreeGcState(KEY, body).kind).toBe("malformed");
   });
 
-  test("a non-canonical body, another format or a non-number schema is malformed", () => {
+  test("a non-canonical body, an unknown field or a body with no format is malformed", () => {
     const text = new TextDecoder().decode(encodeTreeGcState(FULL));
     for (const body of [
       text.replace(",", ", "),
       text.replace('"ticks":7', '"ticks":7,"extra":1'),
-      text.replace("gc-state-proto", "gc-state-other"),
-      text.replace('"schema_version":1', '"schema_version":"1"'),
+      '{"schema_version":1}',
       "[]",
       "{",
     ]) {
@@ -103,10 +102,12 @@ describe("tree GC state", () => {
     }
   });
 
-  test("a state of another schema version is InvalidResponse that says GC is paused", () => {
-    const body = new TextDecoder()
-      .decode(encodeTreeGcState(FULL))
-      .replace('"schema_version":1', '"schema_version":2');
+  test.each([
+    ['"schema_version":2', '"schema_version":1'],
+    ['"schema_version":"1"', '"schema_version":1'],
+    ["gc-state-other", "gc-state-proto"],
+  ])("a state with %s is InvalidResponse that says GC is paused, never replaced", (to, from) => {
+    const body = new TextDecoder().decode(encodeTreeGcState(FULL)).replace(from, to);
     expect(() => decodeTreeGcState(KEY, new TextEncoder().encode(body))).toThrow(
       expect.objectContaining({
         code: "InvalidResponse",

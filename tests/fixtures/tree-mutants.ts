@@ -562,23 +562,11 @@ export const PUBLISH_REUSES_ATTEMPT: TreeMutant = {
   options: { steps: { mintAttempt: () => "a".repeat(32) } },
 };
 
-/** GC that drains an attempt found in two records as a loser. */
+/** GC that deletes by any identity, reused or still publishing. */
 export const GC_IGNORES_DUPLICATE_IDENTITY: TreeMutant = {
   name: "gc-ignores-duplicate-identity",
-  defect: "an attempt id present in two records is deleted as a loser",
-  options: {
-    steps: {
-      gcClassify: (members, evidence, duplicates) => {
-        const verdict = classifyFloor(members, evidence, duplicates);
-        return verdict.winner === null
-          ? verdict
-          : {
-              ...verdict,
-              losers: [...verdict.losers, ...members.filter((a) => duplicates.has(a))],
-            };
-      },
-    },
-  },
+  defect: "an attempt id present in two records, or still publishing, is deleted by",
+  options: { steps: { gcTrustsIdentity: () => true } },
 };
 
 /** GC that treats the records at the head's own floor as closed. */
