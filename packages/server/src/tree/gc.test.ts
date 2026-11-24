@@ -552,14 +552,19 @@ const corruptFailure = (mutant?: TreeMutant) =>
     return joined(problems);
   });
 
-/** A one-time misread of a superseded node is read again: no corruption is counted or warned. */
+/**
+ * A one-time misread of a superseded node is read again: no corruption
+ * is counted or warned, and the record path reclaims the node on a later
+ * probe, well before the sweep age.
+ */
 const misreadFailure = (mutant?: TreeMutant) =>
   guarded(async () => {
     const bucket = await GcBucket.seeded();
     const target = await supersededBelowRoot(bucket);
+    let armed = false;
     let misread = false;
     bucket.getOverride = (key) => {
-      if (key === target && !misread) {
+      if (key === target && armed && !misread) {
         misread = true;
         return new TextEncoder().encode("torn read");
       }
@@ -567,6 +572,8 @@ const misreadFailure = (mutant?: TreeMutant) =>
     };
     const problems: string[] = [];
     for (const minutes of [0, DELAY + 1, 1, 1]) {
+      // The misread lands on the record drain, in the tick the node is due.
+      armed = minutes > 0;
       bucket.advance(minutes);
       const { counters, warnings } = await bucket.tick(gcConfig(mutant));
       if ((counters.get("db.tree_gc.corrupt_node_total") ?? 0) > 0) {
@@ -578,6 +585,10 @@ const misreadFailure = (mutant?: TreeMutant) =>
     }
     if (!misread) {
       problems.push("setup: the target was never read");
+    }
+    const left = await bucket.keys(GC_NODES);
+    if (left.includes(target)) {
+      problems.push(`the misread node ${target} was not reclaimed`);
     }
     return joined(problems);
   });
@@ -928,7 +939,7 @@ describe("record path", () => {
     await expect(corruptFailure()).resolves.toBeUndefined();
   });
 
-  test("a one-time misread is read again, not counted as corruption", async () => {
+  test("a one-time misread is read again, not counted as corruption, and reclaimed later", async () => {
     await expect(misreadFailure()).resolves.toBeUndefined();
   });
 

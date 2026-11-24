@@ -703,7 +703,11 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
     await storage.delete(key, opts);
     deleted.push(key);
   };
-  /** Handle what a check found for `x`; false when the tick must stop deleting. */
+  /**
+   * Handle what a check found for `x`; false when the tick must stop
+   * deleting. The record drains handle `deferred` themselves: it stops
+   * that slot's advance, so the node is checked again on a later probe.
+   */
   const settle = async (
     x: string,
     found: TreeGcMembership,
@@ -772,7 +776,8 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
     while (next < record.fresh.length && budget > 0) {
       const x = `${nodePrefix}${record.attempt}/${record.fresh[next]}`;
       budget -= 1;
-      if (!(await settle(x, await steps.isMember(x, view), "loser", record.attempt))) {
+      const found = await steps.isMember(x, view);
+      if (found === "deferred" || !(await settle(x, found, "loser", record.attempt))) {
         break;
       }
       next += 1;
@@ -823,7 +828,8 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
       const ref = record.superseded[next]!;
       const x = `${nodePrefix}${ref}`;
       budget -= 1;
-      if (!(await settle(x, await steps.isMember(x, view), "superseded", ref.slice(0, 32)))) {
+      const found = await steps.isMember(x, view);
+      if (found === "deferred" || !(await settle(x, found, "superseded", ref.slice(0, 32)))) {
         break;
       }
       next += 1;
