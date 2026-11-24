@@ -621,9 +621,13 @@ export const GC_PENDING_CAS_MAX_ATTEMPTS: number = 3;
  * under this arm alone a snapshot of many small documents settles at a tail of
  * about `snapshot_bytes / mean_entry_bytes` entries, one GET each. The count
  * arm (the profile's `foldAtTailEntries`, see
- * {@link MAINTENANCE_FOLD_AT_TAIL_ENTRIES}) bounds the request count; this arm
- * stays for entries large enough to outgrow the snapshot in fewer entries. See
- * docs/spec/scale-ceilings.md for the derivation.
+ * {@link MAINTENANCE_FOLD_AT_TAIL_ENTRIES}) bounds the request count. This arm
+ * still needs its entry floor, so it trips first only where the count arm sits
+ * above that floor: on `cf-paid` and `node` (64), a tail of 50-63 entries whose
+ * estimated bytes reach the snapshot's. On `cf-free` (20, or 7 over `fetch`) the
+ * count arm always trips first, unless the writing verb holds it off because the
+ * fold would defer; this arm still applies then, and its rebuild defer carries
+ * the `fold_deferred` signal. See docs/spec/scale-ceilings.md for the derivation.
  *
  * @see docs/spec/scale-ceilings.md
  * @see packages/server/src/maintenance.ts
@@ -990,11 +994,18 @@ export const NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS: number = 200;
  * ({@link MAINTENANCE_TARGET_RATIO}) trips. The bytes arm alone bounds the
  * tail in bytes, not in requests, and every read and write GETs each tail
  * entry: with it alone a 32 MiB snapshot of 5 KiB documents on Workers
- * Paid let a point read issue 6,333 GETs. With `q` the tick that sees a
- * tail of `q` folds it, so a read replays at most `q` entries, or `q + 1`
- * when the hard-GC guard gave that tick to GC and the read races the next
- * write's tick, for one snapshot rewrite per `q` writes. A fold's request
- * count does not change.
+ * Paid let a point read issue 6,333 GETs. In steady state, where each fold
+ * the trigger starts lands, the tick that sees a tail of `q` folds it, so a
+ * read replays at most `q` entries, or `q + 1` when the hard-GC guard gave
+ * that tick to GC and the read races the next write's tick, for one
+ * snapshot rewrite per `q` writes. A fold's request count does not change.
+ * The bound does not hold while the fold defers at `C` or `E` (or the
+ * writing verb holds the count arm off because it would), while folds are
+ * skipped for the request budget or fail on a transient error or a lost
+ * CAS (the next write's tick retries), under `BAERLY_MAINTENANCE_DISABLE`,
+ * or while concurrent ticks race, as `ctx.waitUntil` ticks on Cloudflare
+ * can: a read that lands between commits and their ticks' folds replays
+ * the longer tail.
  *
  * **Sizing: an economic order quantity.** Folding every `q` writes costs
  * one fold, `F` in tail-entry GETs replayed, per `q` writes; between folds
@@ -1014,7 +1025,8 @@ export const NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS: number = 200;
  * tail swings between `q − cap` and `q`: longer than at `q = cap`, at the
  * same fold rate. 64 sits under {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS}
  * (200); the `cf-free` profile, whose cap is 20, folds at its cap
- * ({@link WRITE_TICK_FOLD_AT_TAIL_ENTRIES}).
+ * ({@link WRITE_TICK_FOLD_AT_TAIL_ENTRIES}). The server reads any profile's
+ * trigger capped at its pass (`foldTriggerEntries`).
  *
  * Prior art bounds a log by count the same way: RocksDB's L0 file-count
  * compaction trigger (`level0_file_num_compaction_trigger`), SQLite's WAL
