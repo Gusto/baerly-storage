@@ -68,6 +68,7 @@ import {
 import type { ChunkKey } from "./chunk.ts";
 import {
   TREE_FOLD_PARALLEL_GETS,
+  TREE_GC_RECORD_MAX_KEYS,
   TREE_HEAD_CAS_CHARGE,
   TREE_RETRIED_CALL_CHARGE,
 } from "./constants.ts";
@@ -940,18 +941,24 @@ export const planFold = async (input: PlanFoldInput): Promise<TreeFoldPlan> => {
 
 /** Calls reserved to publish a tree of `freshNodes` fresh nodes; see {@link publicationReserve}. */
 const reserveFor = (freshNodes: number): number =>
-  freshNodes * (TREE_RETRIED_CALL_CHARGE + TREE_RETRIED_CALL_CHARGE) +
+  (freshNodes + 1) * (TREE_RETRIED_CALL_CHARGE + TREE_RETRIED_CALL_CHARGE) +
   TREE_HEAD_CAS_CHARGE +
   TREE_RETRIED_CALL_CHARGE;
 
 /**
- * Calls reserved to publish `tree`: per fresh node, its create PUT and
- * the GET that adopts it when the create's acknowledgement was lost and
- * its retry met a 412; then the head CAS and the head re-read that
- * resolves its fate.
+ * Calls reserved to publish `tree`: for the fold record and for each
+ * fresh node, its create PUT and the GET that adopts it when the
+ * create's acknowledgement was lost and its retry met a 412; then the
+ * head CAS and the head re-read that resolves its fate.
  */
 export const publicationReserve = (tree: PlannedTree | null): number =>
   reserveFor(tree === null ? 0 : freshNodeCount(tree.root));
+
+/**
+ * Whether a fold record listing `keys` keys, fresh and superseded
+ * together, may be published: at most `TREE_GC_RECORD_MAX_KEYS`.
+ */
+export const recordKeysFit = (keys: number): boolean => keys <= TREE_GC_RECORD_MAX_KEYS;
 
 /** Input to {@link FoldPlanner}. */
 export interface FoldPlannerInput extends Omit<PlanFoldInput, "mutations"> {
@@ -1072,10 +1079,11 @@ interface ReadNode {
  * charged through {@link FoldPlanner.spend}, all against one budget.
  * Before each node GET the planner checks that the GET and the reserve
  * of the last accepted plan ({@link publicationReserve}) still fit;
- * after the change it checks that the new plan's reserve fits. A change
- * that fails either check is rejected: the fold ends before its seq and
- * publishes the last accepted plan, and the GETs issued for it stay
- * charged. Rejection is prefix-only: after it, every later change is
+ * after the change it checks that the new plan's reserve fits, and that
+ * its fold record would list at most `TREE_GC_RECORD_MAX_KEYS` keys.
+ * A change that fails any check is rejected: the fold ends before its
+ * seq and publishes the last accepted plan, and the GETs issued for it
+ * stay charged. Rejection is prefix-only: after it, every later change is
  * refused.
  *
  * **Prefetch.** {@link FoldPlanner.prefetch} reads, concurrently, the
@@ -1205,7 +1213,7 @@ export class FoldPlanner {
       throw error;
     }
     const reserve = this.#reserveOf(next);
-    if (!this.#fits(0, reserve)) {
+    if (!this.#fits(0, reserve) || !this.#recordFits(next)) {
       this.#rejected = true;
       return false;
     }
@@ -1239,7 +1247,7 @@ export class FoldPlanner {
     }
     const { state } = this.#current;
     const reserve = this.#reserveOf(state);
-    if (!this.#fits(0, reserve)) {
+    if (!this.#fits(0, reserve) || !this.#recordFits(state)) {
       this.#rejected = true;
       return false;
     }
@@ -1433,10 +1441,27 @@ export class FoldPlanner {
   }
 
   #reserveOf(state: PlannerState): number {
+    return reserveFor(this.#freshOf(state));
+  }
+
+  /** Fresh nodes publishing `state` creates, the root included. */
+  #freshOf(state: PlannerState): number {
     if (state.kind === "single") {
-      return reserveFor(state.rows === 0 ? 0 : 1);
+      return state.rows === 0 ? 0 : 1;
     }
-    return reserveFor(state.fresh.reduce((total, n) => total + n, 1));
+    return state.fresh.reduce((total, n) => total + n, 1);
+  }
+
+  /**
+   * Whether the fold record of a plan of `state`, over the nodes read so
+   * far, fits {@link recordKeysFit}. A record lists every fresh node and
+   * every superseded one, and only the captured root and the nodes the
+   * plan read can be superseded, so their count bounds it.
+   */
+  #recordFits(state: PlannerState): boolean {
+    const superseded = this.#input.root === null ? 0 : 1 + this.#read.length;
+    const fit = this.#config.steps.recordKeysFit ?? recordKeysFit;
+    return fit(this.#freshOf(state) + superseded);
   }
 
   #initialState(root: DecodedTreeNode | null): PlannerState {

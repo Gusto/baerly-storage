@@ -535,8 +535,11 @@ describe("charged, change-by-change planning", () => {
     expect(run.floor).toBe(floor);
   });
 
-  test("the publication reserve is a PUT and an adoption GET per fresh node, the head CAS and its fate re-read", async () => {
-    expect(publicationReserve(null)).toBe(1 + TREE_RETRIED_CALL_CHARGE);
+  test("the publication reserve is a PUT and an adoption GET for the fold record and per fresh node, the head CAS and its fate re-read", async () => {
+    // An empty tree still writes its fold record.
+    expect(publicationReserve(null)).toBe(
+      2 * TREE_RETRIED_CALL_CHARGE + 1 + TREE_RETRIED_CALL_CHARGE,
+    );
     const tree = await buildTree(
       base.map((r) => canonicalDocument(r.value, "row")),
       chunkKey,
@@ -544,7 +547,7 @@ describe("charged, change-by-change planning", () => {
     );
     // 7 leaves, 3 level-1 nodes and the root.
     expect(publicationReserve(tree)).toBe(
-      11 * 2 * TREE_RETRIED_CALL_CHARGE + 1 + TREE_RETRIED_CALL_CHARGE,
+      (1 + 11) * 2 * TREE_RETRIED_CALL_CHARGE + 1 + TREE_RETRIED_CALL_CHARGE,
     );
   });
 });
