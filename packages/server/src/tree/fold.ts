@@ -55,7 +55,7 @@
  * tree already past either ceiling folds nothing. Each refuses as a
  * `deferred` stop the caller reports.
  *
- * **Tick deadline.** Planning also stops on the wall clock, so the
+ * **Tick budget.** Planning also stops on the wall clock, so the
  * whole tick, publication included, fits `tickBudgetMs` (default
  * `TREE_FOLD_TICK_BUDGET_MS`) counted from `startedAt`, the request's
  * arrival. Before each log batch and each entry the fold adds the time
@@ -70,7 +70,7 @@
  * before any). A round lasts as long as its slowest call, and erring
  * high only ends a tick early, while erring low can lose the tick. The
  * check never interrupts one entry's node reads or a publication. A fold
- * keeps planning past the deadline until the prefix it would publish is
+ * keeps planning past the budget until the prefix it would publish is
  * non-empty, so every tick that can fold an entry makes progress.
  *
  * **Node reads.** Before adding a batch of entries, the fold has the
@@ -187,7 +187,7 @@ export type TreeFoldStop =
   /** The budget ran out before the entry at `seq` (or before reading it). */
   | { readonly reason: "budget"; readonly seq: number }
   /** The tick budget would run out before the entry at `seq` (or before reading it) could publish. */
-  | { readonly reason: "deadline"; readonly seq: number }
+  | { readonly reason: "tick-budget"; readonly seq: number }
   /**
    * A depth-0 ceiling: the captured tree is past it (`gate: "pre-fold"`),
    * or the entry at `seq` would take the totals past it and no later
@@ -569,15 +569,15 @@ export const prepareTreeFold = async (
       0,
     );
   /**
-   * Whether the tick deadline stops the fold before the entry at `seq`:
+   * Whether the tick budget stops the fold before the entry at `seq`:
    * the prefix the fold would publish is non-empty, and the time elapsed
    * plus the time to publish it reaches the tick budget.
    */
-  const pastDeadline = (seq: number): boolean => {
+  const pastTickBudget = (seq: number): boolean => {
     if (publishable() === 0 || now() - startedAt + publishMs() < tickBudgetMs) {
       return false;
     }
-    stop = { reason: "deadline", seq };
+    stop = { reason: "tick-budget", seq };
     return true;
   };
   /** Accept an entry that changes no row; returns whether the fold reads on. */
@@ -638,7 +638,7 @@ export const prepareTreeFold = async (
   };
 
   reading: while (!atTail) {
-    if (pastDeadline(next)) {
+    if (pastTickBudget(next)) {
       break;
     }
     const first = next === floor;
@@ -673,7 +673,7 @@ export const prepareTreeFold = async (
     /** Entries of the batch whose nodes have been read ahead. */
     let readAhead = 0;
     for (const [i, item] of batch.entries()) {
-      if (pastDeadline(item.seq)) {
+      if (pastTickBudget(item.seq)) {
         break reading;
       }
       if (i >= readAhead) {

@@ -27,8 +27,8 @@
  * - An entry no fresh tick can fold is refused with a counted warning.
  * - A tick reads the nodes of a batch of entries concurrently and makes
  *   the same storage calls as reading them one at a time.
- * - A tick past its deadline publishes the prefix it planned, at least
- *   one entry, and the next tick continues from there. The deadline
+ * - A tick past its tick budget publishes the prefix it planned, at
+ *   least one entry, and the next tick continues from there. The budget
  *   counts the plan's publication, at the call latency the tick
  *   observed, and the time since the injected start, so the whole tick
  *   fits its budget; publication creates at most the host's width of
@@ -888,7 +888,7 @@ describe("stuck entry", () => {
   });
 });
 
-describe("deadline", () => {
+describe("tick-budget stop", () => {
   /** A fake wall clock that every GET of the fold advances by `getMs`. */
   const slowClock = (b: Bucket, getMs: number) => {
     const clock = { t: 0 };
@@ -902,7 +902,7 @@ describe("deadline", () => {
     return { storage, now: () => clock.t };
   };
 
-  test("a tick past its deadline publishes the planned prefix, and later ticks continue to the same root", async () => {
+  test("a tick past its budget publishes the planned prefix, and later ticks continue to the same root", async () => {
     const log = changes(20);
     const whole = openBucket();
     await whole.writer.commit(log);
@@ -923,7 +923,7 @@ describe("deadline", () => {
       }
       expect(outcome.foldEnd).toBeGreaterThan(floor);
       if (outcome.foldEnd < 20) {
-        expect(outcome.stop).toEqual({ reason: "deadline", seq: outcome.foldEnd });
+        expect(outcome.stop).toEqual({ reason: "tick-budget", seq: outcome.foldEnd });
         stoppedByDeadline += 1;
       }
       floor = outcome.foldEnd;
@@ -935,7 +935,7 @@ describe("deadline", () => {
     );
   });
 
-  test("a deadline that elapsed before the first entry still folds one entry", async () => {
+  test("a budget spent before the first entry still folds one entry", async () => {
     const b = openBucket();
     await b.writer.commit(changes(5));
     for (const floor of [0, 1, 2]) {
@@ -943,13 +943,13 @@ describe("deadline", () => {
         kind: "published",
         floor,
         foldEnd: floor + 1,
-        stop: { reason: "deadline", seq: floor + 1 },
+        stop: { reason: "tick-budget", seq: floor + 1 },
       });
       await judge(b.storage, SMALL_LAYOUT, floor + 1);
     }
   });
 
-  test("a deadline that elapses during a log read stops the fold before it reads that batch's nodes", async () => {
+  test("a budget that runs out during a log read stops the fold before it reads that batch's nodes", async () => {
     const id = (i: number) => `r${String(i).padStart(3, "0")}`;
     const b = openBucket();
     await b.writer.commit(Array.from({ length: 120 }, (_, i) => row(id(i), i)));
@@ -963,7 +963,7 @@ describe("deadline", () => {
         const isLog = key.startsWith(LOG_PREFIX);
         reads.push(isLog ? "log" : "other");
         if (isLog) {
-          // The first entry's read stays inside the deadline; the next batch's does not.
+          // The first entry's read stays inside the budget; the next batch's does not.
           clock.t += 600;
         }
         return b.storage.get(key, opts);
@@ -978,7 +978,7 @@ describe("deadline", () => {
     expect(outcome).toMatchObject({
       kind: "published",
       foldEnd: 121,
-      stop: { reason: "deadline", seq: 121 },
+      stop: { reason: "tick-budget", seq: 121 },
     });
     const lastLog = reads.lastIndexOf("log");
     expect(lastLog).toBeGreaterThan(reads.indexOf("log"));
@@ -986,16 +986,16 @@ describe("deadline", () => {
     await judge(b.storage, SMALL_LAYOUT, 121);
   });
 
-  test("past the deadline, a fold pinned at its floor reads on until the pin releases", async () => {
+  test("past the budget, a fold pinned at its floor reads on until the pin releases", async () => {
     const b = openBucket();
     await b.writer.appendRaw({ op: "I", doc_id: "c", after: { _id: "x", n: 0 } });
     await b.writer.commit([row("a", 1), row("c", 2), row("d", 3)]);
     // Seq 0 is an invalid survivor that seq 2 supersedes: only a prefix
-    // through seq 2 publishes, so the deadline waits for it.
+    // through seq 2 publishes, so the budget check waits for it.
     await expect(fold(b, SMALL, { tickBudgetMs: 0 })).resolves.toMatchObject({
       kind: "published",
       foldEnd: 3,
-      stop: { reason: "deadline", seq: 3 },
+      stop: { reason: "tick-budget", seq: 3 },
     });
     await judge(b.storage, SMALL_LAYOUT, 3);
   });
@@ -1070,7 +1070,7 @@ describe("tick budget", () => {
       tickBudgetMs: budget,
       knownTail: TAIL,
     });
-    expect(outcome).toMatchObject({ kind: "published", stop: { reason: "deadline" } });
+    expect(outcome).toMatchObject({ kind: "published", stop: { reason: "tick-budget" } });
     if (outcome.kind !== "published") {
       return;
     }
@@ -1118,7 +1118,7 @@ describe("tick budget", () => {
         knownTail: TAIL,
         ...(startedAt !== undefined && { startedAt }),
       });
-      expect(outcome).toMatchObject({ kind: "published", stop: { reason: "deadline" } });
+      expect(outcome).toMatchObject({ kind: "published", stop: { reason: "tick-budget" } });
       ends.push(outcome.kind === "published" ? outcome.foldEnd : 0);
     }
     const [fromFold, earlier, spent] = ends as [number, number, number];
