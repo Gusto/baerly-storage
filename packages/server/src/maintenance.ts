@@ -182,7 +182,8 @@ export interface MaintenanceProfile {
   readonly maxFoldEntriesPerPass: number;
   /**
    * Live-tail length at which the write tick folds, whatever the
-   * tail-to-snapshot ratio: the count arm of the fold trigger. At most
+   * tail-to-snapshot ratio: the count arm of the fold trigger. Read
+   * through {@link foldTriggerEntries}, which caps it at
    * `maxFoldEntriesPerPass`; see `MAINTENANCE_FOLD_AT_TAIL_ENTRIES`.
    */
   readonly foldAtTailEntries: number;
@@ -515,10 +516,20 @@ const tailRatio = (current: CurrentJson, observedTail: number): number =>
   Math.max(current.snapshot_bytes, MAINTENANCE_MIN_LIVE_BYTES);
 
 /**
+ * The live-tail length at which `profile`'s count arm folds:
+ * `foldAtTailEntries`, capped at the per-pass cap. A trigger above the cap
+ * cannot bring the tail back under it (a fold at `q` leaves `q - cap`), so
+ * the cap is the most it can usefully be.
+ */
+export const foldTriggerEntries = (
+  profile: Pick<MaintenanceProfile, "foldAtTailEntries" | "maxFoldEntriesPerPass">,
+): number => Math.min(profile.foldAtTailEntries, profile.maxFoldEntriesPerPass);
+
+/**
  * The cheap DISPATCH gate the writer calls after a commit — zero
  * storage ops; it reads the post-commit {@link CurrentJson} already in
- * scope. GC boundary, OR the live tail at the profile's
- * `foldAtTailEntries` (off when `foldWouldDefer`, see
+ * scope. GC boundary, OR the live tail at the profile's count trigger
+ * ({@link foldTriggerEntries}; off when `foldWouldDefer`, see
  * {@link runBoundedMaintenance}), OR the bytes ratio — the ratio WITHOUT the entry
  * floor (the floor is part of the fold-trigger Gate 1 checked inside
  * {@link runBoundedMaintenance}). Returning `false` lets the writer skip
@@ -531,13 +542,13 @@ const tailRatio = (current: CurrentJson, observedTail: number): number =>
 export const shouldFireMaintenance = (
   current: CurrentJson,
   prevSeq: number,
-  profile: Pick<MaintenanceProfile, "gcInterval" | "foldAtTailEntries">,
+  profile: Pick<MaintenanceProfile, "gcInterval" | "foldAtTailEntries" | "maxFoldEntriesPerPass">,
   observedTail: number,
   opts?: { readonly foldWouldDefer?: boolean },
 ): boolean =>
   crossesGcBoundary(prevSeq, observedTail, profile.gcInterval) ||
   (opts?.foldWouldDefer !== true &&
-    observedTail - current.log_seq_start >= profile.foldAtTailEntries) ||
+    observedTail - current.log_seq_start >= foldTriggerEntries(profile)) ||
   tailRatio(current, observedTail) >= MAINTENANCE_TARGET_RATIO;
 
 /** Per-tier caps for {@link runBoundedMaintenance}, threaded by the adapter. */
@@ -715,7 +726,8 @@ export const runBoundedMaintenance = async (
   // Resolve the profile ONCE (the runner's single CF-free-safe default,
   // preserving the bare-`Db.create()` promise); all phase budgets read off it.
   const profile = options?.profile ?? MAINTENANCE_PROFILE_CF_FREE;
-  const { maxFoldEntriesPerPass, foldAtTailEntries, gcMaxMarks, gcMaxSweeps, gcInterval } = profile;
+  const { maxFoldEntriesPerPass, gcMaxMarks, gcMaxSweeps, gcInterval } = profile;
+  const foldAtTailEntries = foldTriggerEntries(profile);
   const forceFold = args.forceFold === true;
   // A forced tick folds whatever is pending: one entry clears the floor.
   const minEntriesToCompact = forceFold

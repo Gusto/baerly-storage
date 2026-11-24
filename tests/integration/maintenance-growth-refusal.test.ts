@@ -408,7 +408,7 @@ describe("growth refusal (target behavior)", () => {
       // ── Scenario builders ──────────────────────────────────────────
 
       /** Stored rows = E, reached with a 4-entry pass. Deletes still fold. */
-      const atE = () => folded(E, { ...SMALL, maxFoldEntriesPerPass: 4 });
+      const atE = () => folded(E, { ...SMALL, maxFoldEntriesPerPass: 4, foldAtTailEntries: 4 });
       /** No progress (R4): stored rows = E with a pending insert at the tail head. */
       const stalledAtE = async () => {
         const storage = await atE();
@@ -731,9 +731,13 @@ describe("growth refusal (target behavior)", () => {
                 onHost(storage, SMALL_HOST, (c) => c.update(id(i), { pad: ROW_PAD.repeat(2) })),
               ),
             ).resolves.toBe("accepted");
+            // Below the count arm (a pass on SMALL) nothing folds in-band.
+            if (i < PASS - 1) {
+              await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 17 + i });
+            }
           }
-          await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 21 });
-          await drain(storage, SMALL);
+          // The write that fills the pass trips the count arm, and its fold
+          // lands in-band, row-exact at 16 rows.
           await expect(state(storage)).resolves.toMatchObject({ start: 21, tail: 21, rows: 16 });
         });
 
@@ -929,14 +933,22 @@ describe("growth refusal (target behavior)", () => {
           return storage;
         };
 
-        test("away from the refusal point the tick is not forced: same-size updates at 10 rows fold nothing", async () => {
+        test("away from the refusal point the tick is not forced: same-size updates at 10 rows fold nothing until the count arm", async () => {
           const storage = await folded(10, SMALL);
-          for (let k = 0; k < PASS; k++) {
+          for (let k = 0; k < PASS - 1; k++) {
             await expect(outcome(onHost(storage, SMALL_HOST, sameSizeW(k)))).resolves.toBe(
               "accepted",
             );
           }
-          await expect(state(storage)).resolves.toMatchObject({ start: 10, tail: 10 + PASS });
+          await expect(state(storage)).resolves.toMatchObject({ start: 10, tail: 10 + PASS - 1 });
+          // A full pass pending trips the count arm, forced or not.
+          await expect(outcome(onHost(storage, SMALL_HOST, sameSizeW(PASS - 1)))).resolves.toBe(
+            "accepted",
+          );
+          await expect(state(storage)).resolves.toMatchObject({
+            start: 10 + PASS,
+            tail: 10 + PASS,
+          });
         });
 
         test("the force tracks the refusal point: a delete at E - 1 lifts it and folds nothing; back at E - 1 the tick is forced once a full pass is pending", async () => {

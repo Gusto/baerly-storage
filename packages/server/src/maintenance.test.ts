@@ -51,6 +51,7 @@ import {
   parseMaintenanceEnv,
   runBoundedMaintenance,
   runMaintenancePass,
+  foldTriggerEntries,
   runScheduledMaintenance,
   shouldFireMaintenance,
 } from "./maintenance.ts";
@@ -500,7 +501,7 @@ describe("estimateTailBytes", () => {
 describe("shouldFireMaintenance", () => {
   const base = logStateCurrentJson;
   // No GC boundary, and a count arm no test tail reaches.
-  const coldCount = { gcInterval: 999, foldAtTailEntries: 999 };
+  const coldCount = { gcInterval: 999, foldAtTailEntries: 999, maxFoldEntriesPerPass: 999 };
 
   test("fires on a crossed GC boundary even when ratio is cold", () => {
     // Drives PURELY off tail_hint / log_seq_start / mean_entry_bytes.
@@ -535,7 +536,7 @@ describe("shouldFireMaintenance", () => {
   test("fires when the live tail reaches foldAtTailEntries with the ratio cold", () => {
     // mean_entry_bytes 0 ⇒ the ratio estimate is 0; no GC boundary at 999.
     const q = 9;
-    const profile = { gcInterval: 999, foldAtTailEntries: q };
+    const profile = { gcInterval: 999, foldAtTailEntries: q, maxFoldEntriesPerPass: 20 };
     const at = base({ tail_hint: q + 5, log_seq_start: 5, mean_entry_bytes: 0, snapshot_bytes: 0 });
     expect(shouldFireMaintenance(at, at.tail_hint, profile, at.tail_hint)).toBe(true);
     const under = base({ tail_hint: q + 4, log_seq_start: 5, mean_entry_bytes: 0 });
@@ -741,6 +742,34 @@ describe("runBoundedMaintenance", () => {
       await runBoundedMaintenance(
         { storage: inner, currentJsonKey: KEY, prevSeq: tail, observedTail: tail },
         { profile: { ...MAINTENANCE_PROFILE_CF_FREE, foldAtTailEntries: 9 } },
+      );
+      await expect(readSeqStart(inner, KEY)).resolves.toBe(folds ? tail : 0);
+    }
+  });
+
+  test("a count arm above the per-pass cap folds at the cap, which is where it can still bound the tail", async () => {
+    const profile = {
+      ...MAINTENANCE_PROFILE_CF_FREE,
+      foldAtTailEntries: 50,
+      maxFoldEntriesPerPass: 5,
+    };
+    expect(foldTriggerEntries(profile)).toBe(5);
+    expect(foldTriggerEntries(MAINTENANCE_PROFILE_CF_FREE)).toBe(
+      MAINTENANCE_PROFILE_CF_FREE.foldAtTailEntries,
+    );
+    for (const [tail, folds] of [
+      [4, false],
+      [5, true],
+    ] as const) {
+      const inner = new MemoryStorage();
+      await seedLog(inner, KEY, COLL, tail);
+      // Ratio cold, as above.
+      await patchCurrent(inner, KEY, { mean_entry_bytes: 64, snapshot_bytes: 256 * 1024 });
+      const cur = (await readCurrentJson(inner, KEY))!.json;
+      expect(shouldFireMaintenance(cur, tail, { ...profile, gcInterval: 999 }, tail)).toBe(folds);
+      await runBoundedMaintenance(
+        { storage: inner, currentJsonKey: KEY, prevSeq: tail, observedTail: tail },
+        { profile },
       );
       await expect(readSeqStart(inner, KEY)).resolves.toBe(folds ? tail : 0);
     }

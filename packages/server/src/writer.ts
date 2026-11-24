@@ -876,7 +876,7 @@ export class Writer {
     const maint = getCurrentContext()?.maintenance;
     // Same absent-context default as runBoundedMaintenance's
     // `options?.profile ?? MAINTENANCE_PROFILE_CF_FREE` — keep the two in
-    // step (this gate reads only gcInterval and foldAtTailEntries; the
+    // step (this gate reads only gcInterval and the count trigger; the
     // runner resolves the whole profile) so the pre-fire triggers can't
     // diverge from the fold's.
     const profile = maint?.options?.profile ?? MAINTENANCE_PROFILE_CF_FREE;
