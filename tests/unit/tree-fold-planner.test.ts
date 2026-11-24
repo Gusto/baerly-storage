@@ -8,7 +8,9 @@
  *   are compared, not root keys: the planner reuses a captured node a
  *   change rebuilt unchanged, which the batch plan republishes.
  * - **CPU bound.** The chunk hashes one change computes do not grow with
- *   the number of changes the tick has accepted.
+ *   the number of changes the tick has accepted, and a planner hashes
+ *   each `_id` at each level at most once, however often it re-chunks
+ *   the leaf that holds it.
  * - **Checkpoints.** A pinned look-ahead falls back to the pinned
  *   checkpoint, within the budget. A skipped entry takes a checkpoint
  *   that changes no rows and reserves publication calls.
@@ -315,6 +317,47 @@ describe("per-change work", () => {
     const last = mean(perChange.slice(-40));
     expect(first).toBeGreaterThan(0);
     expect(last).toBeLessThanOrEqual(2 * first);
+  }, 60_000);
+
+  test("a planner hashes each _id at each level at most once", async () => {
+    const hashed = new Map<string, number>();
+    const config = createTreeConfig({
+      layout: NO_DEPTH_ZERO,
+      steps: {
+        chunkHash: (key, level, id) => {
+          const at = `${level}/${id}`;
+          hashed.set(at, (hashed.get(at) ?? 0) + 1);
+          return chunkHash(key, level, id);
+        },
+      },
+    });
+    // 600 rows of 256 bytes: a depth-1 tree whose leaves hold dozens of
+    // rows, so every change re-chunks many rows it does not touch.
+    const id = (i: number) => `row${String(i).padStart(5, "0")}`;
+    const run = await FoldRun.open(config);
+    await run.fold(
+      Array.from({ length: 600 }, (_, i) => ({ id: id(i), value: sizedRow(id(i), 256) })),
+    );
+    const root = await run.captured();
+    expect(root!.node.level).toBe(1);
+    hashed.clear();
+    const planner = new FoldPlanner({
+      prefix: FOLD_PREFIX,
+      root,
+      chunkKey,
+      get: (key) => Promise.resolve(run.store.get(key) ?? null),
+      config,
+      budget: UNBOUNDED,
+      spent: FOLD_SPENT_BEFORE_PLANNING,
+    });
+    // Updates, inserts and deletes that land in every leaf many times.
+    for (let t = 0; t < 300; t++) {
+      const target = t % 10 === 0 ? `${id((t * 37) % 600)}n` : id((t * 37) % 600);
+      const doc = t % 10 === 5 ? null : canonicalDocument(sizedRow(target, 256 + (t % 7)), "row");
+      await expect(planner.add({ id: target, doc })).resolves.toBe(true);
+    }
+    expect(hashed.size).toBeGreaterThan(0);
+    expect([...hashed].filter(([, n]) => n > 1).slice(0, 5)).toEqual([]);
   }, 60_000);
 });
 
