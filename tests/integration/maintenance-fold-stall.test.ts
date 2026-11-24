@@ -248,7 +248,11 @@ describe("fold stall (pre-refusal behavior)", () => {
           await expect(state(storage)).resolves.toMatchObject({ start: 20, rows: 20 });
 
           // rows 20 and an insert at the head of the tail: no pass size helps.
-          const pass1: MaintenanceProfile = { ...SMALL, maxFoldEntriesPerPass: 1 };
+          const pass1: MaintenanceProfile = {
+            ...SMALL,
+            maxFoldEntriesPerPass: 1,
+            foldAtTailEntries: 1,
+          };
           await expect(drain(storage, pass1)).resolves.toBe(0);
           await expect(state(storage)).resolves.toMatchObject({ start: 20, tail: 40, rows: 20 });
         });
@@ -318,6 +322,7 @@ describe("fold stall (pre-refusal behavior)", () => {
           const paidish: MaintenanceProfile = {
             ...MAINTENANCE_PROFILE_CF_PAID,
             maxFoldEntriesPerPass: PASS,
+            foldAtTailEntries: PASS,
           };
           await expect(drain(storage, paidish)).resolves.toBe(6);
           await expect(state(storage)).resolves.toMatchObject({ start: 50, tail: 50, rows: 10 });

@@ -38,10 +38,14 @@ export const E = 20;
 export const PASS = 5;
 export const BIG_C = 64 * 1024 * 1024;
 
-/** A tiny-E "free-like" host: 20 rows, 5 entries per pass, effectively unbounded bytes. */
+/**
+ * A tiny-E "free-like" host: 20 rows, 5 entries per pass, effectively
+ * unbounded bytes. Its count arm sits at the pass, as cf-free's does.
+ */
 export const SMALL: MaintenanceProfile = {
   ...MAINTENANCE_PROFILE_CF_FREE,
   maxFoldEntriesPerPass: PASS,
+  foldAtTailEntries: PASS,
   maxFoldRows: E,
   maxFoldBytes: BIG_C,
 };
