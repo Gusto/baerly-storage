@@ -4,7 +4,9 @@
  * the Worker and the Node baseline run the identical call.
  *
  * The tick passes the writer's committed tail as `knownTail`, as the write
- * tick would. A capped cell cuts the log at `cap` entries: every
+ * tick would, its host's fold width from the maintenance profile it runs
+ * under (`foldParallelCalls`), and the request's arrival as `startedAt`, so
+ * the tick budget counts what the invocation did before the fold. A capped cell cuts the log at `cap` entries: every
  * `log/<seq>` GET at or past `floor + cap` is sent for a key that does not
  * exist, so the fold reads the cut, probes one missing slot and stops at the
  * tail, with the same storage calls as a log that really ends there.
@@ -20,6 +22,7 @@ import {
   createObservabilityContext,
   runWithContext,
 } from "../../packages/server/src/observability/context.ts";
+import type { MaintenanceProfile } from "../../packages/server/src/maintenance.ts";
 import { foldTree } from "../../packages/server/src/tree/fold.ts";
 import { type Cell, collectionPrefix, LEDGER_CALLS, TAIL_ENTRIES } from "./cells.ts";
 
@@ -95,11 +98,23 @@ export interface FoldStepResult {
   readonly ms: number;
 }
 
+/** The host a tick runs on. */
+export interface FoldHost {
+  /** The maintenance profile the host runs under; the fold takes its width from it. */
+  readonly profile: Pick<MaintenanceProfile, "foldParallelCalls">;
+  /** When the tick's request arrived, on the `Date.now` clock. */
+  readonly startedAt: number;
+}
+
 /**
  * One fold tick of `cell` on `storage` (the fixture, behind the adapter
- * retry), under a fresh {@link LEDGER_CALLS}-call ledger.
+ * retry), under a fresh {@link LEDGER_CALLS}-call ledger, on `host`.
  */
-export const runFoldStep = async (storage: Storage, cell: Cell): Promise<FoldStepResult> => {
+export const runFoldStep = async (
+  storage: Storage,
+  cell: Cell,
+  host: FoldHost,
+): Promise<FoldStepResult> => {
   const prefix = collectionPrefix(cell.fixture.tenant);
   const end = cell.cap ?? TAIL_ENTRIES;
   const ledger = new RequestLedger({ internal: LEDGER_CALLS, external: LEDGER_CALLS });
@@ -109,6 +124,8 @@ export const runFoldStep = async (storage: Storage, cell: Cell): Promise<FoldSte
       storage: cell.cap === null ? storage : cutLog(storage, prefix, end),
       prefix,
       knownTail: end,
+      parallelCalls: host.profile.foldParallelCalls,
+      startedAt: host.startedAt,
     }),
   );
   const ms = performance.now() - t0;

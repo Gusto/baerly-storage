@@ -236,6 +236,7 @@ const tickCells = async (
         length,
         mode,
         foldBudget,
+        host.foldParallelCalls,
         depthZero ? { maxBytes: host.collection.bytes, maxRows: host.collection.rows } : undefined,
       );
       if (op === "tick-pass" && m.folded !== length) {

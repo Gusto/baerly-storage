@@ -16,7 +16,7 @@
  * Synthetic fixtures only.
  */
 import { r2BindingStorage } from "@baerly/adapter-cloudflare";
-import type { Storage } from "@baerly/protocol";
+import { MAINTENANCE_PROFILE_CF_PAID, type Storage } from "@baerly/protocol";
 import { type Cell, cellByName, collectionPrefix, fixtureByTenant, tenantRoot } from "../cells.ts";
 import { memoryStorageOf, runFoldStep, sampleProblem } from "../fold-step.ts";
 import { resetTenant } from "../reset.ts";
@@ -104,7 +104,13 @@ const readAll = async (bucket: R2Bucket, prefix: string): Promise<Map<string, Ui
   return objects;
 };
 
-const fold = async (cell: Cell, env: BenchEnv, tag: string | null, cold: boolean) => {
+const fold = async (
+  cell: Cell,
+  env: BenchEnv,
+  tag: string | null,
+  cold: boolean,
+  startedAt: number,
+) => {
   const calls: Calls = { get: 0, put: 0, delete: 0, list: 0 };
   let storage: Storage;
   if (cell.storage === "r2") {
@@ -118,7 +124,11 @@ const fold = async (cell: Cell, env: BenchEnv, tag: string | null, cold: boolean
     }
     storage = await memoryStorageOf(cached.objects);
   }
-  const result = await runFoldStep(storage, cell);
+  // Every cell runs under the Workers Paid ledger, so under its profile.
+  const result = await runFoldStep(storage, cell, {
+    profile: MAINTENANCE_PROFILE_CF_PAID,
+    startedAt,
+  });
   const line = {
     cell: cell.name,
     tag,
@@ -132,7 +142,13 @@ const fold = async (cell: Cell, env: BenchEnv, tag: string | null, cold: boolean
   return Response.json(line);
 };
 
-const route = async (req: Request, env: BenchEnv, url: URL, cold: boolean): Promise<Response> => {
+const route = async (
+  req: Request,
+  env: BenchEnv,
+  url: URL,
+  cold: boolean,
+  startedAt: number,
+): Promise<Response> => {
   const bucket = env.BUCKET;
   switch (`${req.method} ${url.pathname}`) {
     case "POST /bench/fold": {
@@ -141,7 +157,7 @@ const route = async (req: Request, env: BenchEnv, url: URL, cold: boolean): Prom
       if (cell === undefined) {
         return Response.json({ error: `unknown cell ${JSON.stringify(name)}` }, { status: 404 });
       }
-      return await fold(cell, env, url.searchParams.get("tag"), cold);
+      return await fold(cell, env, url.searchParams.get("tag"), cold, startedAt);
     }
     case "POST /bench/objects": {
       const objects = Object.entries((await req.json()) as Record<string, string>);
@@ -207,13 +223,14 @@ const route = async (req: Request, env: BenchEnv, url: URL, cold: boolean): Prom
 
 export default {
   async fetch(req: Request, env: BenchEnv): Promise<Response> {
+    const startedAt = Date.now();
     const cold = coldIsolate;
     coldIsolate = false;
     if (!authorized(req, env)) {
       return Response.json({ error: "unauthorized" }, { status: 401 });
     }
     try {
-      return await route(req, env, new URL(req.url), cold);
+      return await route(req, env, new URL(req.url), cold, startedAt);
     } catch (error) {
       return Response.json({ error: String(error), cold }, { status: 500 });
     }

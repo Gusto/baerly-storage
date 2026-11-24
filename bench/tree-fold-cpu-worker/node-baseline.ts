@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { cpus, loadavg } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { MAINTENANCE_PROFILE_NODE } from "@baerly/protocol";
 import { runAsCliEntrypoint } from "../measurement/cli-entrypoint.ts";
 import { type Cell, CELLS, type FixtureManifest, selectCells } from "./cells.ts";
 import { OUT_DIR } from "./fixtures.ts";
@@ -98,7 +99,12 @@ const runCell = async (
   let last: FoldStepResult | undefined;
   for (let i = 0; i < warmup + samples; i++) {
     const t0 = threadCpuMs();
-    const result = await runFoldStep(await memoryStorageOf(objects), cell);
+    // As in the Worker, the tick's request arrives before its bucket is loaded.
+    const startedAt = Date.now();
+    const result = await runFoldStep(await memoryStorageOf(objects), cell, {
+      profile: MAINTENANCE_PROFILE_NODE,
+      startedAt,
+    });
     const t1 = threadCpuMs();
     const problem = sampleProblem(cell, result);
     if (problem !== null) {
