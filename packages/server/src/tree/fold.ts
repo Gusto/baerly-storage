@@ -5,10 +5,11 @@
  *
  * Storage calls, in order: the head GET, the root GET (none for an empty
  * tree), the log reads, the planner's node GETs between them, then
- * {@link publishTree}'s node creates, head CAS and fate re-read. The fold
- * writes only through `publishTree` and deletes nothing: a `cas-lost`
- * attempt's nodes may still be reachable from a later root, so only the
- * GC tick, judging from the current root, may reclaim them.
+ * {@link publishTree}'s fold-record and node creates, head CAS and fate
+ * re-read. The fold writes only through `publishTree` and deletes
+ * nothing: a `cas-lost` attempt's nodes may still be reachable from a
+ * later root, so only the GC tick, judging from the current root, may
+ * reclaim them.
  *
  * **The log prefix.** The fold reads `[floor, tail)` the way the
  * compactor does: the range below `max(tail_hint, knownTail)` must be

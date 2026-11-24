@@ -1,19 +1,29 @@
 /**
- * Publication of a planned fold: fresh nodes, then the head CAS.
+ * Publication of a planned fold: the fold record, fresh nodes, then the
+ * head CAS.
  *
  * One call is one publication attempt over one captured head and root.
  * It mints a fresh 128-bit attempt identity, seals the plan under it and
  * writes in this order:
  *
- * 1. every fresh leaf, create-only (`If-None-Match: "*"`);
- * 2. each level of fresh branches only after every fresh child it
+ * 1. the fold record (`./record.ts`), create-only
+ *    (`If-None-Match: "*"`): the captured head, the result, every fresh
+ *    node and every captured node the new tree no longer reaches;
+ * 2. every fresh leaf, create-only;
+ * 3. each level of fresh branches only after every fresh child it
  *    references has completed, level by level up to the root; the
  *    creates of one level run concurrently;
- * 3. the head, `If-Match` the captured ETag.
+ * 4. the head, `If-Match` the captured ETag.
  *
- * Nothing is written after the head CAS, so a head never names a node
- * that is not yet stored. The head transition is validated before the
- * first write, so a transition bug leaves no node behind.
+ * Exactly one record write comes first and exactly one head write last;
+ * any other order is `Internal` before the first write. Nothing is
+ * written after the head CAS, so a head never names a node that is not
+ * yet stored, and no node is written without a record naming it, so GC
+ * can find every node of an attempt that crashed or lost. The head
+ * transition and the record are validated before the first write, so a
+ * bug in either leaves nothing behind. The record's base must describe
+ * the very head whose ETag the CAS sends (the record tripwire): GC
+ * trusts a record's floor to tell when its attempt can no longer land.
  *
  * **Plan identity.** The plan must name the captured root as its base
  * and carry the chunk key of the salt the head will store; a plan built
@@ -28,7 +38,8 @@
  * unreachable from the current root it can never be published again,
  * which is what lets GC delete it.
  *
- * **Create conflicts.** The publisher never re-sends a write; the
+ * **Create conflicts.** These rules cover the record and node creates
+ * alike. The publisher never re-sends a write; the
  * adapter's `retryStorageCall` retries a create inside the call, so a
  * create whose first attempt landed but lost its reply comes back as a
  * `WriteConflict`. That conflict is resolved by reading the key: a body
@@ -42,9 +53,8 @@
  * **Head-CAS fate.** The head CAS gets no adapter retry. When it throws
  * `WriteConflict` or `NetworkError`, one strict re-read of the head
  * decides: a non-null new root won iff the head now names it and this
- * attempt as its installer (its key
- * carries this attempt's fresh identity, so the match is unambiguous);
- * an empty new root won iff the head has no root, this attempt's
+ * attempt as its installer (its key carries this attempt's fresh
+ * identity, so the match is unambiguous); an empty new root won iff the head has no root, this attempt's
  * identity as `proto_tree.attempt`, the new floor, this attempt's salt
  * and zero totals. The identity is fresh, so two attempts publishing the
  * same empty tree never both report `published`. Anything else is a
@@ -62,9 +72,9 @@
  * identity; whether a node is reachable is decided only from the
  * current root.
  *
- * Storage calls, in order: the node creates level by level (each
- * followed by one GET when it conflicts), the head CAS, then at most one
- * head GET. A crash between any two of them leaves the head on the
+ * Storage calls, in order: the record create, the node creates level
+ * by level (each create followed by one GET when it conflicts), the
+ * head CAS, then at most one head GET. A crash between any two of them leaves the head on the
  * captured tree or on the new one.
  */
 import {
@@ -91,11 +101,20 @@ import { isTreeAttempt, mintTreeAttempt, parseTreeNodeKey } from "./key.ts";
 import { bytesEqual, DEFAULT_TREE_CONFIG, type TreeConfig, type TreeSteps } from "./layout.ts";
 import type { DecodedTreeNode, SealedTreeNode, TreeChildEntry } from "./node-codec.ts";
 import type { TreeFoldPlan } from "./plan.ts";
+import {
+  assertRecordBaseIsHead,
+  type FoldRecord,
+  foldRecordBase,
+  foldRecordSuperseded,
+  sealFoldRecord,
+  sortedUnique,
+} from "./record.ts";
 
-const NODE_CONTENT_TYPE = "application/json";
+const OBJECT_CONTENT_TYPE = "application/json";
 
-/** One write of a publication: a level of fresh nodes, or the head CAS. */
+/** One write of a publication: the fold record, a level of fresh nodes, or the head CAS. */
 export type TreePublicationWrite =
+  | { readonly kind: "record" }
   | { readonly kind: "nodes"; readonly level: number }
   | { readonly kind: "head" };
 
@@ -134,6 +153,8 @@ export type TreePublishOutcome = {
   readonly attempt: string;
   /** The new root key, or `null` for an empty collection. */
   readonly root: string | null;
+  /** The key of this attempt's fold record. */
+  readonly record: string;
   /** Fresh nodes this attempt wrote, the root and adopted creates included. */
   readonly written: number;
   /** Fresh nodes adopted after a create conflict. */
@@ -188,7 +209,7 @@ export const reuseIsLive = (
   );
 };
 
-/** The required order: the node levels from the leaves up, then the head. */
+/** The required order: the record, the node levels from the leaves up, then the head. */
 export const requiredPublicationOrder = (
   writes: readonly TreePublicationWrite[],
 ): readonly TreePublicationWrite[] => writes;
@@ -198,6 +219,8 @@ interface PublishSteps {
   readonly publicationOrder: NonNullable<TreeSteps["publicationOrder"]>;
   readonly reuseIsLive: NonNullable<TreeSteps["reuseIsLive"]>;
   readonly adoptionBytesMatch: NonNullable<TreeSteps["adoptionBytesMatch"]>;
+  readonly recordSuperseded: NonNullable<TreeSteps["recordSuperseded"]>;
+  readonly recordBase: NonNullable<TreeSteps["recordBase"]>;
 }
 
 const publishSteps = (config: TreeConfig): PublishSteps => ({
@@ -205,7 +228,26 @@ const publishSteps = (config: TreeConfig): PublishSteps => ({
   publicationOrder: config.steps.publicationOrder ?? requiredPublicationOrder,
   reuseIsLive: config.steps.reuseIsLive ?? reuseIsLive,
   adoptionBytesMatch: config.steps.adoptionBytesMatch ?? bytesEqual,
+  recordSuperseded: config.steps.recordSuperseded ?? foldRecordSuperseded,
+  recordBase: config.steps.recordBase ?? foldRecordBase,
 });
+
+/**
+ * Check that `writes` makes exactly one record write, first, and exactly
+ * one head write, last.
+ *
+ * @throws BaerlyError code="Internal" — it does not.
+ */
+const assertPublicationOrder = (writes: readonly TreePublicationWrite[]): void => {
+  const count = (kind: TreePublicationWrite["kind"]): number =>
+    writes.filter((write) => write.kind === kind).length;
+  if (count("record") !== 1 || writes[0]?.kind !== "record") {
+    internal("a publication must write exactly one fold record, before anything else");
+  }
+  if (count("head") !== 1 || writes.at(-1)?.kind !== "head") {
+    internal("a publication must write exactly one head, after everything else");
+  }
+};
 
 /**
  * Every ref proven live under the captured root, keyed
@@ -358,8 +400,9 @@ const assertFoldTransition = async (
 };
 
 /**
- * Publish `input.plan` as the collection's new tree: create its fresh
- * nodes children first, then CAS the head from the captured head to one
+ * Publish `input.plan` as the collection's new tree: create its fold
+ * record, then its fresh nodes children first, then CAS the head from
+ * the captured head to one
  * naming the new root at fold end `input.floor`. See the module comment
  * for the write order, the reuse rule, create-conflict adoption and how
  * the head CAS's fate is resolved.
@@ -370,14 +413,17 @@ const assertFoldTransition = async (
  *   another root or under another salt's chunk key, the fold end does
  *   not advance, the salt is not the head's), a reused ref is not live
  *   under the captured root at its slot's level, the fresh identity
- *   equals one of the captured tree, or the head transition breaks a
- *   rule or yields a head a reader would refuse.
+ *   equals one of the captured tree, the head transition breaks a rule
+ *   or yields a head a reader would refuse, the fold record breaks a
+ *   record rule (more than `TREE_GC_RECORD_MAX_KEYS` keys included) or
+ *   its base is not the captured head, or the writes are not one record
+ *   first and one head last.
  * @throws BaerlyError code="InvalidResponse" — the captured root's floor
  *   or totals disagree with the head, a conflicting create holds
  *   different bytes, or the fate re-read finds a malformed head.
  * @throws BaerlyError code="WriteConflict" — a conflicting create's key
  *   reads back empty.
- * @throws BaerlyError — a node create or a head read that fails for any
+ * @throws BaerlyError — a record or node create, or a head read, that fails for any
  *   other reason, with that failure's code.
  */
 export const publishTree = async (input: PublishTreeInput): Promise<TreePublishOutcome> => {
@@ -446,37 +492,57 @@ export const publishTree = async (input: PublishTreeInput): Promise<TreePublishO
   };
   const headBytes = await assertFoldTransition(input, config, sealed, attempt, after);
 
-  let written = 0;
-  let adopted = 0;
-  const create = async (node: SealedTreeNode): Promise<void> => {
+  const fresh = sortedUnique(sealed.levels.flat().map((node) => node.sha256));
+  const superseded = sortedUnique(steps.recordSuperseded(root, plan.read, sealed.reused));
+  const record: FoldRecord = {
+    attempt,
+    base: steps.recordBase(head),
+    result: { floor, root: sealed.root?.sha256 ?? null },
+    fresh,
+    superseded,
+  };
+  assertRecordBaseIsHead(record.base, head);
+  const sealedRecord = await sealFoldRecord(prefix, record);
+
+  /**
+   * Create `key` holding `bytes`, or adopt it when the create conflicts
+   * and the key already holds exactly `bytes`. Returns whether it adopted.
+   */
+  const createOrAdopt = async (what: string, key: string, bytes: Uint8Array): Promise<boolean> => {
     try {
-      await storage.put(node.key, node.bytes, {
+      await storage.put(key, bytes, {
         ifNoneMatch: "*",
-        contentType: NODE_CONTENT_TYPE,
+        contentType: OBJECT_CONTENT_TYPE,
         ...(signal !== undefined && { signal }),
       });
-      written += 1;
-      return;
+      return false;
     } catch (error) {
       if (!isWriteConflict(error)) {
         throw error;
       }
     }
-    const stored = await storage.get(node.key, signal === undefined ? undefined : { signal });
+    const stored = await storage.get(key, signal === undefined ? undefined : { signal });
     if (stored === null) {
       throw new BaerlyError(
         "WriteConflict",
-        `tree publish: node ${node.key} conflicted on create and is gone, so this attempt lost`,
+        `tree publish: ${what} ${key} conflicted on create and is gone, so this attempt lost`,
       );
     }
-    if (!steps.adoptionBytesMatch(stored.body, node.bytes)) {
+    if (!steps.adoptionBytesMatch(stored.body, bytes)) {
       throw new BaerlyError(
         "InvalidResponse",
-        `tree publish: node ${node.key} holds a body other than the one this attempt created`,
+        `tree publish: ${what} ${key} holds a body other than the one this attempt created`,
       );
     }
+    return true;
+  };
+
+  let written = 0;
+  let adopted = 0;
+  const create = async (node: SealedTreeNode): Promise<void> => {
+    const wasAdopted = await createOrAdopt("node", node.key, node.bytes);
     written += 1;
-    adopted += 1;
+    adopted += wasAdopted ? 1 : 0;
   };
   const createLevel = async (nodes: readonly SealedTreeNode[]): Promise<void> => {
     const results = await Promise.allSettled(nodes.map(create));
@@ -519,14 +585,18 @@ export const publishTree = async (input: PublishTreeInput): Promise<TreePublishO
     return won ? { head: now.json, etag: now.etag } : null;
   };
 
-  const writes: TreePublicationWrite[] = sealed.levels.map((_, level) => ({
-    kind: "nodes",
-    level,
-  }));
-  writes.push({ kind: "head" });
+  const writes: TreePublicationWrite[] = [
+    { kind: "record" },
+    ...sealed.levels.map((_, level) => ({ kind: "nodes" as const, level })),
+    { kind: "head" },
+  ];
+  const ordered = steps.publicationOrder(writes);
+  assertPublicationOrder(ordered);
   let fate: { head: TreeHeadJson; etag: string } | null | undefined;
-  for (const write of steps.publicationOrder(writes)) {
-    if (write.kind === "nodes") {
+  for (const write of ordered) {
+    if (write.kind === "record") {
+      await createOrAdopt("fold record", sealedRecord.key, sealedRecord.bytes);
+    } else if (write.kind === "nodes") {
       await createLevel(sealed.levels[write.level] ?? []);
     } else {
       fate = await casHead();
@@ -535,7 +605,7 @@ export const publishTree = async (input: PublishTreeInput): Promise<TreePublishO
   if (fate === undefined) {
     return internal("the publication issued no head CAS");
   }
-  const outcome = { attempt, root: rootKey, written, adopted };
+  const outcome = { attempt, root: rootKey, record: sealedRecord.key, written, adopted };
   return fate === null
     ? { ...outcome, kind: "cas-lost" }
     : { ...outcome, kind: "published", head: fate.head, etag: fate.etag };
