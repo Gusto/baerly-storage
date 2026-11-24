@@ -9,6 +9,7 @@
  */
 
 import {
+  CF_MAX_CONCURRENT_STORAGE_CALLS,
   MAX_KEY_BYTES,
   MAX_PARALLEL_LOG_READS,
   STORAGE_RETRY_MAX_ATTEMPTS,
@@ -73,35 +74,45 @@ export const TREE_HEAD_CAS_CHARGE = 1;
 export const TREE_READ_PARALLEL_GETS: number = MAX_PARALLEL_LOG_READS;
 
 /**
- * Wall-clock milliseconds a fold tick may spend capturing the head and
- * planning before it stops admitting log entries and publishes the
- * planned prefix (`prepareTreeFold`, `./fold.ts`).
+ * Wall-clock milliseconds a fold tick may take in total, from the
+ * request's arrival to its head CAS and fate re-read (`prepareTreeFold`,
+ * `./fold.ts`). Planning stops admitting log entries once the time
+ * elapsed plus the estimated publication time of the plan so far would
+ * pass it.
  *
  * A tick that runs past the response on Cloudflare (`ctx.waitUntil`)
- * has about 30 s before the platform may cancel it, and a tick cut off
- * before its head CAS makes no progress: the next tick plans the same
- * batch, so without a clock folding can stall. Planning wall time is
- * almost all storage latency (a few hundred ms per R2 binding GET).
- * Publication issues one create per fresh node, and a fold's fresh
- * nodes are mostly rewrites of the nodes it read, so publication takes
- * roughly as long again as planning, plus the head CAS and its fate
- * re-read. Ten seconds of planning leaves the rest of the window for
- * that, and for any maintenance the same tick ran before the fold.
- *
- * The deadline is checked between log entries, so one entry's node
- * reads are never cut short, and it never stops a publication.
+ * has 30 s before the platform cancels it, silently and with no
+ * remaining-time API, and a tick cut off before its head CAS makes no
+ * progress: the next tick plans the same batch, so without a clock
+ * folding can stall. Counting from the request's arrival rather than
+ * from the response keeps a tick inside 30 s even where the window
+ * counts from the invocation's start. The 10 s left over absorb what
+ * the budget check cannot see: the entry admitted after the last check
+ * (its log batch and node reads), publication calls slower than the
+ * GETs the estimate is drawn from, and a create conflict's adoption GET.
  */
-export const TREE_FOLD_PLAN_DEADLINE_MS = 10_000;
+export const TREE_FOLD_TICK_BUDGET_MS = 20_000;
 
 /**
- * Most node GETs a fold planner issues at once when it reads ahead the
- * leaf paths of a batch of changes (`FoldPlanner.prefetch`). Planning
- * wall time is almost all storage latency, so reading a batch's nodes
- * together rather than one after another divides it by about this
- * width. Workers may cap simultaneous storage binding calls at about 6
- * (unverified); a deployed measurement tunes this value.
+ * Per-call latency, in milliseconds, a fold's publication estimate
+ * assumes before it has timed any storage call. Well above the few
+ * hundred milliseconds an R2 binding or S3 GET takes, so a fold that
+ * has no measurement errs toward publishing early. The fold times its
+ * head GET before it plans, so this applies only when that measurement
+ * is missing.
  */
-export const TREE_FOLD_PARALLEL_GETS = 6;
+export const TREE_FOLD_DEFAULT_CALL_MS = 1_000;
+
+/**
+ * Most storage calls a fold keeps in flight at once when no width is
+ * passed: its node read-ahead (`FoldPlanner.prefetch`) and each level of
+ * its publication's creates (`publishTree`). Planning and publication
+ * wall time is almost all storage latency, so issuing a level's calls
+ * together rather than one after another divides it by about this
+ * width. The default is the Workers width, the narrowest first-class
+ * host; a host passes its maintenance profile's `foldParallelCalls`.
+ */
+export const TREE_FOLD_PARALLEL_CALLS: number = CF_MAX_CONCURRENT_STORAGE_CALLS;
 
 /** Most child entries one branch may hold. */
 export const BRANCH_MAX_ENTRIES = 256;

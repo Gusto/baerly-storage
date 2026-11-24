@@ -67,7 +67,7 @@ import {
 } from "./build.ts";
 import type { ChunkKey } from "./chunk.ts";
 import {
-  TREE_FOLD_PARALLEL_GETS,
+  TREE_FOLD_PARALLEL_CALLS,
   TREE_GC_RECORD_MAX_KEYS,
   TREE_HEAD_CAS_CHARGE,
   TREE_RETRIED_CALL_CHARGE,
@@ -960,6 +960,14 @@ export const publicationReserve = (tree: PlannedTree | null): number =>
  */
 export const recordKeysFit = (keys: number): boolean => keys <= TREE_GC_RECORD_MAX_KEYS;
 
+/** Fresh nodes publishing `state` creates, by level from the leaves up. */
+const freshByLevel = (state: PlannerState): readonly number[] => {
+  if (state.kind === "single") {
+    return state.rows === 0 ? [] : [1];
+  }
+  return [...state.fresh, 1];
+};
+
 /** Input to {@link FoldPlanner}. */
 export interface FoldPlannerInput extends Omit<PlanFoldInput, "mutations"> {
   /** Calls the request ledger allows this fold tick in total. */
@@ -968,7 +976,7 @@ export interface FoldPlannerInput extends Omit<PlanFoldInput, "mutations"> {
   readonly spent: number;
   /**
    * Most node GETs {@link FoldPlanner.prefetch} issues at once. Default
-   * `TREE_FOLD_PARALLEL_GETS`; `1` turns prefetching off, so every node
+   * `TREE_FOLD_PARALLEL_CALLS`; `1` turns prefetching off, so every node
    * is read as a change first needs it.
    */
   readonly parallelGets?: number;
@@ -1186,6 +1194,25 @@ export class FoldPlanner {
   }
 
   /**
+   * Fresh nodes publishing the last accepted plan creates, by level from
+   * the leaves up, the root's level last. While a checkpoint is pinned,
+   * each level holds the larger of that plan's count and the pinned
+   * plan's, as the charge holds the larger reserve: the fold publishes
+   * one or the other. Empty while no change has been accepted, or when
+   * the plan empties the tree.
+   */
+  get publicationNodes(): readonly number[] {
+    const current = freshByLevel(this.#current.state);
+    if (this.#pinned === null) {
+      return current;
+    }
+    const pinned = freshByLevel(this.#checkpoints[this.#pinned]!.state);
+    return Array.from({ length: Math.max(current.length, pinned.length) }, (_, level) =>
+      Math.max(current[level] ?? 0, pinned[level] ?? 0),
+    );
+  }
+
+  /**
    * Add the next change in seq order; a change to an `_id` already added
    * replaces that change. Returns whether it was accepted. After the
    * first rejection every later change is rejected too, so the accepted
@@ -1292,7 +1319,7 @@ export class FoldPlanner {
    * Adds no change. After a rejection it reads nothing.
    */
   async prefetch(mutations: readonly TreeMutation[]): Promise<void> {
-    const width = this.#input.parallelGets ?? TREE_FOLD_PARALLEL_GETS;
+    const width = this.#input.parallelGets ?? TREE_FOLD_PARALLEL_CALLS;
     const { state } = this.#current;
     if (width <= 1 || this.#rejected || state.kind !== "tree" || state.root.kind !== "branch") {
       return;

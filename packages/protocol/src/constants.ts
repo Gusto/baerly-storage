@@ -294,6 +294,16 @@ export const CF_FREE_EXTERNAL_REQUEST_LIMIT: number = 45;
 export const CF_PAID_REQUEST_LIMIT: number = 9000;
 
 /**
+ * Most storage calls a Workers invocation has waiting on response
+ * headers at once, on Free and Paid alike. Cloudflare documents six
+ * simultaneous open connections per invocation, R2 binding calls
+ * included; a seventh call queues until one of them answers. Work sized
+ * as rounds of concurrent calls uses this width on Workers, so a round
+ * never silently becomes two.
+ */
+export const CF_MAX_CONCURRENT_STORAGE_CALLS: number = 6;
+
+/**
  * Legacy internal Cache API accounting cap. The production Worker never
  * calls the Cache API; point reads always reach storage. Retained with
  * `RequestLedger.chargeCacheCall` for budget-interference tests and
@@ -1259,6 +1269,7 @@ type MaintenanceProfileShape = Readonly<{
   foldAtTailEntries: number;
   maxFoldBytes: number;
   maxFoldRows: number;
+  foldParallelCalls: number;
 }>;
 
 /** CF-free profile; the absent-context default. */
@@ -1270,6 +1281,7 @@ export const MAINTENANCE_PROFILE_CF_FREE: MaintenanceProfileShape = {
   foldAtTailEntries: WRITE_TICK_FOLD_AT_TAIL_ENTRIES,
   maxFoldBytes: MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
   maxFoldRows: MAINTENANCE_MAX_FOLD_ROWS,
+  foldParallelCalls: CF_MAX_CONCURRENT_STORAGE_CALLS,
 };
 
 /** Node profile; 10× CF-free per-pass caps, and its own measured snapshot ceilings. */
@@ -1281,6 +1293,7 @@ export const MAINTENANCE_PROFILE_NODE: MaintenanceProfileShape = {
   foldAtTailEntries: MAINTENANCE_FOLD_AT_TAIL_ENTRIES,
   maxFoldBytes: NODE_MAINTENANCE_MAX_FOLD_BYTES,
   maxFoldRows: NODE_MAINTENANCE_MAX_FOLD_ROWS,
+  foldParallelCalls: MAX_PARALLEL_LOG_READS,
 };
 
 /**
@@ -1308,6 +1321,7 @@ export const MAINTENANCE_PROFILE_CF_PAID: MaintenanceProfileShape = {
   foldAtTailEntries: MAINTENANCE_FOLD_AT_TAIL_ENTRIES,
   maxFoldBytes: CF_PAID_MAINTENANCE_MAX_FOLD_BYTES,
   maxFoldRows: CF_PAID_MAINTENANCE_MAX_FOLD_ROWS,
+  foldParallelCalls: CF_MAX_CONCURRENT_STORAGE_CALLS,
 };
 
 /**

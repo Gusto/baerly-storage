@@ -55,17 +55,28 @@
  * tree already past either ceiling folds nothing. Each refuses as a
  * `deferred` stop the caller reports.
  *
- * **Deadline.** Planning also stops on the wall clock: once
- * `planDeadlineMs` (default `TREE_FOLD_PLAN_DEADLINE_MS`) has elapsed
- * since the fold began, it admits no further entry and publishes the
- * prefix it planned, as when the budget runs out. It is checked between
- * entries, never inside one entry's node reads or a publication. A fold
+ * **Tick deadline.** Planning also stops on the wall clock, so the
+ * whole tick, publication included, fits `tickBudgetMs` (default
+ * `TREE_FOLD_TICK_BUDGET_MS`) counted from `startedAt`, the request's
+ * arrival. Before each log batch and each entry the fold adds the time
+ * elapsed since then to an estimate of publishing the plan so far, and
+ * once that reaches the budget it admits no further entry and publishes
+ * the prefix it planned, as when the call budget runs out. The estimate
+ * is the publication's rounds of calls (`publicationStages`: the fold
+ * record, each level of fresh nodes `parallelCalls` at a time, then the
+ * head CAS and its re-read) times the slowest call the tick has timed so far: its head
+ * GET, its root GET and its node GETs, issued at most `parallelCalls` at
+ * once so none waits behind a host's cap (`TREE_FOLD_DEFAULT_CALL_MS`
+ * before any). A round lasts as long as its slowest call, and erring
+ * high only ends a tick early, while erring low can lose the tick. The
+ * check never interrupts one entry's node reads or a publication. A fold
  * keeps planning past the deadline until the prefix it would publish is
  * non-empty, so every tick that can fold an entry makes progress.
  *
  * **Node reads.** Before adding a batch of entries, the fold has the
  * planner read ahead, concurrently, the nodes their leaf paths route to
- * (`FoldPlanner.prefetch`), each GET charged as it is issued. A stop
+ * (`FoldPlanner.prefetch`), at most `parallelCalls` at a time, each
+ * GET charged as it is issued. A stop
  * inside the batch may leave some of those GETs unused. While the prefix
  * the fold would publish is empty (at the floor, or pinned there), it
  * reads ahead one entry at a time, so read-ahead never charges the GETs
@@ -98,7 +109,9 @@ import { singleLeafApplies } from "./build.ts";
 import { importChunkKey } from "./chunk.ts";
 import {
   TREE_CHUNK_SALT_BYTES,
-  TREE_FOLD_PLAN_DEADLINE_MS,
+  TREE_FOLD_DEFAULT_CALL_MS,
+  TREE_FOLD_PARALLEL_CALLS,
+  TREE_FOLD_TICK_BUDGET_MS,
   TREE_RETRIED_CALL_CHARGE,
 } from "./constants.ts";
 import { importTreeChunkKey, readTreeHead, readTreeRoot, type TreeHead } from "./head.ts";
@@ -106,7 +119,7 @@ import { collectionOfPrefix } from "./key.ts";
 import { DEFAULT_TREE_CONFIG, type TreeConfig } from "./layout.ts";
 import { type CanonicalDocument, canonicalDocument, type DecodedTreeNode } from "./node-codec.ts";
 import { FoldPlanner, type TreeFoldPlan, type TreeMutation } from "./plan.ts";
-import { publishTree, type TreePublishOutcome } from "./publish.ts";
+import { publicationStages, publishTree, type TreePublishOutcome } from "./publish.ts";
 
 /**
  * A depth-0 write limit: the fold publishes only a root leaf holding at
@@ -142,16 +155,24 @@ export interface TreeFoldInput {
   /** Mints the chunk salt of a head that has none yet. Default: 16 random bytes. */
   readonly mintChunkSalt?: () => string;
   /**
-   * Wall-clock milliseconds the fold may plan for. Default
-   * `TREE_FOLD_PLAN_DEADLINE_MS`.
+   * Wall-clock milliseconds the whole tick may take, counted from
+   * `startedAt`. Default `TREE_FOLD_TICK_BUDGET_MS`.
    */
-  readonly planDeadlineMs?: number;
+  readonly tickBudgetMs?: number;
   /**
-   * Most node GETs the planner issues at once. Default
-   * `TREE_FOLD_PARALLEL_GETS`; `1` reads each node only when a change
-   * needs it.
+   * When the tick began on the `now` clock: the request's arrival, so
+   * that work the invocation did before the fold counts against the
+   * tick budget. Default: when the fold starts.
    */
-  readonly parallelGets?: number;
+  readonly startedAt?: number;
+  /**
+   * Most storage calls the fold keeps in flight at once: node GETs read
+   * ahead, and node creates in each level of the publication. The host
+   * passes its maintenance profile's `foldParallelCalls`. Default
+   * `TREE_FOLD_PARALLEL_CALLS`; `1` reads each node only when a change
+   * needs it and creates nodes one at a time.
+   */
+  readonly parallelCalls?: number;
   /**
    * The wall clock, in milliseconds; tests pass a fake one. Default
    * `Date.now`. On Workers it advances only across I/O, which is where a
@@ -165,7 +186,7 @@ export interface TreeFoldInput {
 export type TreeFoldStop =
   /** The budget ran out before the entry at `seq` (or before reading it). */
   | { readonly reason: "budget"; readonly seq: number }
-  /** The planning deadline elapsed before the entry at `seq` (or before reading it). */
+  /** The tick budget would run out before the entry at `seq` (or before reading it) could publish. */
   | { readonly reason: "deadline"; readonly seq: number }
   /**
    * A depth-0 ceiling: the captured tree is past it (`gate: "pre-fold"`),
@@ -437,9 +458,22 @@ export const prepareTreeFold = async (
   const collection = collectionOfPrefix(prefix);
   const opts = signal === undefined ? undefined : { signal };
   const now = input.now ?? Date.now;
-  const deadline = now() + (input.planDeadlineMs ?? TREE_FOLD_PLAN_DEADLINE_MS);
+  const startedAt = input.startedAt ?? now();
+  const tickBudgetMs = input.tickBudgetMs ?? TREE_FOLD_TICK_BUDGET_MS;
+  const width = Math.max(1, input.parallelCalls ?? TREE_FOLD_PARALLEL_CALLS);
+  /** The slowest storage call timed so far this tick, in milliseconds. */
+  let slowestCallMs: number | undefined;
+  /** Run one storage call, timing it for the publication estimate. */
+  const timed = async <T>(call: () => Promise<T>): Promise<T> => {
+    const begun = now();
+    try {
+      return await call();
+    } finally {
+      slowestCallMs = Math.max(slowestCallMs ?? 0, now() - begun);
+    }
+  };
 
-  const head: TreeHead | null = await readTreeHead(storage, prefix, opts);
+  const head: TreeHead | null = await timed(() => readTreeHead(storage, prefix, opts));
   if (head === null) {
     return { kind: "nothing-to-fold", floor: 0 };
   }
@@ -455,7 +489,8 @@ export const prepareTreeFold = async (
   if (head.root !== null && headCharge + GET_CHARGE > budget) {
     return refused({ reason: "budget", seq: floor });
   }
-  const root = await readTreeRoot(storage, head, config, opts);
+  const root =
+    head.root === null ? null : await timed(() => readTreeRoot(storage, head, config, opts));
 
   if (input.depthZero !== undefined) {
     const totals = new DepthZeroTotals(root);
@@ -486,13 +521,13 @@ export const prepareTreeFold = async (
     root,
     chunkKey,
     get: async (key) => {
-      const got = await storage.get(key, opts);
+      const got = await timed(() => storage.get(key, opts));
       return got?.body ?? null;
     },
     config,
     budget,
     spent: headCharge + (root === null ? 0 : GET_CHARGE),
-    ...(input.parallelGets !== undefined && { parallelGets: input.parallelGets }),
+    parallelGets: width,
   });
   const totals = input.depthZero === undefined ? null : new DepthZeroTotals(root);
 
@@ -524,14 +559,22 @@ export const prepareTreeFold = async (
       pinned = null;
     }
   };
-  /**
-   * Whether the deadline stops the fold before the entry at `seq`: it
-   * has elapsed and the prefix the fold would publish is non-empty.
-   */
   /** How many entries the fold would publish if it stopped now. */
   const publishable = (): number => (pinned === null ? planner.accepted : pinnedAt);
+  /** Estimated milliseconds to publish the plan so far. */
+  const publishMs = (): number =>
+    (slowestCallMs ?? TREE_FOLD_DEFAULT_CALL_MS) *
+    publicationStages(planner.publicationNodes).reduce(
+      (rounds, calls) => rounds + Math.ceil(calls / width),
+      0,
+    );
+  /**
+   * Whether the tick deadline stops the fold before the entry at `seq`:
+   * the prefix the fold would publish is non-empty, and the time elapsed
+   * plus the time to publish it reaches the tick budget.
+   */
   const pastDeadline = (seq: number): boolean => {
-    if (publishable() === 0 || now() < deadline) {
+    if (publishable() === 0 || now() - startedAt + publishMs() < tickBudgetMs) {
       return false;
     }
     stop = { reason: "deadline", seq };
@@ -694,6 +737,7 @@ export const prepareTreeFold = async (
         chunkSalt,
         meanEntryBytes,
         config,
+        parallelCalls: width,
         ...(signal !== undefined && { signal }),
       });
       return {

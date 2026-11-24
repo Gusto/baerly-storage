@@ -27,8 +27,12 @@
  * - An entry no fresh tick can fold is refused with a counted warning.
  * - A tick reads the nodes of a batch of entries concurrently and makes
  *   the same storage calls as reading them one at a time.
- * - A tick past its planning deadline publishes the prefix it planned,
- *   at least one entry, and the next tick continues from there.
+ * - A tick past its deadline publishes the prefix it planned, at least
+ *   one entry, and the next tick continues from there. The deadline
+ *   counts the plan's publication, at the call latency the tick
+ *   observed, and the time since the injected start, so the whole tick
+ *   fits its budget; publication creates at most the host's width of
+ *   nodes at once.
  */
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
@@ -40,6 +44,9 @@ import {
   encodeJsonBytes,
   type LogEntry,
   logObjectKey,
+  MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_PROFILE_CF_PAID,
+  MAINTENANCE_PROFILE_NODE,
   MemoryStorage,
   RequestLedger,
   retryStorageCall,
@@ -652,13 +659,13 @@ describe("invalid survivors and the look-ahead fallback", () => {
     let published = 0;
     for (let budget = 20; budget <= 260; budget += 6) {
       const ends: string[] = [];
-      for (const parallelGets of [1, undefined]) {
+      for (const parallelCalls of [1, undefined]) {
         const b = await open();
         const before = b.counted.calls.get + b.counted.calls.put;
         const outcome = await fold(b, SMALL, {
           budget,
           knownTail: 134,
-          ...(parallelGets !== undefined && { parallelGets }),
+          ...(parallelCalls !== undefined && { parallelCalls }),
         });
         expect(b.counted.calls.get + b.counted.calls.put - before).toBeLessThanOrEqual(budget);
         ends.push(outcome.kind);
@@ -909,7 +916,7 @@ describe("deadline", () => {
     let stoppedByDeadline = 0;
     for (let tick = 0; floor < 20; tick++) {
       expect(tick).toBeLessThan(40);
-      const outcome = await fold(split, SMALL, { ...slow, planDeadlineMs: 1000 });
+      const outcome = await fold(split, SMALL, { ...slow, tickBudgetMs: 1000 });
       expect(outcome.kind).toBe("published");
       if (outcome.kind !== "published") {
         break;
@@ -932,7 +939,7 @@ describe("deadline", () => {
     const b = openBucket();
     await b.writer.commit(changes(5));
     for (const floor of [0, 1, 2]) {
-      await expect(fold(b, SMALL, { planDeadlineMs: 0 })).resolves.toMatchObject({
+      await expect(fold(b, SMALL, { tickBudgetMs: 0 })).resolves.toMatchObject({
         kind: "published",
         floor,
         foldEnd: floor + 1,
@@ -965,7 +972,7 @@ describe("deadline", () => {
     const outcome = await fold(b, SMALL, {
       storage,
       now: () => clock.t,
-      planDeadlineMs: 1000,
+      tickBudgetMs: 1000,
       knownTail: 140,
     });
     expect(outcome).toMatchObject({
@@ -985,12 +992,174 @@ describe("deadline", () => {
     await b.writer.commit([row("a", 1), row("c", 2), row("d", 3)]);
     // Seq 0 is an invalid survivor that seq 2 supersedes: only a prefix
     // through seq 2 publishes, so the deadline waits for it.
-    await expect(fold(b, SMALL, { planDeadlineMs: 0 })).resolves.toMatchObject({
+    await expect(fold(b, SMALL, { tickBudgetMs: 0 })).resolves.toMatchObject({
       kind: "published",
       foldEnd: 3,
       stop: { reason: "deadline", seq: 3 },
     });
     await judge(b.storage, SMALL_LAYOUT, 3);
+  });
+});
+
+describe("tick budget", () => {
+  const id = (i: number) => `r${String(i).padStart(3, "0")}`;
+  /** Rows the base tree holds, then rows appended past them. */
+  const BASE = 24;
+  const APPENDED = 200;
+  const TAIL = BASE + APPENDED;
+
+  /**
+   * A folded base of {@link BASE} rows, then {@link APPENDED} appended
+   * rows: the appends route to the tree's right edge, so the fold reads a
+   * few nodes and writes a fresh leaf per row under the small layout.
+   */
+  const appendHeavy = async (): Promise<Bucket> => {
+    const b = openBucket();
+    await b.writer.commit(Array.from({ length: BASE }, (_, i) => row(id(i), i)));
+    expectPublished(await fold(b, SMALL), BASE);
+    await b.writer.commit(Array.from({ length: APPENDED }, (_, i) => row(id(BASE + i), i)));
+    return b;
+  };
+
+  /**
+   * A virtual wall clock over `inner`: a call starts at the current time
+   * and ends `latency(op, key)` later, so calls in flight together take
+   * one latency and calls in sequence add up.
+   */
+  const virtualClock = (
+    inner: Storage,
+    latency: (op: "get" | "put", key: string) => number,
+  ): { storage: Storage; now: () => number } => {
+    const clock = { t: 0 };
+    const take = async <T>(ms: number, call: () => Promise<T>): Promise<T> => {
+      const start = clock.t;
+      const result = await call();
+      clock.t = Math.max(clock.t, start + ms);
+      return result;
+    };
+    return {
+      storage: {
+        ...inner,
+        get: (key, opts) => take(latency("get", key), () => inner.get(key, opts)),
+        put: (key, body, opts) => take(latency("put", key), () => inner.put(key, body, opts)),
+      },
+      now: () => clock.t,
+    };
+  };
+
+  const isNodeKey = (key: string): boolean => key.includes("/_v99/n/");
+
+  test("an append-heavy tick stops planning early enough that its publication fits the budget too", async () => {
+    const b = await appendHeavy();
+    const callMs = 100;
+    const budget = 4_000;
+    const clock = virtualClock(b.storage, () => callMs);
+    let planned: number | undefined;
+    const storage: Storage = {
+      ...clock.storage,
+      put: (key, body, opts) => {
+        if (isNodeKey(key)) {
+          planned ??= clock.now();
+        }
+        return clock.storage.put(key, body, opts);
+      },
+    };
+    const outcome = await fold(b, SMALL, {
+      storage,
+      now: clock.now,
+      tickBudgetMs: budget,
+      knownTail: TAIL,
+    });
+    expect(outcome).toMatchObject({ kind: "published", stop: { reason: "deadline" } });
+    if (outcome.kind !== "published") {
+      return;
+    }
+    expect(outcome.foldEnd).toBeLessThan(TAIL);
+    expect(clock.now()).toBeLessThanOrEqual(budget);
+    // Publication is a large share of this tick: a deadline on planning
+    // alone, set at the budget, would plan until the budget and then
+    // overrun it by all of that publication.
+    expect(clock.now() - planned!).toBeGreaterThan(budget / 3);
+    await judge(b.storage, SMALL_LAYOUT, outcome.foldEnd);
+  });
+
+  test("the publication estimate scales with the call latency the tick observed", async () => {
+    const ends: number[] = [];
+    for (const headMs of [10, 100]) {
+      const b = await appendHeavy();
+      // Only the head GET takes time, so the slowest call timed is it.
+      const clock = virtualClock(b.storage, (op, key) =>
+        op === "get" && key === treeHeadKey(PREFIX) ? headMs : 0,
+      );
+      const outcome = await fold(b, SMALL, {
+        ...clock,
+        tickBudgetMs: 2_000,
+        knownTail: TAIL,
+      });
+      expect(outcome.kind).toBe("published");
+      ends.push(outcome.kind === "published" ? outcome.foldEnd : 0);
+      await judge(b.storage, SMALL_LAYOUT, ends.at(-1)!);
+    }
+    const [fast, slow] = ends as [number, number];
+    expect(slow).toBeGreaterThan(BASE + 1);
+    expect(slow).toBeLessThan(fast);
+  });
+
+  test("elapsed time counts from the injected start", async () => {
+    const ends: number[] = [];
+    for (const startedAt of [undefined, -1_000, -2_000]) {
+      const b = await appendHeavy();
+      const clock = virtualClock(b.storage, (op, key) =>
+        op === "get" && key === treeHeadKey(PREFIX) ? 100 : 0,
+      );
+      const outcome = await fold(b, SMALL, {
+        ...clock,
+        tickBudgetMs: 2_000,
+        knownTail: TAIL,
+        ...(startedAt !== undefined && { startedAt }),
+      });
+      expect(outcome).toMatchObject({ kind: "published", stop: { reason: "deadline" } });
+      ends.push(outcome.kind === "published" ? outcome.foldEnd : 0);
+    }
+    const [fromFold, earlier, spent] = ends as [number, number, number];
+    expect(earlier).toBeLessThan(fromFold);
+    // A tick whose budget is gone on arrival still folds one entry.
+    expect(spent).toBe(BASE + 1);
+  });
+
+  test("publication creates at most the host profile's width of nodes at once", async () => {
+    for (const profile of [
+      MAINTENANCE_PROFILE_CF_FREE,
+      MAINTENANCE_PROFILE_CF_PAID,
+      MAINTENANCE_PROFILE_NODE,
+    ]) {
+      const b = await appendHeavy();
+      const seen = { inFlight: 0, max: 0 };
+      const storage: Storage = {
+        ...b.storage,
+        put: async (key, body, opts) => {
+          if (!isNodeKey(key)) {
+            return b.storage.put(key, body, opts);
+          }
+          seen.inFlight += 1;
+          seen.max = Math.max(seen.max, seen.inFlight);
+          try {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+            return await b.storage.put(key, body, opts);
+          } finally {
+            seen.inFlight -= 1;
+          }
+        },
+      };
+      const width = profile.foldParallelCalls;
+      expectPublished(
+        await fold(b, SMALL, { storage, parallelCalls: width, knownTail: TAIL }),
+        TAIL,
+      );
+      // The leaf level holds more fresh nodes than any width, so it fills every lane.
+      expect(seen.max).toBe(width);
+      await judge(b.storage, SMALL_LAYOUT, TAIL);
+    }
   });
 });
 
@@ -1023,7 +1192,7 @@ describe("node reads", () => {
       row(`r${String((i * 37) % 120).padStart(3, "0")}`, 1000 + i),
     );
     const runs = [];
-    for (const parallelGets of [1, undefined]) {
+    for (const parallelCalls of [1, undefined]) {
       const b = openBucket();
       await b.writer.commit(base);
       expectPublished(await fold(b, SMALL), 120);
@@ -1033,7 +1202,7 @@ describe("node reads", () => {
       const outcome = await fold(b, SMALL, {
         storage: slow.storage,
         knownTail: 150,
-        ...(parallelGets !== undefined && { parallelGets }),
+        ...(parallelCalls !== undefined && { parallelCalls }),
       });
       expectPublished(outcome, 150);
       const calls = {
