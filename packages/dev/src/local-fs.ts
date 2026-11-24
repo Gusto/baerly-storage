@@ -14,6 +14,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import {
   BaerlyError,
   assertValidStorageKey,
+  storedJsonParseError,
   type Storage,
   type StorageGetOptions,
   type StorageGetResult,
@@ -665,9 +666,11 @@ const readFormatMarker = async (marker: string): Promise<boolean> => {
     encoding = (JSON.parse(new TextDecoder().decode(body)) as { key_encoding?: unknown })
       .key_encoding;
   } catch (error) {
-    throw new BaerlyError("InvalidResponse", `LocalFsStorage: ${marker} is not valid JSON`, {
-      cause: error,
-    });
+    throw storedJsonParseError(
+      `LocalFsStorage: ${marker} is not valid JSON`,
+      body.byteLength,
+      error,
+    );
   }
   if (encoding !== KEY_ENCODING) {
     throw new BaerlyError(

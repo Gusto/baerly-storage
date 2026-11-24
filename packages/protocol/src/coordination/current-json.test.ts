@@ -1607,3 +1607,45 @@ describe("mintGeneration", () => {
     return Promise.resolve();
   });
 });
+
+describe("readCurrentJson on a malformed body", () => {
+  const SECRET = "deadbeefSECRETsalt0123";
+
+  // Every string reachable from the error: its own text and fields, and
+  // the same through the `cause` chain.
+  const reachableText = (error: unknown): string => {
+    const seen = new Set<unknown>();
+    const parts: string[] = [];
+    let cur: unknown = error;
+    while (cur !== undefined && cur !== null && !seen.has(cur)) {
+      seen.add(cur);
+      parts.push(String(cur));
+      if (!(cur instanceof Error)) {
+        break;
+      }
+      parts.push(cur.message, cur.name, JSON.stringify(cur, Object.getOwnPropertyNames(cur)));
+      cur = cur.cause;
+    }
+    return parts.join("\n");
+  };
+
+  plainTest("never echoes stored content through message or cause", async () => {
+    const storage = new MemoryStorage();
+    const body = `{"proto_tree":{"chunk_salt":${SECRET}}}`;
+    await storage.put("current.json", new TextEncoder().encode(body));
+    let caught: unknown;
+    try {
+      await readCurrentJson(storage, "current.json");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(BaerlyError);
+    expect((caught as BaerlyError).code).toBe("InvalidResponse");
+    // V8 echoes only a short window of the source, so check the token's
+    // leading characters and the neighbouring key, not the whole token.
+    for (const fragment of ["deadbeef", "unk_salt", "chunk_salt"]) {
+      expect(reachableText(caught)).not.toContain(fragment);
+    }
+    expect((caught as BaerlyError).message).toContain(`${body.length} bytes`);
+  });
+});

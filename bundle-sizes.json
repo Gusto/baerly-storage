@@ -20,9 +20,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 370329,
-      "gz": 118133,
-      "minGz": 31861,
+      "raw": 371156,
+      "gz": 118473,
+      "minGz": 31969,
       "ratchet": {
         "raw": 385792,
         "gz": 122880,
@@ -33,8 +33,8 @@
     "client.js": {
       "tier": "shipped",
       "raw": 41271,
-      "gz": 14510,
-      "minGz": 5231,
+      "gz": 14504,
+      "minGz": 5233,
       "ratchet": {
         "raw": 43776,
         "gz": 15616,
@@ -45,8 +45,8 @@
     "client-react.js": {
       "tier": "shipped",
       "raw": 47701,
-      "gz": 15815,
-      "minGz": 5313,
+      "gz": 15816,
+      "minGz": 5314,
       "ratchet": {
         "raw": 52480,
         "gz": 17408,
@@ -56,13 +56,13 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 641204,
-      "gz": 193610,
-      "minGz": 63719,
+      "raw": 642031,
+      "gz": 193968,
+      "minGz": 63816,
       "ratchet": {
         "raw": 701440,
         "gz": 212992,
-        "minGz": 63744
+        "minGz": 70400
       },
       "note": "Worker isolate cold start. Aggregator: closure includes the index.js and http.js subgraphs, so growth that slips past those entries still surfaces here."
     },
@@ -92,9 +92,9 @@
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 563474,
-      "gz": 169478,
-      "minGz": 54858,
+      "raw": 564301,
+      "gz": 169820,
+      "minGz": 54972,
       "ratchet": {
         "raw": 610816,
         "gz": 185088,
@@ -116,9 +116,9 @@
     },
     "maintenance.js": {
       "tier": "shipped",
-      "raw": 169916,
-      "gz": 55691,
-      "minGz": 13681,
+      "raw": 170728,
+      "gz": 55991,
+      "minGz": 13765,
       "ratchet": {
         "raw": 180480,
         "gz": 59136,
@@ -156,7 +156,7 @@
     },
     "dev.js": {
       "tier": "tooling",
-      "raw": 91869,
+      "raw": 92707,
       "ratchet": {
         "raw": 97792
       },
@@ -164,7 +164,7 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 838060,
+      "raw": 838906,
       "ratchet": {
         "raw": 918016
       },
@@ -172,7 +172,7 @@
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 847021,
+      "raw": 847867,
       "ratchet": {
         "raw": 928000
       },

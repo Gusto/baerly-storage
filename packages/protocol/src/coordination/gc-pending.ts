@@ -17,7 +17,7 @@
  * @see packages/server/src/gc.ts
  */
 
-import { decodeJsonBytes, encodeJsonBytes } from "../bytes.ts";
+import { decodeJsonBytes, encodeJsonBytes, storedJsonParseError } from "../bytes.ts";
 import {
   GC_PENDING_CAS_MAX_ATTEMPTS,
   GC_PENDING_CONTENT_TYPE,
@@ -141,9 +141,11 @@ export const readGcPending = async (
   try {
     parsed = decodeJsonBytes(got.body);
   } catch (error) {
-    throw new BaerlyError("InvalidResponse", `gc/pending.json at ${key}: body is not valid JSON`, {
-      cause: error,
-    });
+    throw storedJsonParseError(
+      `gc/pending.json at ${key}: body is not valid JSON`,
+      got.body.byteLength,
+      error,
+    );
   }
   return { json: assertGcPending(parsed, key), etag: got.etag };
 };

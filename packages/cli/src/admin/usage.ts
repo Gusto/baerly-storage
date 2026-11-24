@@ -52,6 +52,7 @@ import {
   BaerlyError,
   certifiedDeleteFloor,
   decodeJsonBytes,
+  storedJsonParseError,
   type LogEntry,
   logObjectKey,
   logSeqStartOf,
@@ -141,9 +142,11 @@ const readCommitTsMs = async (storage: Storage, key: string): Promise<number | n
   try {
     parsed = decodeJsonBytes<LogEntry>(got.body);
   } catch (error) {
-    throw new BaerlyError("InvalidResponse", `usage scan: log entry at ${key} is not valid JSON`, {
-      cause: error,
-    });
+    throw storedJsonParseError(
+      `usage scan: log entry at ${key} is not valid JSON`,
+      got.body.byteLength,
+      error,
+    );
   }
   if (typeof parsed.commit_ts !== "string") {
     throw new BaerlyError("InvalidResponse", `usage scan: log entry at ${key} missing commit_ts`);
