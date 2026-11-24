@@ -17,6 +17,15 @@ import {
 import { sortMutationsById } from "../../packages/server/src/tree/plan.ts";
 import { readTreeTail } from "../../packages/server/src/tree/read.ts";
 import { foldRecordBase, foldRecordSuperseded } from "../../packages/server/src/tree/record.ts";
+import { classifyFloor } from "../../packages/server/src/tree/gc.ts";
+import {
+  keyOnlyMember,
+  TREE_GC_ROUTING,
+  type TreeGcRootView,
+  treeGcMembership,
+  treeGcMembershipVia,
+} from "../../packages/server/src/tree/gc-member.ts";
+import { parseTreeNodeKey, treeNodeKeyPrefix } from "../../packages/server/src/tree/key.ts";
 
 export interface TreeMutant {
   /** Stable name for test titles. */
@@ -421,4 +430,284 @@ export const READ_MUTANTS: readonly TreeMutant[] = [
   MISSING_NODE_NOT_REFETCHED,
   RESTART_SKIPS_LEDGER,
   MISSING_NODE_SKIPS_LEDGER,
+];
+
+// ---------------------------------------------------------------------
+// Artifact GC
+// ---------------------------------------------------------------------
+
+/** A membership check that calls the current root's own key unreachable. */
+export const GC_IGNORES_LIVE_ROOT: TreeMutant = {
+  name: "gc-ignores-live-root",
+  defect: "membership treats the current root's own key as unreachable",
+  options: {
+    steps: {
+      gcIsMember: (x, view) =>
+        x === view.root?.key ? Promise.resolve("non-member") : treeGcMembership(x, view),
+    },
+  },
+};
+
+/** A sweep that takes any key under the node prefix for a node key. */
+export const GC_DELETES_UNPARSEABLE_KEY: TreeMutant = {
+  name: "gc-deletes-unparseable-key",
+  defect: "the sweep deletes a listed key that does not parse as a node key",
+  options: {
+    steps: {
+      gcParsesKey: (prefix, key) => {
+        const tail = key.slice(treeNodeKeyPrefix(prefix).length);
+        return key.startsWith(treeNodeKeyPrefix(prefix))
+          ? { attempt: tail.slice(0, 32), sha256: tail.slice(33) }
+          : null;
+      },
+    },
+  },
+};
+
+/** GC that deletes any corrupt candidate, not just a known loser's. */
+export const GC_DELETES_CORRUPT_CANDIDATE: TreeMutant = {
+  name: "gc-deletes-corrupt-candidate",
+  defect: "a candidate whose body fails its hash or strict decode is deleted at depth 2 or more",
+  options: { steps: { gcOnCorrupt: () => true } },
+};
+
+/** Membership by the root's child refs alone, at any depth. */
+export const GC_KEY_ONLY_MEMBERSHIP_AT_DEPTH_2: TreeMutant = {
+  name: "gc-key-only-membership-at-depth-2",
+  defect: "the key-only root-children rule is applied at depth 2",
+  options: {
+    steps: {
+      gcIsMember: async (x, view) => {
+        const parts = parseTreeNodeKey(view.prefix, x);
+        return parts !== null && keyOnlyMember(x, view.root, parts) ? "member" : "non-member";
+      },
+    },
+  },
+};
+
+/** A descent that stops one level too deep, at the candidate's own level. */
+export const GC_MEMBER_WRONG_LEVEL: TreeMutant = {
+  name: "gc-member-wrong-level",
+  defect: "the descent stops one level early or late",
+  options: {
+    steps: {
+      gcIsMember: (x, view) =>
+        treeGcMembershipVia(x, view, { ...TREE_GC_ROUTING, parentLevel: (level) => level }, true),
+    },
+  },
+};
+
+/** A parent entry that names a candidate by attempt alone. */
+export const GC_MEMBER_ATTEMPT_ONLY: TreeMutant = {
+  name: "gc-member-attempt-only",
+  defect: "a parent entry matches the candidate by attempt alone",
+  options: {
+    steps: {
+      gcIsMember: (x, view) =>
+        treeGcMembershipVia(
+          x,
+          view,
+          { ...TREE_GC_ROUTING, names: (entry, parts) => entry.attempt === parts.attempt },
+          true,
+        ),
+    },
+  },
+};
+
+/** A missing or undecodable path node read as non-membership. */
+export const GC_PATH_MISS_AS_NONMEMBER: TreeMutant = {
+  name: "gc-path-miss-as-nonmember",
+  defect: "a missing or undecodable path node counts as non-membership",
+  options: {
+    steps: {
+      gcIsMember: async (x, view) => {
+        const found = await treeGcMembership(x, view);
+        return found === "path-unreadable" ? "non-member" : found;
+      },
+    },
+  },
+};
+
+/** A recorded node deleted without any check against the current root. */
+export const GC_SKIPS_MEMBERSHIP_CHECK: TreeMutant = {
+  name: "gc-skips-membership-check",
+  defect: "a recorded node is deleted without checking the current root",
+  options: { steps: { gcIsMember: () => Promise.resolve("non-member") } },
+};
+
+/** The root of the tick that noted each mark, remembered by key. */
+const notedViews = new Map<string, TreeGcRootView>();
+
+/** A sweep that checks each mark against the root of the tick that noted it. */
+export const SWEEP_MEMBER_AGAINST_MARK_ROOT: TreeMutant = {
+  name: "sweep-member-against-mark-root",
+  defect: "the sweep checks membership against the root of the tick that noted the mark",
+  options: {
+    steps: {
+      sweepIsMember: (x, view, phase) => {
+        if (phase === "note") {
+          notedViews.set(x, view);
+          return treeGcMembership(x, view);
+        }
+        return treeGcMembership(x, notedViews.get(x) ?? view);
+      },
+    },
+  },
+};
+
+/** A publisher that mints one identity and reuses it for every publication. */
+export const PUBLISH_REUSES_ATTEMPT: TreeMutant = {
+  name: "publish-reuses-attempt",
+  defect: "a publication reuses the identity of an earlier attempt that lost",
+  options: { steps: { mintAttempt: () => "a".repeat(32) } },
+};
+
+/** GC that drains an attempt found in two records as a loser. */
+export const GC_IGNORES_DUPLICATE_IDENTITY: TreeMutant = {
+  name: "gc-ignores-duplicate-identity",
+  defect: "an attempt id present in two records is deleted as a loser",
+  options: {
+    steps: {
+      gcClassify: (members, evidence, duplicates) => {
+        const verdict = classifyFloor(members, evidence, duplicates);
+        return verdict.winner === null
+          ? verdict
+          : {
+              ...verdict,
+              losers: [...verdict.losers, ...members.filter((a) => duplicates.has(a))],
+            };
+      },
+    },
+  },
+};
+
+/** GC that treats the records at the head's own floor as closed. */
+export const GC_PROCESSES_OPEN_FLOOR: TreeMutant = {
+  name: "gc-processes-open-floor",
+  defect: "records at the head's own floor are treated as closed",
+  options: { steps: { gcIsClosed: (floor, headFloor) => floor <= headFloor } },
+};
+
+/** GC that keeps its state across a generation change or a floor regression. */
+export const GC_IGNORES_GENERATION: TreeMutant = {
+  name: "gc-ignores-generation",
+  defect: "the GC state is kept across a generation change or floor regression",
+  options: { steps: { gcBindsHead: () => true } },
+};
+
+/** GC that swaps a floor's winner with one of its losers. */
+export const GC_WINNER_AS_LOSER: TreeMutant = {
+  name: "gc-winner-as-loser",
+  defect:
+    "the winner of a floor is treated as a loser, so its fresh nodes are deleted with no delay",
+  options: {
+    steps: {
+      gcClassify: (members, evidence, duplicates) => {
+        const verdict = classifyFloor(members, evidence, duplicates);
+        const [swap, ...rest] = verdict.losers;
+        return verdict.winner === null || swap === undefined
+          ? verdict
+          : { ...verdict, winner: swap, losers: [verdict.winner, ...rest] };
+      },
+    },
+  },
+};
+
+/** GC that never drains a floor's losers. */
+export const GC_LOSER_AS_WINNER: TreeMutant = {
+  name: "gc-loser-as-winner",
+  defect: "a loser of a floor is treated as the winner, so its fresh nodes are never deleted",
+  options: {
+    steps: {
+      gcClassify: (members, evidence, duplicates) => ({
+        ...classifyFloor(members, evidence, duplicates),
+        losers: [],
+      }),
+    },
+  },
+};
+
+/** GC that takes the first listed record of a floor as its winner. */
+export const GC_WINNER_BY_KEY_ORDER: TreeMutant = {
+  name: "gc-winner-by-key-order",
+  defect: "the winner of a floor is the first listed record, not head or successor evidence",
+  options: {
+    steps: {
+      gcClassify: (members, _evidence, duplicates) => {
+        const eligible = members.filter((a) => !duplicates.has(a));
+        const [winner, ...losers] = eligible;
+        return winner === undefined
+          ? { winner: null, losers: [], ambiguous: false }
+          : { winner, losers, ambiguous: false };
+      },
+    },
+  },
+};
+
+/** GC that never waits for a due time. */
+export const GC_IGNORES_DUE_AT: TreeMutant = {
+  name: "gc-ignores-due-at",
+  defect: "superseded nodes are deleted in the tick that resolves their group",
+  options: { steps: { gcIsDue: () => true } },
+};
+
+/** GC that reads its clock locally instead of from the storage server. */
+export const GC_LOCAL_CLOCK: TreeMutant = {
+  name: "gc-local-clock",
+  defect: "due times come from the local clock instead of storage server time",
+  options: { steps: { gcNow: (_serverDate, local) => local } },
+};
+
+/** A sweep that stamps marks without a later fold moving the floor. */
+export const SWEEP_NO_FLOOR_GATE: TreeMutant = {
+  name: "sweep-no-floor-gate",
+  defect: "the sweep stamps or deletes a mark without a later fold moving the floor",
+  options: { steps: { sweepPassesFloorGate: () => true } },
+};
+
+/** A probe tick that reads the head before it lists the sweep page. */
+export const SWEEP_FLOOR_BEFORE_LIST: TreeMutant = {
+  name: "sweep-floor-before-list",
+  defect: "the sweep notes marks with a head floor read before its LIST",
+  options: { steps: { sweepListsBeforeHead: () => false } },
+};
+
+/** A sweep that starts a mark's age when it notes it. */
+export const SWEEP_AGE_FROM_NOTE: TreeMutant = {
+  name: "sweep-age-from-note",
+  defect: "the sweep's age starts when a mark is noted, not when it is stamped",
+  options: { steps: { sweepStartsAge: (phase) => phase === "note" } },
+};
+
+/** GC that calls a candidate corrupt on its first failed read. */
+export const GC_CORRUPT_NO_RETRY: TreeMutant = {
+  name: "gc-corrupt-no-retry",
+  defect: "a candidate's failed GET is not retried before it is counted corrupt",
+  options: { steps: { gcRetriesCorrupt: () => false } },
+};
+
+/** The GC mutants the GC suite must catch. */
+export const GC_MUTANTS: readonly TreeMutant[] = [
+  GC_IGNORES_LIVE_ROOT,
+  GC_DELETES_UNPARSEABLE_KEY,
+  GC_DELETES_CORRUPT_CANDIDATE,
+  GC_KEY_ONLY_MEMBERSHIP_AT_DEPTH_2,
+  GC_MEMBER_WRONG_LEVEL,
+  GC_MEMBER_ATTEMPT_ONLY,
+  GC_PATH_MISS_AS_NONMEMBER,
+  SWEEP_MEMBER_AGAINST_MARK_ROOT,
+  GC_SKIPS_MEMBERSHIP_CHECK,
+  PUBLISH_REUSES_ATTEMPT,
+  GC_IGNORES_DUPLICATE_IDENTITY,
+  GC_PROCESSES_OPEN_FLOOR,
+  GC_IGNORES_GENERATION,
+  GC_WINNER_AS_LOSER,
+  GC_LOSER_AS_WINNER,
+  GC_WINNER_BY_KEY_ORDER,
+  GC_IGNORES_DUE_AT,
+  GC_LOCAL_CLOCK,
+  SWEEP_NO_FLOOR_GATE,
+  SWEEP_FLOOR_BEFORE_LIST,
+  SWEEP_AGE_FROM_NOTE,
+  GC_CORRUPT_NO_RETRY,
 ];
