@@ -66,8 +66,7 @@
  * record, each level of fresh nodes `parallelCalls` at a time, then the
  * head CAS and its re-read) times the slowest call the tick has timed so far: its head
  * GET, its root GET and its node GETs, issued at most `parallelCalls` at
- * once so none waits behind a host's cap (`TREE_FOLD_DEFAULT_CALL_MS`
- * before any). A round lasts as long as its slowest call, and erring
+ * once so none waits behind a host's cap. A round lasts as long as its slowest call, and erring
  * high only ends a tick early, while erring low can lose the tick. The
  * check never interrupts one entry's node reads or a publication. A fold
  * keeps planning past the budget until the prefix it would publish is
@@ -109,7 +108,6 @@ import { singleLeafApplies } from "./build.ts";
 import { importChunkKey } from "./chunk.ts";
 import {
   TREE_CHUNK_SALT_BYTES,
-  TREE_FOLD_DEFAULT_CALL_MS,
   TREE_FOLD_PARALLEL_CALLS,
   TREE_FOLD_TICK_BUDGET_MS,
   TREE_RETRIED_CALL_CHARGE,
@@ -461,15 +459,19 @@ export const prepareTreeFold = async (
   const startedAt = input.startedAt ?? now();
   const tickBudgetMs = input.tickBudgetMs ?? TREE_FOLD_TICK_BUDGET_MS;
   const width = Math.max(1, input.parallelCalls ?? TREE_FOLD_PARALLEL_CALLS);
-  /** The slowest storage call timed so far this tick, in milliseconds. */
-  let slowestCallMs: number | undefined;
+  /**
+   * The slowest storage call timed so far this tick, in milliseconds.
+   * The head GET is timed before anything is planned, so every estimate
+   * has a measurement.
+   */
+  let slowestCallMs = 0;
   /** Run one storage call, timing it for the publication estimate. */
   const timed = async <T>(call: () => Promise<T>): Promise<T> => {
     const begun = now();
     try {
       return await call();
     } finally {
-      slowestCallMs = Math.max(slowestCallMs ?? 0, now() - begun);
+      slowestCallMs = Math.max(slowestCallMs, now() - begun);
     }
   };
 
@@ -563,7 +565,7 @@ export const prepareTreeFold = async (
   const publishable = (): number => (pinned === null ? planner.accepted : pinnedAt);
   /** Estimated milliseconds to publish the plan so far. */
   const publishMs = (): number =>
-    (slowestCallMs ?? TREE_FOLD_DEFAULT_CALL_MS) *
+    slowestCallMs *
     publicationStages(planner.publicationNodes).reduce(
       (rounds, calls) => rounds + Math.ceil(calls / width),
       0,
