@@ -86,7 +86,8 @@ for (const op of PREDICATE_OPS) {
 const servedRoutes = new Set<string>(["GET /v1/healthz", "GET /v1/spec"]);
 const probeDb = Db.create({ storage: new MemoryStorage(), app: "drift", tenant: "drift" });
 for (const r of createRouter({ db: probeDb }).routes) {
-  if (r.path.startsWith("/v1/")) {
+  // `ALL` entries are middleware (e.g. the `Cache-Control` header), not routes.
+  if (r.method !== "ALL" && r.path.startsWith("/v1/")) {
     servedRoutes.add(`${r.method} ${r.path}`);
   }
 }
