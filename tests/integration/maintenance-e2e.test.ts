@@ -392,13 +392,14 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
 // existing tests above.
 // =====================================================================
 const WORKING_SET = 50; // bounded live doc set ⇒ constant live floor
-const BODY_BYTES = 2000; // bodies large enough that the ratio gate trips and folds fire on cadence
+const BODY_BYTES = 2000; // bodies large enough that each fold rewrites a real snapshot and orphans one
 
 // The shared write-tick maintenance profile for these tests:
 // `phasesPerTick: "both"` (Node-tier) so a fold AND a GC can run in one
 // tick; `gcGraceMillis: 0` so a marked orphan is swept the same pass (no
-// 7-day clock advance). A bounded working set under big bodies makes the
-// tail outgrow the snapshot quickly, tripping the ratio gate and folding.
+// 7-day clock advance). Folds fire on the count arm, every 20 writes
+// (cf-free's `foldAtTailEntries`, which trips before the 50-entry ratio
+// floor), so the bounded working set churns snapshots on a steady cadence.
 // The ceiling test reuses this byte-identical profile and threads its
 // distinct `maxFoldBytes` through the ctx separately.
 const WRITE_TICK_TEST_PROFILE: BoundedMaintenanceOptions = {

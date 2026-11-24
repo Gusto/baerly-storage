@@ -97,7 +97,7 @@ const collectableObjectCount = async (storage: Storage): Promise<number> => {
 };
 
 const WORKING_SET = 50; // bounded live doc set ⇒ constant live floor
-const BODY_BYTES = 2000; // big enough bodies that the ratio gate trips and folds fire on cadence
+const BODY_BYTES = 2000; // big enough bodies that each fold rewrites a real snapshot and orphans one
 
 /**
  * Drive `total` real commits through the {@link Writer} under the given
