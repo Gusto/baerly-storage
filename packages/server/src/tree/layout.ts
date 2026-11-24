@@ -374,6 +374,8 @@ export interface TreeSteps {
   ) => boolean;
   /** Whether a probe tick lists its sweep page before it reads the head. */
   readonly sweepListsBeforeHead?: () => boolean;
+  /** Whether GC issues the record DELETEs it chose before its probe write, not after it wins. */
+  readonly gcRetiresBeforeProbe?: () => boolean;
   /**
    * The reader's tail step: walk and probe the unfolded log tail of the
    * head it is given, and fold it into a per-`_id` overlay.
