@@ -5,7 +5,6 @@ import {
   GC_MARK_LIST_PAGE_KEYS,
   MAINTENANCE_FOLD_BASE_REQUESTS,
   MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS,
-  MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS,
   STORAGE_RETRY_MAX_ATTEMPTS,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   WRITE_TICK_GC_MAX_SWEEPS,
@@ -239,17 +238,16 @@ describe("a lost head CAS", () => {
         assumptions: DEFAULT_ASSUMPTIONS,
       });
     const won = tick(false);
-    // One retried head GET (the fate re-read), then the refresh's
-    // unretried GET and CAS PUT.
-    expect(tick(true)).toEqual(sumCalls(won, { gets: 1, unretriedGets: 1, casPuts: 1 }));
+    // Both the fate re-read and the refresh GET use the adapter retry.
+    expect(tick(true)).toEqual(sumCalls(won, { gets: 2, casPuts: 1 }));
     expect(chargedRequests(tick(true), ALL_ATTEMPTS) - chargedRequests(won, ALL_ATTEMPTS)).toBe(
-      STORAGE_RETRY_MAX_ATTEMPTS + MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS,
+      2 * STORAGE_RETRY_MAX_ATTEMPTS + 1,
     );
   });
 });
 
 describe("retry charging", () => {
-  test("retried calls pay every attempt, CAS PUTs and the hint refresh pay one", () => {
+  test("retried calls pay every attempt, explicitly unretried calls pay one", () => {
     const calls = sumCalls({ gets: 2, creates: 1, casPuts: 1, unretriedGets: 1 });
     expect(chargedRequests(calls, HAPPY_PATH)).toBe(5);
     // 2 GETs x 3, 1 create x 3 x (1 + 1 readback), 1 CAS, 1 unretried GET.
