@@ -72,6 +72,27 @@ export const TREE_HEAD_CAS_CHARGE = 1;
  */
 export const TREE_READ_PARALLEL_GETS: number = MAX_PARALLEL_LOG_READS;
 
+/**
+ * Wall-clock milliseconds a fold tick may spend capturing the head and
+ * planning before it stops admitting log entries and publishes the
+ * planned prefix (`prepareTreeFold`, `./fold.ts`).
+ *
+ * A tick that runs past the response on Cloudflare (`ctx.waitUntil`)
+ * has about 30 s before the platform may cancel it, and a tick cut off
+ * before its head CAS makes no progress: the next tick plans the same
+ * batch, so without a clock folding can stall. Planning wall time is
+ * almost all storage latency (a few hundred ms per R2 binding GET).
+ * Publication issues one create per fresh node, and a fold's fresh
+ * nodes are mostly rewrites of the nodes it read, so publication takes
+ * roughly as long again as planning, plus the head CAS and its fate
+ * re-read. Ten seconds of planning leaves the rest of the window for
+ * that, and for any maintenance the same tick ran before the fold.
+ *
+ * The deadline is checked between log entries, so one entry's node
+ * reads are never cut short, and it never stops a publication.
+ */
+export const TREE_FOLD_PLAN_DEADLINE_MS = 10_000;
+
 /** Most child entries one branch may hold. */
 export const BRANCH_MAX_ENTRIES = 256;
 

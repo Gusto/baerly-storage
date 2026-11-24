@@ -54,6 +54,14 @@
  * tree already past either ceiling folds nothing. Each refuses as a
  * `deferred` stop the caller reports.
  *
+ * **Deadline.** Planning also stops on the wall clock: once
+ * `planDeadlineMs` (default `TREE_FOLD_PLAN_DEADLINE_MS`) has elapsed
+ * since the fold began, it admits no further entry and publishes the
+ * prefix it planned, as when the budget runs out. It is checked between
+ * entries, never inside one entry's node reads or a publication. A fold
+ * keeps planning past the deadline until the prefix it would publish is
+ * non-empty, so every tick that can fold an entry makes progress.
+ *
  * **Stuck entry.** When not even the first entry fits this tick's
  * budget, the fold publishes nothing, keeps the floor and emits a
  * counted structured warning naming the seq. The check uses the budget
@@ -79,7 +87,11 @@ import { ctxMetrics, getCurrentContext } from "../observability/context.ts";
 import { assertSnapshotDocId } from "../snapshot-doc-id.ts";
 import { singleLeafApplies } from "./build.ts";
 import { importChunkKey } from "./chunk.ts";
-import { TREE_CHUNK_SALT_BYTES, TREE_RETRIED_CALL_CHARGE } from "./constants.ts";
+import {
+  TREE_CHUNK_SALT_BYTES,
+  TREE_FOLD_PLAN_DEADLINE_MS,
+  TREE_RETRIED_CALL_CHARGE,
+} from "./constants.ts";
 import { importTreeChunkKey, readTreeHead, readTreeRoot, type TreeHead } from "./head.ts";
 import { collectionOfPrefix } from "./key.ts";
 import { DEFAULT_TREE_CONFIG, type TreeConfig } from "./layout.ts";
@@ -120,6 +132,17 @@ export interface TreeFoldInput {
   readonly config?: TreeConfig;
   /** Mints the chunk salt of a head that has none yet. Default: 16 random bytes. */
   readonly mintChunkSalt?: () => string;
+  /**
+   * Wall-clock milliseconds the fold may plan for. Default
+   * `TREE_FOLD_PLAN_DEADLINE_MS`.
+   */
+  readonly planDeadlineMs?: number;
+  /**
+   * The wall clock, in milliseconds; tests pass a fake one. Default
+   * `Date.now`. On Workers it advances only across I/O, which is where a
+   * fold spends its wall time.
+   */
+  readonly now?: () => number;
   readonly signal?: AbortSignal;
 }
 
@@ -127,6 +150,8 @@ export interface TreeFoldInput {
 export type TreeFoldStop =
   /** The budget ran out before the entry at `seq` (or before reading it). */
   | { readonly reason: "budget"; readonly seq: number }
+  /** The planning deadline elapsed before the entry at `seq` (or before reading it). */
+  | { readonly reason: "deadline"; readonly seq: number }
   /**
    * A depth-0 ceiling: the captured tree is past it (`gate: "pre-fold"`),
    * or the entry at `seq` would take the totals past it and no later
@@ -396,6 +421,8 @@ export const prepareTreeFold = async (
   const config = input.config ?? DEFAULT_TREE_CONFIG;
   const collection = collectionOfPrefix(prefix);
   const opts = signal === undefined ? undefined : { signal };
+  const now = input.now ?? Date.now;
+  const deadline = now() + (input.planDeadlineMs ?? TREE_FOLD_PLAN_DEADLINE_MS);
 
   const head: TreeHead | null = await readTreeHead(storage, prefix, opts);
   if (head === null) {
@@ -461,6 +488,8 @@ export const prepareTreeFold = async (
   let overBytes = false;
   /** While a checkpoint is pinned, the stop a fall back to it reports; its `seq` is the pinned end. */
   let pinned: TreeFoldStop | null = null;
+  /** While a checkpoint is pinned, how many entries it accepted. */
+  let pinnedAt = 0;
   let stop: TreeFoldStop | undefined;
   let next = floor;
   let atTail = false;
@@ -468,7 +497,7 @@ export const prepareTreeFold = async (
   /** Pin the checkpoint before `held.seq`, unless an earlier one is pinned. */
   const hold = (held: TreeFoldStop): void => {
     if (pinned === null) {
-      planner.pin();
+      pinnedAt = planner.pin();
       pinned = held;
     }
   };
@@ -478,6 +507,18 @@ export const prepareTreeFold = async (
       planner.unpin();
       pinned = null;
     }
+  };
+  /**
+   * Whether the deadline stops the fold before the entry at `seq`: it
+   * has elapsed and the prefix the fold would publish is non-empty.
+   */
+  const pastDeadline = (seq: number): boolean => {
+    const publishable = pinned === null ? planner.accepted : pinnedAt;
+    if (publishable === 0 || now() < deadline) {
+      return false;
+    }
+    stop = { reason: "deadline", seq };
+    return true;
   };
   /** Accept an entry that changes no row; returns whether the fold reads on. */
   const skip = (item: WindowEntry): boolean => {
@@ -538,6 +579,9 @@ export const prepareTreeFold = async (
   };
 
   reading: while (!atTail) {
+    if (pastDeadline(next)) {
+      break;
+    }
     const first = next === floor;
     const room = batchRoom(planner, budget);
     const size =
@@ -567,7 +611,7 @@ export const prepareTreeFold = async (
       }));
     }
     for (const item of batch) {
-      if (!(await addEntry(item))) {
+      if (pastDeadline(item.seq) || !(await addEntry(item))) {
         break reading;
       }
       next = item.seq + 1;
