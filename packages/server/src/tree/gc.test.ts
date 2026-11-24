@@ -31,6 +31,7 @@ import {
 } from "../../../../tests/fixtures/tree-gc-harness.ts";
 import {
   GC_CORRUPT_NO_RETRY,
+  GC_DELETES_BEFORE_PROBE,
   GC_DELETES_CORRUPT_CANDIDATE,
   GC_DELETES_UNPARSEABLE_KEY,
   GC_IGNORES_DUE_AT,
@@ -786,6 +787,42 @@ const quarantineFailure = (mutant?: TreeMutant) =>
       : `deleted ${taken.length} of the winner's superseded nodes`;
   });
 
+/**
+ * The state changes between a tick's state GET and its probe write, in a
+ * tick that has records to retire (an identity in two records): the
+ * probe loses, and the tick deletes nothing.
+ */
+const lostProbeFailure = (mutant?: TreeMutant) =>
+  guarded(async () => {
+    const bucket = await GcBucket.seeded();
+    const reused = "a".repeat(32);
+    const loser = await bucket.prepare([["k03", 5]]);
+    await bucket.fold([["k19", 119]]);
+    await bucket.publish(loser, { attempt: reused });
+    await bucket.fold([["k03", 5]], { attempt: reused });
+    const before = [...(await bucket.keys(GC_NODES)), ...(await bucket.keys(GC_RECORDS))];
+    // Another tick's state write lands while this one lists its records.
+    const head = await bucket.head();
+    const floor = head.json.log_seq_start;
+    bucket.onList.set(GC_RECORDS, async () => {
+      await bucket.memory.put(GC_STATE, encodeTreeGcState(emptyTreeGcState(null, floor)));
+    });
+    const { result } = await bucket.tick(gcConfig(mutant));
+    const after = new Set([...(await bucket.keys(GC_NODES)), ...(await bucket.keys(GC_RECORDS))]);
+    const problems: string[] = [];
+    if (result.outcome !== "conflict") {
+      problems.push(`setup: the tick ended ${result.outcome}`);
+    }
+    if (result.deleted.length > 0) {
+      problems.push(`deleted ${result.deleted.join(", ")} after losing the probe`);
+    }
+    const gone = before.filter((key) => !after.has(key));
+    if (gone.length > 0) {
+      problems.push(`gone from the bucket: ${gone.join(", ")}`);
+    }
+    return joined(problems);
+  });
+
 // ---------------------------------------------------------------------
 // Record path
 // ---------------------------------------------------------------------
@@ -1188,6 +1225,10 @@ describe("state and clock", () => {
     await expect(bucket.state()).resolves.toEqual(emptyTreeGcState(null, 20));
   });
 
+  test("a tick whose probe write loses deletes nothing and ends in conflict", async () => {
+    await expect(lostProbeFailure()).resolves.toBeUndefined();
+  });
+
   test("a collection with no head ends the tick with no write", async () => {
     const bucket = new GcBucket();
     await expect(bucket.tick()).resolves.toMatchObject({ result: { outcome: "no-head" } });
@@ -1312,6 +1353,7 @@ describe("mutation", () => {
     [SWEEP_FLOOR_BEFORE_LIST, [floorBeforeListFailure]],
     [SWEEP_AGE_FROM_NOTE, [supersededAfterNoteFailure]],
     [GC_CORRUPT_NO_RETRY, [misreadFailure]],
+    [GC_DELETES_BEFORE_PROBE, [lostProbeFailure]],
   ]);
 
   test("every GC mutant has checks", () => {

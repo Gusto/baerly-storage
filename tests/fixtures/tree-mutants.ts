@@ -674,6 +674,13 @@ export const GC_CORRUPT_NO_RETRY: TreeMutant = {
   options: { steps: { gcRetriesCorrupt: () => false } },
 };
 
+/** GC that retires records before its probe write wins. */
+export const GC_DELETES_BEFORE_PROBE: TreeMutant = {
+  name: "gc-deletes-before-probe",
+  defect: "a tick issues record DELETEs before its probe CAS, so one that loses it has deleted",
+  options: { steps: { gcRetiresBeforeProbe: () => true } },
+};
+
 /** The GC mutants the GC suite must catch. */
 export const GC_MUTANTS: readonly TreeMutant[] = [
   GC_IGNORES_LIVE_ROOT,
@@ -698,4 +705,5 @@ export const GC_MUTANTS: readonly TreeMutant[] = [
   SWEEP_FLOOR_BEFORE_LIST,
   SWEEP_AGE_FROM_NOTE,
   GC_CORRUPT_NO_RETRY,
+  GC_DELETES_BEFORE_PROBE,
 ];

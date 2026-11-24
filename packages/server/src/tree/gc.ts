@@ -27,7 +27,9 @@
  * Every DELETE is proven in its own tick by the membership check of
  * `./gc-member.ts` against the root of the head that tick read. Records,
  * the state and the clock only nominate and pace; none authorizes a
- * deletion, so a stale or lost state can leak and never delete.
+ * deletion, so a stale or lost state can leak and never delete. No
+ * DELETE, of a node or a record, is issued before the tick's probe CAS
+ * has won: a tick that loses it deletes nothing.
  *
  * **State.** `<P>/_v99/gc-pending.json` (`./gc-state.ts`) holds
  * progress, bound to the head's `generation` and floor. A state of
@@ -47,10 +49,11 @@
  * at most once per probe interval, whatever the write rate. Any other
  * tick is a state GET and then `retireLogRange`. A probe tick: state
  * GET; the sweep LIST; head GET; root GET; record LIST; resolve closed
- * floors; the probe write; checks and DELETEs (active losers' fresh
- * nodes, due winners' superseded nodes, due sweep marks); the sweep's
- * notes and stamps; the state write, only when something changed; then
- * `retireLogRange`. Every DELETE follows that tick's record LIST, which
+ * floors, queueing the record retirements that chooses; the probe
+ * write; the queued retirements; checks and DELETEs (active losers'
+ * fresh nodes, due winners' superseded nodes, due sweep marks); the
+ * sweep's notes and stamps; the state write, only when something
+ * changed; then `retireLogRange`. Every DELETE follows that tick's record LIST, which
  * the identity checks are drawn from. Candidate checks per tick are
  * sized from the request ledger.
  */
@@ -179,6 +182,7 @@ interface GcSteps {
   readonly startsAge: NonNullable<TreeConfig["steps"]["sweepStartsAge"]>;
   readonly listsBeforeHead: NonNullable<TreeConfig["steps"]["sweepListsBeforeHead"]>;
   readonly trustsIdentity: NonNullable<TreeConfig["steps"]["gcTrustsIdentity"]>;
+  readonly retiresBeforeProbe: NonNullable<TreeConfig["steps"]["gcRetiresBeforeProbe"]>;
 }
 
 const gcSteps = (config: TreeConfig): GcSteps => {
@@ -198,6 +202,7 @@ const gcSteps = (config: TreeConfig): GcSteps => {
     startsAge: s.sweepStartsAge ?? ((phase) => phase === "stamp"),
     listsBeforeHead: s.sweepListsBeforeHead ?? (() => true),
     trustsIdentity: s.gcTrustsIdentity ?? trustsIdentity,
+    retiresBeforeProbe: s.gcRetiresBeforeProbe ?? (() => false),
   };
 };
 
@@ -452,6 +457,7 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
   }
 
   // Record GETs and DELETEs share one cap each per tick.
+  let probeWon = false;
   let recordGets = TREE_GC_TICK_RECORD_CALLS;
   let recordDeletes = TREE_GC_TICK_RECORD_CALLS;
   const retired = new Set<string>();
@@ -490,7 +496,16 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
     fetched.set(key, result);
     return result;
   };
-  /** Delete a record without deleting any node it names; false when the cap is spent. */
+  /**
+   * Record retirements chosen before the probe, issued only once the
+   * probe CAS has won: a tick that loses it deletes nothing.
+   */
+  const queuedRetirements: string[] = [];
+  /**
+   * Retire a record without deleting any node it names, under the
+   * per-tick cap; false when the cap is spent. Before the probe it only
+   * queues the DELETE.
+   */
   const retireRecord = async (key: string): Promise<boolean> => {
     if (retired.has(key)) {
       return true;
@@ -499,9 +514,13 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
       return false;
     }
     recordDeletes -= 1;
+    retired.add(key);
+    if (!probeWon && !steps.retiresBeforeProbe()) {
+      queuedRetirements.push(key);
+      return true;
+    }
     await storage.delete(key, opts);
     deleted.push(key);
-    retired.add(key);
     return true;
   };
   const recordKeyOf = (floor: number, tail: string): string =>
@@ -642,6 +661,11 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
       throw error;
     }
     return end("conflict", { deleted, probed: true, candidates });
+  }
+  probeWon = true;
+  for (const key of queuedRetirements) {
+    await storage.delete(key, opts);
+    deleted.push(key);
   }
   if (serverTime === undefined) {
     counter("no_server_time_total");
