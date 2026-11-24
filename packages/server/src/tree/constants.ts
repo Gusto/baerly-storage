@@ -90,6 +90,9 @@ export const TREE_READ_PARALLEL_GETS: number = MAX_PARALLEL_LOG_READS;
  * the budget check cannot see: the entry admitted after the last check
  * (its log batch and node reads), publication calls slower than the
  * GETs the estimate is drawn from, and a create conflict's adoption GET.
+ * They do not bound a fold pinned at its floor, which reads on past the
+ * budget until something is publishable; its result reports that
+ * (`pinnedPastTickBudget`).
  */
 export const TREE_FOLD_TICK_BUDGET_MS = 20_000;
 
