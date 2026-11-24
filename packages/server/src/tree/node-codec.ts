@@ -35,6 +35,7 @@ import {
   MAX_DOCUMENT_BYTES,
   MAX_DOCUMENT_DEPTH,
   sha256Hex,
+  storedJsonParseError,
   unsupportedSchemaVersionMessage,
 } from "@baerly/protocol";
 import { assertPathSegment } from "../path-segment.ts";
@@ -883,7 +884,7 @@ export const decodeNode = async (
   try {
     value = JSON.parse(text);
   } catch (error) {
-    failJson(error instanceof Error ? error.message : "body is not JSON");
+    failJson(storedJsonParseError("body is not JSON", bytes.byteLength, error).message);
   }
   // Steps 7 to 9 read the parsed value, which can be anything JSON
   // allows. Whatever else throws in them surfaces as InvalidResponse

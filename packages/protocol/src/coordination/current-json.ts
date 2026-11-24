@@ -25,7 +25,7 @@
  * context to the message; the `code` is unchanged.
  */
 
-import { encodeJsonBytes } from "../bytes.ts";
+import { encodeJsonBytes, storedJsonParseError } from "../bytes.ts";
 import { CURRENT_JSON_CONTENT_TYPE, CURRENT_JSON_SCHEMA_VERSION } from "../constants.ts";
 import { BaerlyError, isWriteConflict } from "../errors.ts";
 import { isNewerSchemaVersion, unsupportedSchemaVersionMessage } from "./schema-version.ts";
@@ -271,9 +271,11 @@ export async function readCurrentJson(
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw new BaerlyError("InvalidResponse", `current.json at ${key}: body is not valid JSON`, {
-      cause: error,
-    });
+    throw storedJsonParseError(
+      `current.json at ${key}: body is not valid JSON`,
+      got.body.byteLength,
+      error,
+    );
   }
   return { json: assertCurrentJson(parsed, key), etag: got.etag };
 }

@@ -164,7 +164,7 @@ describe("probeTailFrom", () => {
     });
   });
 
-  test("a malformed bounded entry keeps the SyntaxError as the cause", async () => {
+  test("a malformed bounded entry is InvalidResponse without the SyntaxError as cause", async () => {
     const malformed: Storage = {
       get: async () => ({ body: new TextEncoder().encode("{"), etag: "x" }),
       put: async () => ({ etag: "x" }),
@@ -176,7 +176,8 @@ describe("probeTailFrom", () => {
 
     const error = await probeTailChunk(malformed, PREFIX, 0).catch((error_: unknown) => error_);
     expect(error).toBeInstanceOf(BaerlyError);
-    expect((error as BaerlyError).cause).toBeInstanceOf(SyntaxError);
+    expect((error as BaerlyError).code).toBe("InvalidResponse");
+    expect((error as BaerlyError).cause).toBeUndefined();
   });
 
   test("tolerant bounded mode records malformed occupancy as incomplete and keeps probing", async () => {

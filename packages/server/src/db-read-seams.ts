@@ -16,6 +16,7 @@ import {
   type CurrentJson,
   type CurrentJsonRead,
   decodeJsonBytes,
+  storedJsonParseError,
   logDeleteFloorOf,
   logObjectKey,
   type LogEntry,
@@ -200,9 +201,11 @@ const readLogEntry = async (
   try {
     parsed = decodeJsonBytes(got.body);
   } catch (error) {
-    throw new BaerlyError("InvalidResponse", `log entry at ${key}: body is not valid JSON`, {
-      cause: error,
-    });
+    throw storedJsonParseError(
+      `log entry at ${key}: body is not valid JSON`,
+      got.body.byteLength,
+      error,
+    );
   }
   const entry = parsed as LogEntry;
   // On R2 an NFC name addresses a legacy non-NFC spelling's objects;

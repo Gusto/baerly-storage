@@ -63,6 +63,7 @@ import {
   certifiedDeleteFloor,
   createCurrentJson,
   decodeJsonBytes,
+  storedJsonParseError,
   encodeJsonBytes,
   logObjectKey,
   logSeqStartOf,
@@ -1220,10 +1221,10 @@ export class Writer {
         try {
           entries.push(decodeJsonBytes<LogEntry>(got.body));
         } catch (error) {
-          throw new BaerlyError(
-            "InvalidResponse",
+          throw storedJsonParseError(
             `${errorPrefix}: malformed log entry at ${keys[i]!}`,
-            { cause: error },
+            got.body.byteLength,
+            error,
           );
         }
       }
@@ -1247,9 +1248,11 @@ export class Writer {
     try {
       existing = decodeJsonBytes(got.body);
     } catch (error) {
-      throw new BaerlyError("InvalidResponse", `Writer: malformed log occupant at ${key}`, {
-        cause: error,
-      });
+      throw storedJsonParseError(
+        `Writer: malformed log occupant at ${key}`,
+        got.body.byteLength,
+        error,
+      );
     }
     if (!hasWriterIdentity(existing)) {
       // Parsed JSON alone cannot establish a conflicting writer's identity.

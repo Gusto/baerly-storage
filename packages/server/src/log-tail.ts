@@ -14,6 +14,7 @@ import {
   decodeJsonBytes,
   LOG_FORWARD_PROBE_CAP,
   logObjectKey,
+  storedJsonParseError,
 } from "@baerly/protocol";
 
 /** A forward probe's slot cap, and which bound set it. */
@@ -124,10 +125,10 @@ export const probeTailChunk = async (
       // A malformed body at an occupied slot is a protocol violation —
       // surface it as InvalidResponse (the same code readLogEntry uses)
       // rather than a raw SyntaxError leaking out of the probe.
-      throw new BaerlyError(
-        "InvalidResponse",
-        `probeTailChunk: malformed log entry at ${key}: ${(error as Error).message}`,
-        { cause: error },
+      throw storedJsonParseError(
+        `probeTailChunk: malformed log entry at ${key}`,
+        got.body.byteLength,
+        error,
       );
     }
   }

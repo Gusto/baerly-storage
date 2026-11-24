@@ -252,8 +252,8 @@ describe("gc-pending", () => {
     expect((err as BaerlyError).code).toBe("InvalidResponse");
     // L109: the message must mention "body is not valid JSON" (not "not an object")
     expect((err as BaerlyError).message).toContain("body is not valid JSON");
-    // L106: the catch block must attach the original parse error as cause
-    expect((err as BaerlyError).cause).toBeDefined();
+    // The parse error quotes stored text, so it is not attached as cause.
+    expect((err as BaerlyError).cause).toBeUndefined();
   });
 
   // ---- assertGcPending: null / non-object (L208) ----

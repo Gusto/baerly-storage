@@ -29,6 +29,7 @@ import {
   type Storage,
   BaerlyError,
   decodeJsonBytes,
+  storedJsonParseError,
   logObjectKey,
   MAX_PARALLEL_LOG_READS,
 } from "@baerly/protocol";
@@ -98,9 +99,11 @@ const readLogEntryWithBytes = async (
   try {
     entry = decodeJsonBytes<unknown>(got.body);
   } catch (error) {
-    throw new BaerlyError("InvalidResponse", `log-walk: malformed log entry at ${key}`, {
-      cause: error,
-    });
+    throw storedJsonParseError(
+      `log-walk: malformed log entry at ${key}`,
+      got.body.byteLength,
+      error,
+    );
   }
   if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
     throw new BaerlyError("InvalidResponse", `log-walk: log entry at ${key} is not a JSON object`);
