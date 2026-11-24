@@ -1214,8 +1214,9 @@ export class FoldPlanner {
    * the leaves up, the root's level last. While a checkpoint is pinned,
    * each level holds the larger of that plan's count and the pinned
    * plan's, as the charge holds the larger reserve: the fold publishes
-   * one or the other. Empty while no change has been accepted, or when
-   * the plan empties the tree.
+   * one or the other. Empty when the plan empties the tree. Before any
+   * change is accepted it counts a fresh root over the captured tree,
+   * though a fold with nothing accepted publishes nothing.
    */
   get publicationNodes(): readonly number[] {
     const current = freshByLevel(this.#current.state);
