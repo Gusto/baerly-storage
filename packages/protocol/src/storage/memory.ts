@@ -101,8 +101,9 @@ const compareKeysUtf8 = (a: string, b: string): number => {
  * is necessary but not sufficient. That race is covered only by the
  * randomized integration tests against real S3 / Minio
  * (`tests/integration/randomized.test.ts`, `node-minio` variant).
- * Relatedly, `serverDate` returns the local clock, not an independent
- * server clock (see the `put` return below).
+ * Relatedly, `serverDate` is the local clock, not an independent server
+ * clock; it is filled for parity with HTTP impls and nothing in the
+ * kernel reads it.
  */
 export class MemoryStorage implements Storage {
   readonly #objects = new Map<string, StoredObject>();
@@ -160,9 +161,8 @@ export class MemoryStorage implements Storage {
       // Stryker disable next-line ObjectLiteral,ConditionalExpression: contentType is stored in the internal StoredObject but never returned by get() — the Storage interface has no contentType on StorageGetResult, so any mutation of this spread is observable-equivalent
       ...(opts?.contentType !== undefined && { contentType: opts.contentType }),
     });
-    // `serverDate` is intentionally returned — the kernel's adaptive
-    // clock-skew loop consumes the write-time server clock. `list()`
-    // needs no such clock: `StorageListEntry` is `key` + `etag` only.
+    // `serverDate` is filled for parity with HTTP-backed impls; nothing
+    // in the kernel reads it. `list()` carries no such clock: `StorageListEntry` is `key` + `etag` only.
     return { etag, serverDate: new Date() };
   }
 

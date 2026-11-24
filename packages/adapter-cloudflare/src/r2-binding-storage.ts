@@ -110,8 +110,8 @@ class R2BindingStorageImpl implements Storage {
       throw new BaerlyError("WriteConflict", `PUT ${key}: precondition failed`);
     }
     // `R2Object.uploaded` is the server-side write clock — surface it
-    // verbatim. The kernel's adaptive-clock-skew loop consumes it
-    // identically to `S3HttpStorage`'s `Date` header.
+    // verbatim, for parity with `S3HttpStorage`'s `Date` header.
+    // Nothing in the kernel reads it.
     return {
       etag: quoteEtag(result.etag),
       serverDate: result.uploaded,
@@ -276,8 +276,8 @@ class R2BindingStorageImpl implements Storage {
  *    binding returns bare hex. CAS round-trips strip and re-apply
  *    the quotes.
  *  - `serverDate` from `R2Object.uploaded` — a real server clock,
- *    suitable for the kernel's adaptive-clock-skew loop. `list()`
- *    yields `key` + `etag` only; `StorageListEntry` carries no
+ *    filled for parity with the HTTP impls; nothing in the kernel
+ *    reads it. `list()` yields `key` + `etag` only; `StorageListEntry` carries no
  *    per-entry timestamp.
  *
  * Errors map to `BaerlyError` via the same convention as

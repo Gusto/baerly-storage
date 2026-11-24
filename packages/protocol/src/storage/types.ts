@@ -27,9 +27,8 @@ export interface Storage {
   /**
    * Write a single object. Returns the new ETag and, when the
    * underlying transport surfaces it, the server's response time
-   * as `serverDate` (S3's `Date` header). The kernel uses
-   * `serverDate` to track adaptive clock-skew; impls may return
-   * `undefined` if no server clock is available. Use `ifMatch` for
+   * as `serverDate` (see {@link StoragePutResult.serverDate}); impls
+   * may return `undefined` if no server clock is available. Use `ifMatch` for
    * compare-and-swap (write only if the current ETag matches), or
    * `ifNoneMatch: "*"` for create-only (write only if no object
    * exists). A rejected precondition throws
@@ -79,10 +78,13 @@ export interface StorageGetResult {
 export interface StoragePutResult {
   readonly etag: string;
   /**
-   * Server-reported response time, used by the kernel's adaptive
-   * clock-skew loop. Set by HTTP-backed impls from the response
-   * `Date` header; in-memory impls fill in the local wall clock.
-   * `undefined` if no clock signal is available.
+   * Server-reported write time: the response `Date` header on
+   * HTTP-backed impls, `R2Object.uploaded` on the R2 binding, and the
+   * local wall clock on in-memory and local-fs impls; `undefined` when
+   * no clock signal is available. The kernel does not read it:
+   * `LogEntry.commit_ts` comes from the writer's local clock. It is
+   * part of the adapter contract for callers that need storage-server
+   * time provenance.
    */
   readonly serverDate?: Date;
 }
@@ -109,8 +111,8 @@ export interface StoragePutOptions {
  * that anchor corrected the field had no reader, and a server clock
  * per listed entry is not something the protocol should carry
  * speculatively. Wall-clock needs are served by
- * {@link StoragePutResult.serverDate} (the write-time server clock,
- * which drives the adaptive clock-skew loop) or by reading
+ * {@link StoragePutResult.serverDate} (the write-time server clock)
+ * or by reading
  * `LogEntry.commit_ts`, which is what `baerly admin usage` does and
  * documents as the cross-backend-uniform choice.
  */
