@@ -207,7 +207,7 @@ export const buildFixture = async (
       snapshot_rows: root.summary.rows,
       snapshot_bytes: root.summary.bytes,
     }),
-    proto_tree: { root: root.key, gc_fence_epoch: 0, chunk_salt: TREE_TEST_CHUNK_SALT },
+    proto_tree: { root: root.key, attempt: FIXTURE_ATTEMPT, chunk_salt: TREE_TEST_CHUNK_SALT },
   };
   objects.set(headKey(spec.tenant), JSON.stringify(head));
   const encoder = new TextEncoder();

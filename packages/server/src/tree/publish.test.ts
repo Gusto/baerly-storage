@@ -714,7 +714,7 @@ describe("head CAS fate", () => {
       root: null,
     });
     const fold = await bucket.prepare(empty);
-    // A tail-hint refresh lands first: same salt, epoch and empty root, the old floor.
+    // A tail-hint refresh lands first: same salt, installer and empty root, the old floor.
     await casUpdateCurrentJson(bucket.memory, HEAD, (head) => ({
       ...head,
       tail_hint: head.tail_hint + 5,
@@ -725,10 +725,10 @@ describe("head CAS fate", () => {
     });
   });
 
-  test("an empty new root loses to an empty head with another epoch or salt at the same floor", async () => {
+  test("an empty new root loses to an empty head with another installer or salt at the same floor", async () => {
     for (const competitor of [
-      { gc_fence_epoch: 1, chunk_salt: TREE_TEST_CHUNK_SALT },
-      { gc_fence_epoch: 0, chunk_salt: TREE_SECOND_TEST_CHUNK_SALT },
+      { attempt: attemptOf(0xbad), chunk_salt: TREE_TEST_CHUNK_SALT },
+      { attempt: attemptOf(1), chunk_salt: TREE_SECOND_TEST_CHUNK_SALT },
     ]) {
       // A fresh collection: both first folds mint their own salt.
       const bucket = await Bucket.open();
@@ -745,6 +745,16 @@ describe("head CAS fate", () => {
       }));
       await expect(bucket.publish(fold)).resolves.toMatchObject({ kind: "cas-lost" });
     }
+  });
+
+  test("two attempts publishing the same empty tree at the same floor never both report published", async () => {
+    const bucket = await Bucket.seeded();
+    const empty = [...bucket.rows.keys()].map((id) => [id, null] as const);
+    const first = await bucket.prepare(empty);
+    const second = await bucket.prepare(empty);
+    // The first lands; the second's CAS conflicts and its re-read sees an equal empty head.
+    await expect(bucket.publish(first)).resolves.toMatchObject({ kind: "published", root: null });
+    await expect(bucket.publish(second)).resolves.toMatchObject({ kind: "cas-lost" });
   });
 });
 
@@ -991,14 +1001,15 @@ describe("head transition", () => {
     const { json: created } = await bucket.head();
     expect(created.proto_tree).toEqual({
       root: expect.stringMatching(/^app\//),
-      gc_fence_epoch: 0,
+      attempt: parseTreeNodeKey(PREFIX, created.proto_tree!.root!)!.attempt,
       chunk_salt: TREE_SECOND_TEST_CHUNK_SALT,
     });
     expect(created).toMatchObject({ log_seq_start: 1, tail_hint: 40, mean_entry_bytes: 12 });
 
+    // A tail-hint refresh between folds keeps proto_tree as it is.
     await casUpdateCurrentJson(bucket.memory, HEAD, (head) => ({
       ...head,
-      proto_tree: { ...(head as TreeHeadJson).proto_tree!, gc_fence_epoch: 5 },
+      tail_hint: head.tail_hint + 1,
     }));
     const changes: Change[] = Array.from({ length: 45 }, (_, i) => [`b${i}`, i]);
     const second = await bucket.prepare(changes);
@@ -1026,7 +1037,7 @@ describe("head transition", () => {
       mean_entry_bytes: 30,
       proto_tree: {
         root: outcome.root,
-        gc_fence_epoch: 5,
+        attempt: outcome.attempt,
         chunk_salt: TREE_SECOND_TEST_CHUNK_SALT,
       },
     });

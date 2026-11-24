@@ -9,14 +9,19 @@
  * - `snapshot` is `null`. Tree code never reads, converts or repairs a
  *   monolithic snapshot.
  * - `proto_tree` is an object with exactly the keys `root` (a node key
- *   under the collection prefix, or `null`), `gc_fence_epoch` (a safe
- *   integer ≥ 0) and `chunk_salt` (32 lowercase hex characters). Key
- *   order does not matter: the head is parse-only.
+ *   under the collection prefix, or `null`), `attempt` (32 lowercase hex
+ *   characters: the identity of the publication that installed this
+ *   tree) and `chunk_salt` (32 lowercase hex characters). Key order does
+ *   not matter: the head is parse-only. Every fold sets `attempt` to its
+ *   own identity; the other head writers (the tail-hint refresh and log
+ *   retirement) spread the parsed head, so they keep it byte for byte.
+ *   Artifact GC reads it as the evidence of which attempt won a floor,
+ *   which a root key cannot give for an empty tree.
  * - `root: null` requires `snapshot_rows` and `snapshot_bytes` to be 0.
  * - Without `proto_tree` the head is valid only as a fresh collection
  *   (`log_seq_start` 0 and both totals 0); it then reads as an empty
- *   tree with epoch 0 and no salt yet, and the first tree writer mints
- *   one.
+ *   tree with no installer and no salt yet, and the first tree writer
+ *   mints one.
  * - The root, once decoded, is a root with `floor = log_seq_start` and
  *   the head's totals ({@link readTreeRoot}, {@link assertRootMatchesHead}).
  *
@@ -35,17 +40,18 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { type ChunkKey, importChunkKey } from "./chunk.ts";
-import { parseTreeNodeKey } from "./key.ts";
+import { isTreeAttempt, parseTreeNodeKey } from "./key.ts";
 import { DEFAULT_TREE_CONFIG, type TreeConfig } from "./layout.ts";
 import { type DecodedTreeNode, decodeNode } from "./node-codec.ts";
 
 const CHUNK_SALT_PATTERN = /^[0-9a-f]{32}$/;
-const PROTO_TREE_FIELDS = ["chunk_salt", "gc_fence_epoch", "root"] as const;
+const PROTO_TREE_FIELDS = ["attempt", "chunk_salt", "root"] as const;
 
 /** The `proto_tree` field of a tree head, as stored. */
 export interface ProtoTreeField {
   readonly root: string | null;
-  readonly gc_fence_epoch: number;
+  /** The identity of the publication attempt that installed this tree. */
+  readonly attempt: string;
   readonly chunk_salt: string;
 }
 
@@ -60,14 +66,19 @@ export interface TreeHead {
   readonly key: string;
   /**
    * The head as read, `proto_tree` included. `proto_tree` is absent only
-   * on a fresh head, which has no root, epoch 0 and no chunk salt yet.
+   * on a fresh head, which has no root, no installer and no chunk salt
+   * yet.
    */
   readonly json: TreeHeadJson;
   /** The ETag of the read, for a conditional head write. */
   readonly etag: string;
   /** The root node key, or `null` for an empty tree. */
   readonly root: string | null;
-  readonly gcFenceEpoch: number;
+  /**
+   * `proto_tree.attempt`: the publication attempt that installed this
+   * tree, or `null` on a fresh head.
+   */
+  readonly attempt: string | null;
 }
 
 /** The `current.json` key of collection prefix `prefix`. */
@@ -76,9 +87,6 @@ export const treeHeadKey = (prefix: string): string => `${prefix}/current.json`;
 /** Whether `value` is a well-formed chunk salt: 32 lowercase hex characters. */
 export const isTreeChunkSalt = (value: unknown): value is string =>
   typeof value === "string" && CHUNK_SALT_PATTERN.test(value);
-
-const isNonNegativeSafeInteger = (value: unknown): value is number =>
-  Number.isSafeInteger(value) && (value as number) >= 0;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -93,7 +101,7 @@ const headError = (key: string, detail: string): BaerlyError =>
  * @throws BaerlyError code="InvalidResponse" — `snapshot` is not null; a
  *   head without `proto_tree` is not fresh; `proto_tree` is not an
  *   object of exactly its three fields; `chunk_salt` is not 32 lowercase
- *   hex characters; `gc_fence_epoch` is not a non-negative safe integer;
+ *   hex characters; `attempt` is not 32 lowercase hex characters;
  *   `root` is neither null nor a node key under `prefix`; or a null root
  *   has non-zero totals. The message names the field, never its value.
  */
@@ -116,7 +124,7 @@ export const parseTreeHead = (prefix: string, read: CurrentJsonRead): TreeHead =
         "proto_tree is missing, but log_seq_start, snapshot_rows or snapshot_bytes is not 0; only a fresh head may omit it",
       );
     }
-    return { prefix, key, json, etag: read.etag, root: null, gcFenceEpoch: 0 };
+    return { prefix, key, json, etag: read.etag, root: null, attempt: null };
   }
   if (!isPlainObject(tree)) {
     fail("proto_tree is not an object");
@@ -131,9 +139,9 @@ export const parseTreeHead = (prefix: string, read: CurrentJsonRead): TreeHead =
   if (!isTreeChunkSalt(tree["chunk_salt"])) {
     fail("proto_tree.chunk_salt is not 32 lowercase hex characters");
   }
-  const epoch = tree["gc_fence_epoch"];
-  if (!isNonNegativeSafeInteger(epoch)) {
-    fail("proto_tree.gc_fence_epoch is not a non-negative safe integer");
+  const attempt = tree["attempt"];
+  if (!isTreeAttempt(attempt)) {
+    fail("proto_tree.attempt is not 32 lowercase hex characters");
   }
   const root = tree["root"];
   if (root !== null && (typeof root !== "string" || parseTreeNodeKey(prefix, root) === null)) {
@@ -142,7 +150,7 @@ export const parseTreeHead = (prefix: string, read: CurrentJsonRead): TreeHead =
   if (root === null && (json.snapshot_rows !== 0 || json.snapshot_bytes !== 0)) {
     fail("proto_tree.root is null, but snapshot_rows or snapshot_bytes is not 0");
   }
-  return { prefix, key, json, etag: read.etag, root, gcFenceEpoch: epoch };
+  return { prefix, key, json, etag: read.etag, root, attempt };
 };
 
 /**

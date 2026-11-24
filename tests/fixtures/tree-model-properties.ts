@@ -98,7 +98,7 @@ export interface TreeStructureOracle {
     prefix: string,
     root: string,
   ): { readonly keys: ReadonlySet<string>; readonly missing: readonly string[] };
-  /** Fixed-name records the tree keeps beside its nodes, such as the GC authority record. */
+  /** Fixed-name records the tree keeps beside its nodes, such as the GC state. */
   bookkeepingKeys(prefix: string): readonly string[];
   /**
    * Nodes in the canonical tree for `rows`, root included: 0 for no rows.
@@ -470,7 +470,7 @@ const publicationMonotoneNoPartialRun = (
  *
  * Exercised only by a race an overwrite would show in the head: the
  * publish had something to fold, and a step other than a fold replaced
- * the captured head (a GC tick moving the fence, say) or a fold prepared
+ * the captured head (a GC tick's log retirement, say) or a fold prepared
  * over a different log tail did, so the two publications differ.
  */
 const lostCasPreservesWinner = (run: TreeRun, oracles: TreeModelOracles): TreePropertyCheck => {
@@ -1110,10 +1110,11 @@ export const TREE_MUTATION_SCHEDULES: readonly TreeMutationSchedule[] = [
       seam: "publish-steps",
       defect: "writes the head without If-Match",
     },
-    // A GC tick moves the fence on the head between the prepare and the
-    // publish; the commit before the prepare gives the fold something to
-    // publish. An overwrite restores the old fence, so nodes the tick
-    // collected as unreachable may become the root's.
+    // A GC tick writes the head (its log retirement) between the prepare
+    // and the publish; the commit before the prepare gives the fold
+    // something to publish. An overwrite puts back a head the GC tick
+    // already judged, so nodes it collected as unreachable may become the
+    // root's.
     collateral: [
       "acknowledged-never-lost",
       "cold-and-warm-equal-reference",

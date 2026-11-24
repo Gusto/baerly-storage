@@ -33,22 +33,23 @@
  * create whose first attempt landed but lost its reply comes back as a
  * `WriteConflict`. That conflict is resolved by reading the key: a body
  * byte-identical to the one created is adopted; a different body is
- * `InvalidResponse`; no body means the attempt lost (only a fenced GC
- * deletes a node, and a fence makes the head CAS lose), `WriteConflict`.
+ * `InvalidResponse`; no body means the attempt lost, `WriteConflict`:
+ * GC deletes an attempt's nodes only after a later fold has moved the
+ * floor past the floor it captured, so its head CAS can no longer land.
  * Any other create failure fails the attempt with its own code, and the
  * nodes already written are unreachable leaks.
  *
  * **Head-CAS fate.** The head CAS gets no adapter retry. When it throws
  * `WriteConflict` or `NetworkError`, one strict re-read of the head
- * decides: a non-null new root won iff the head now names it (its key
+ * decides: a non-null new root won iff the head now names it and this
+ * attempt as its installer (its key
  * carries this attempt's fresh identity, so the match is unambiguous);
- * an empty new root won iff the head has no root, the new floor, the
- * captured GC fence epoch, this attempt's salt and zero totals. Anything
- * else is a `cas-lost` outcome, returned rather than thrown, including a
- * win superseded before the re-read. An empty new root carries no
- * identity, so two attempts publishing the same empty tree at the same
- * floor can both report `published`: the head is the same either way,
- * but a caller that counts publications counts that tree twice.
+ * an empty new root won iff the head has no root, this attempt's
+ * identity as `proto_tree.attempt`, the new floor, this attempt's salt
+ * and zero totals. The identity is fresh, so two attempts publishing the
+ * same empty tree never both report `published`. Anything else is a
+ * `cas-lost` outcome, returned rather than thrown, including a win
+ * superseded before the re-read.
  * Any other failure of the CAS (an abort, an `InvalidResponse` that is
  * not a transport fault) is rethrown without the re-read, so that
  * attempt's fate is unknown; either fate is safe, because publication
@@ -321,8 +322,8 @@ const assertFoldTransition = async (
     );
   }
   const tree = after.proto_tree;
-  if (tree === undefined || tree.gc_fence_epoch !== head.gcFenceEpoch) {
-    internal("proto_tree.gc_fence_epoch must be unchanged");
+  if (tree === undefined || tree.attempt !== attempt) {
+    internal("proto_tree.attempt must be this attempt's identity");
   }
   if (tree.chunk_salt !== (storedSalt(head) ?? input.chunkSalt)) {
     internal("proto_tree.chunk_salt must be the captured salt, or the one this attempt minted");
@@ -431,7 +432,7 @@ export const publishTree = async (input: PublishTreeInput): Promise<TreePublishO
   const before = head.json;
   const tree: ProtoTreeField = {
     root: rootKey,
-    gc_fence_epoch: head.gcFenceEpoch,
+    attempt,
     chunk_salt: headSalt ?? input.chunkSalt,
   };
   const after: TreeHeadJson = {
@@ -507,14 +508,14 @@ export const publishTree = async (input: PublishTreeInput): Promise<TreePublishO
       return null;
     }
     const won =
-      rootKey !== null
+      now.attempt === attempt &&
+      (rootKey !== null
         ? now.root === rootKey
         : now.root === null &&
           now.json.log_seq_start === floor &&
-          now.gcFenceEpoch === tree.gc_fence_epoch &&
           storedSalt(now) === tree.chunk_salt &&
           now.json.snapshot_rows === 0 &&
-          now.json.snapshot_bytes === 0;
+          now.json.snapshot_bytes === 0);
     return won ? { head: now.json, etag: now.etag } : null;
   };
 
