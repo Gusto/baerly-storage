@@ -12,7 +12,8 @@
  * 2. every fresh leaf, create-only;
  * 3. each level of fresh branches only after every fresh child it
  *    references has completed, level by level up to the root; the
- *    creates of one level run concurrently;
+ *    creates of one level run concurrently, at most `parallelCalls` at
+ *    once;
  * 4. the head, `If-Match` the captured ETag.
  *
  * Exactly one record write comes first and exactly one head write last;
@@ -87,6 +88,7 @@ import {
 } from "@baerly/protocol";
 import { type PlannedTree, type SealedTree, sealTree } from "./build.ts";
 import { chunkKeyIsOf } from "./chunk.ts";
+import { TREE_FOLD_PARALLEL_CALLS } from "./constants.ts";
 import {
   assertRootMatchesHead,
   isTreeChunkSalt,
@@ -144,8 +146,30 @@ export interface PublishTreeInput {
   readonly meanEntryBytes?: number;
   /** The tree configuration; tests pass a mutant here. */
   readonly config?: TreeConfig;
+  /**
+   * Most node creates in flight at once. Default
+   * `TREE_FOLD_PARALLEL_CALLS`.
+   */
+  readonly parallelCalls?: number;
   readonly signal?: AbortSignal;
 }
+
+/**
+ * The storage calls publishing a plan issues, stage by stage in order:
+ * the fold record create, the fresh nodes of each level from the leaves
+ * up (`freshByLevel`, as `FoldPlanner.publicationNodes` gives them),
+ * then the head CAS and its fate re-read. The calls of one stage run concurrently and a stage
+ * starts once the one before has completed, so a stage of `n` calls
+ * takes `ceil(n / parallelCalls)` rounds. The re-read is counted though
+ * it follows only a CAS that throws; a create conflict's adoption GET is
+ * not, since it doubles a stage only on that failure path.
+ */
+export const publicationStages = (freshByLevel: readonly number[]): readonly number[] => [
+  1, // the fold record
+  ...freshByLevel,
+  1, // the head CAS
+  1, // its fate re-read
+];
 
 /** What one publication attempt did. */
 export type TreePublishOutcome = {
@@ -544,12 +568,24 @@ export const publishTree = async (input: PublishTreeInput): Promise<TreePublishO
     written += 1;
     adopted += wasAdopted ? 1 : 0;
   };
+  const width = Math.max(1, input.parallelCalls ?? TREE_FOLD_PARALLEL_CALLS);
+  /** Create every node of one level, at most `width` at once; the first failure in order throws. */
   const createLevel = async (nodes: readonly SealedTreeNode[]): Promise<void> => {
-    const results = await Promise.allSettled(nodes.map(create));
-    for (const result of results) {
-      if (result.status === "rejected") {
-        throw result.reason;
+    const failures: { readonly at: number; readonly error: unknown }[] = [];
+    let next = 0;
+    const lane = async (): Promise<void> => {
+      while (next < nodes.length) {
+        const at = next++;
+        try {
+          await create(nodes[at]!);
+        } catch (error) {
+          failures.push({ at, error });
+        }
       }
+    };
+    await Promise.all(Array.from({ length: Math.min(width, nodes.length) }, lane));
+    if (failures.length > 0) {
+      throw failures.reduce((first, failure) => (failure.at < first.at ? failure : first)).error;
     }
   };
 

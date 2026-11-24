@@ -12,7 +12,7 @@
  *   one it charged, its charge never passes the budget, and the plan it
  *   stops at is the canonical plan of its accepted prefix.
  * - **Concurrency.** Prefetched GETs overlap, never more than
- *   `TREE_FOLD_PARALLEL_GETS` at once; `parallelGets: 1` reads one node
+ *   `TREE_FOLD_PARALLEL_CALLS` at once; `parallelGets: 1` reads one node
  *   at a time.
  */
 import { fc, test as fcTest } from "@fast-check/vitest";
@@ -20,7 +20,7 @@ import { describe, expect, test } from "vitest";
 import type { DocumentData } from "@baerly/protocol";
 import { sealTree } from "../../packages/server/src/tree/build.ts";
 import {
-  TREE_FOLD_PARALLEL_GETS,
+  TREE_FOLD_PARALLEL_CALLS,
   TREE_RETRIED_CALL_CHARGE,
 } from "../../packages/server/src/tree/constants.ts";
 import type { TreeConfig } from "../../packages/server/src/tree/layout.ts";
@@ -229,13 +229,13 @@ describe("prefetched GETs run concurrently, within the width", () => {
   /** 48 updates scattered over the rows. */
   const scattered = Array.from({ length: 48 }, (_, i) => base[(i * 97) % base.length]!);
 
-  test("the reads of a window overlap, at most TREE_FOLD_PARALLEL_GETS at once", async () => {
+  test("the reads of a window overlap, at most TREE_FOLD_PARALLEL_CALLS at once", async () => {
     const run = await runOver(rowsOf(base, 30), []);
     expect((await run.captured())!.node.level).toBeGreaterThanOrEqual(2);
     const mutations = mutationsOf(rowsOf(scattered, 31, "z"));
     const parallel = await drive(run, config, mutations, { budget: UNBOUNDED, delay: true });
     expect(parallel.maxInFlight).toBeGreaterThan(1);
-    expect(parallel.maxInFlight).toBeLessThanOrEqual(TREE_FOLD_PARALLEL_GETS);
+    expect(parallel.maxInFlight).toBeLessThanOrEqual(TREE_FOLD_PARALLEL_CALLS);
     const serial = await drive(run, config, mutations, {
       budget: UNBOUNDED,
       parallelGets: 1,

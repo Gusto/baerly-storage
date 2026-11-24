@@ -189,6 +189,14 @@ export interface MaintenanceProfile {
   readonly foldAtTailEntries: number;
   readonly maxFoldBytes: number;
   readonly maxFoldRows: number;
+  /**
+   * Most storage calls a tree fold keeps in flight at once: its node
+   * read-ahead and each level of its publication's creates. Fixed per
+   * host, not adaptive: `CF_MAX_CONCURRENT_STORAGE_CALLS` (6) on Workers,
+   * where a seventh call queues, and `MAX_PARALLEL_LOG_READS` (16) on
+   * Node, the width the log walk already uses there.
+   */
+  readonly foldParallelCalls: number;
 }
 
 export {
