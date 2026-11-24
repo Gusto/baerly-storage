@@ -32,7 +32,9 @@
  *   counts the plan's publication, at the call latency the tick
  *   observed, and the time since the injected start, so the whole tick
  *   fits its budget; publication creates at most the host's width of
- *   nodes at once.
+ *   nodes at once, and read-ahead reads only what still fits. A fold
+ *   pinned at its floor reads on past the budget and its result says
+ *   so, counted.
  */
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
@@ -990,18 +992,85 @@ describe("tick-budget stop", () => {
     await judge(b.storage, SMALL_LAYOUT, 121);
   });
 
-  test("past the budget, a fold pinned at its floor reads on until the pin releases", async () => {
+  /** Fold `b` under a fresh metrics recorder; returns the outcome and the pinned-overrun count. */
+  const foldCounting = async (b: Bucket, extra: Partial<TreeFoldInput>) => {
+    const recorder = new RequestScopedMetricsRecorder();
+    const outcome = await runWithContext(createObservabilityContext({ recorder }), () =>
+      fold(b, SMALL, extra),
+    );
+    const overruns = recorder
+      .snapshot()
+      .counters.filter((c) => c.name === "db.compact.pinned_past_tick_budget_total")
+      .reduce((sum, c) => sum + c.value, 0);
+    return { outcome, overruns };
+  };
+
+  test("past the budget, a fold pinned at its floor reads on until the pin releases, and says so, counted once", async () => {
     const b = openBucket();
     await b.writer.appendRaw({ op: "I", doc_id: "c", after: { _id: "x", n: 0 } });
     await b.writer.commit([row("a", 1), row("c", 2), row("d", 3)]);
     // Seq 0 is an invalid survivor that seq 2 supersedes: only a prefix
     // through seq 2 publishes, so the budget check waits for it.
-    await expect(fold(b, SMALL, { tickBudgetMs: 0 })).resolves.toMatchObject({
+    const { outcome, overruns } = await foldCounting(b, { tickBudgetMs: 0 });
+    expect(outcome).toMatchObject({
       kind: "published",
       foldEnd: 3,
       stop: { reason: "tick-budget", seq: 3 },
+      pinnedPastTickBudget: true,
     });
+    expect(overruns).toBe(1);
     await judge(b.storage, SMALL_LAYOUT, 3);
+  });
+
+  test("a fold pinned at its floor past the budget, whose pin never releases, is refused for the invalid entry and says it passed the budget", async () => {
+    const b = openBucket();
+    await b.writer.appendRaw({ op: "I", doc_id: "c", after: { _id: "x", n: 0 } });
+    await b.writer.commit([row("a", 1), row("d", 3)]);
+    const { outcome, overruns } = await foldCounting(b, { tickBudgetMs: 0 });
+    expect(outcome).toMatchObject({
+      kind: "refused",
+      floor: 0,
+      stop: { reason: "invalid-entry", seq: 0 },
+      pinnedPastTickBudget: true,
+    });
+    expect(overruns).toBe(1);
+  });
+
+  test("a tick past its budget with nothing pinned, or pinned past its floor, neither reads on nor says so", async () => {
+    const atFloor = openBucket();
+    await atFloor.writer.commit(changes(5));
+    const unpinned = await foldCounting(atFloor, { tickBudgetMs: 0 });
+    expect(unpinned.outcome).toMatchObject({ kind: "published", foldEnd: 1 });
+    expect(unpinned.outcome).not.toHaveProperty("pinnedPastTickBudget");
+    expect(unpinned.overruns).toBe(0);
+
+    // Seq 1 is an invalid survivor no later entry supersedes, so the fold
+    // pins after seq 0. Each log read takes 100 ms: the budget runs out
+    // at seq 2, with seq 0 publishable, so the fold stops there.
+    const pastFloor = openBucket();
+    await pastFloor.writer.commit([row("a", 1)]);
+    await pastFloor.writer.appendRaw({ op: "I", doc_id: "c", after: { _id: "x", n: 0 } });
+    await pastFloor.writer.commit([row("d", 3), row("e", 4)]);
+    const clock = { t: 0 };
+    const storage: Storage = {
+      ...pastFloor.storage,
+      get: (key, opts) => {
+        clock.t += key.startsWith(LOG_PREFIX) ? 100 : 0;
+        return pastFloor.storage.get(key, opts);
+      },
+    };
+    const pinned = await foldCounting(pastFloor, {
+      storage,
+      now: () => clock.t,
+      tickBudgetMs: 250,
+    });
+    expect(pinned.outcome).toMatchObject({
+      kind: "published",
+      foldEnd: 1,
+      stop: { reason: "invalid-entry", seq: 1 },
+    });
+    expect(pinned.outcome).not.toHaveProperty("pinnedPastTickBudget");
+    expect(pinned.overruns).toBe(0);
   });
 });
 

@@ -75,7 +75,11 @@
  * one entry: its log batch, its node reads and the publication rounds
  * it adds. A fold keeps planning past the budget until the prefix it
  * would publish is non-empty, so every tick that can fold an entry
- * makes progress.
+ * makes progress. A fold pinned at its floor (behind an invalid
+ * survivor or a depth-0 byte overrun) so reads on past the budget until
+ * the pin releases or the window or call budget ends; its result then
+ * carries `pinnedPastTickBudget`, whatever its `stop` names, and the
+ * tick is counted as `db.compact.pinned_past_tick_budget_total`.
  *
  * **Node reads.** Before adding entries of a log batch, the fold has the
  * planner read ahead, concurrently, the nodes their leaf paths route to
@@ -215,23 +219,39 @@ export type TreeFoldStop =
   /** Not even the first entry, at `seq`, fits this tick's budget. */
   | { readonly reason: "stuck-entry"; readonly seq: number };
 
+/**
+ * Set on a fold's result when its tick budget ran out while the fold was
+ * pinned at its floor, so nothing was publishable yet, and it read on
+ * past the budget toward the entry that releases the pin. Such a tick
+ * may overrun its budget by as long as that reading takes; its `stop`
+ * may name another reason, or none. Counted as
+ * `db.compact.pinned_past_tick_budget_total`.
+ */
+export interface PinnedPastTickBudget {
+  readonly pinnedPastTickBudget?: true;
+}
+
 /** What a fold tick did. */
 export type TreeFoldOutcome =
   /** The collection has no head, or the log has nothing past the floor. */
   | { readonly kind: "nothing-to-fold"; readonly floor: number }
   /** Nothing was published: `stop` held the fold end at the floor. */
-  | { readonly kind: "refused"; readonly floor: number; readonly stop: TreeFoldStop }
+  | ({
+      readonly kind: "refused";
+      readonly floor: number;
+      readonly stop: TreeFoldStop;
+    } & PinnedPastTickBudget)
   /** A publication attempt over `[floor, foldEnd)`; `stop` says why it ended early, if it did. */
-  | {
+  | ({
       readonly kind: "published" | "cas-lost";
       readonly floor: number;
       readonly foldEnd: number;
       readonly publication: TreePublishOutcome;
       readonly stop?: TreeFoldStop;
-    };
+    } & PinnedPastTickBudget);
 
 /** A fold that has captured the head and planned, and has not published. */
-export interface TreePreparedFold {
+export interface TreePreparedFold extends PinnedPastTickBudget {
   readonly kind: "prepared";
   readonly floor: number;
   readonly foldEnd: number;
@@ -554,6 +574,8 @@ export const prepareTreeFold = async (
   /** While a checkpoint is pinned, how many entries it accepted. */
   let pinnedAt = 0;
   let stop: TreeFoldStop | undefined;
+  /** Whether the tick budget ran out while the fold was pinned at its floor. */
+  let pinnedPastTickBudget = false;
   let next = floor;
   let atTail = false;
 
@@ -611,11 +633,20 @@ export const prepareTreeFold = async (
   };
   /**
    * Whether the tick budget stops the fold before the entry at `seq`:
-   * the prefix the fold would publish is non-empty, and the time elapsed
-   * plus the time to publish it reaches the tick budget.
+   * the time elapsed plus the time to publish the plan reaches the tick
+   * budget, and the prefix the fold would publish is non-empty. A fold
+   * pinned at its floor reads on instead; the first time that happens
+   * the tick is marked and counted.
    */
   const pastTickBudget = (seq: number): boolean => {
-    if (publishable() === 0 || now() - startedAt + publishMs() < tickBudgetMs) {
+    if (now() - startedAt + publishMs() < tickBudgetMs) {
+      return false;
+    }
+    if (publishable() === 0) {
+      if (pinned !== null && !pinnedPastTickBudget) {
+        pinnedPastTickBudget = true;
+        ctxMetrics().counter("db.compact.pinned_past_tick_budget_total", 1, { collection });
+      }
       return false;
     }
     stop = { reason: "tick-budget", seq };
@@ -741,6 +772,7 @@ export const prepareTreeFold = async (
   }
   const foldEnd = floor + planner.accepted;
   const plan = planner.plan;
+  const overrun = pinnedPastTickBudget ? ({ pinnedPastTickBudget: true } as const) : {};
   if (foldEnd === floor || plan === null) {
     if (stop === undefined) {
       return { kind: "nothing-to-fold", floor };
@@ -748,7 +780,7 @@ export const prepareTreeFold = async (
     if (stop.reason === "stuck-entry") {
       warnStuckEntry(collection, stop.seq);
     }
-    return refused(stop);
+    return { ...refused(stop), ...overrun };
   }
   if (input.depthZero !== undefined && (plan.tree?.root.level ?? 0) !== 0) {
     throw new BaerlyError(
@@ -764,6 +796,7 @@ export const prepareTreeFold = async (
     foldEnd,
     plan,
     ...(stop !== undefined && { stop }),
+    ...overrun,
     publish: async () => {
       const publication = await publishTree({
         storage,
@@ -784,6 +817,7 @@ export const prepareTreeFold = async (
         foldEnd,
         publication,
         ...(stop !== undefined && { stop }),
+        ...overrun,
       };
     },
   };
