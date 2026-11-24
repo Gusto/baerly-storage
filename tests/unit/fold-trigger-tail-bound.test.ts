@@ -70,7 +70,10 @@ interface AfterWrite {
  * Seed `DOCS` documents folded into one snapshot (tail 0), then drive
  * `WRITES` same-size updates through the write tick under `profile`.
  */
-const driveUpdates = async (profile: MaintenanceProfile): Promise<AfterWrite[]> => {
+const driveUpdates = async (
+  profile: MaintenanceProfile,
+  phasesPerTick: "single" | "both",
+): Promise<AfterWrite[]> => {
   const inner = new MemoryStorage();
   const docs = Db.create({ storage: inner, app: APP, tenant: TENANT }).collection(COLL);
   await runWithContext(
@@ -92,7 +95,7 @@ const driveUpdates = async (profile: MaintenanceProfile): Promise<AfterWrite[]> 
   const counted = countingGets(inner);
   const reader = Db.create({ storage: counted.storage, app: APP, tenant: TENANT }).collection(COLL);
   const ctx = createObservabilityContext({
-    maintenance: { options: { profile, phasesPerTick: "single" } },
+    maintenance: { options: { profile, phasesPerTick } },
   });
   const after: AfterWrite[] = [];
   for (let i = 0; i < WRITES; i++) {
@@ -109,20 +112,32 @@ const driveUpdates = async (profile: MaintenanceProfile): Promise<AfterWrite[]> 
 };
 
 describe("the write tick bounds the live tail by entry count", () => {
-  for (const [name, profile, q] of [
-    ["cf-free (cap = trigger)", MAINTENANCE_PROFILE_CF_FREE, WRITE_TICK_FOLD_AT_TAIL_ENTRIES],
-    ["cf-paid (cap > trigger)", MAINTENANCE_PROFILE_CF_PAID, MAINTENANCE_FOLD_AT_TAIL_ENTRIES],
-    ["node (cap > trigger)", MAINTENANCE_PROFILE_NODE, MAINTENANCE_FOLD_AT_TAIL_ENTRIES],
+  // Each host's production tick shape: Cloudflare runs one phase per
+  // tick, Node runs the fold and GC in the same tick.
+  for (const [name, profile, q, phasesPerTick] of [
+    [
+      "cf-free (cap = trigger)",
+      MAINTENANCE_PROFILE_CF_FREE,
+      WRITE_TICK_FOLD_AT_TAIL_ENTRIES,
+      "single",
+    ],
+    [
+      "cf-paid (cap > trigger)",
+      MAINTENANCE_PROFILE_CF_PAID,
+      MAINTENANCE_FOLD_AT_TAIL_ENTRIES,
+      "single",
+    ],
+    ["node (cap > trigger)", MAINTENANCE_PROFILE_NODE, MAINTENANCE_FOLD_AT_TAIL_ENTRIES, "both"],
   ] as const) {
     test(`${name}: the tail, and a point read's replay, stay within ${q} entries`, async () => {
       expect(profile.foldAtTailEntries).toBe(q);
       // A trigger above the pass cap could not bring the tail back under it.
       expect(q).toBeLessThanOrEqual(profile.maxFoldEntriesPerPass);
-      const after = await driveUpdates(profile);
+      const after = await driveUpdates(profile, phasesPerTick);
       const worstTail = Math.max(...after.map((a) => a.tail));
       const worstRead = Math.max(...after.map((a) => a.readGets));
-      // At most `q`: a tick the hard-GC guard gives to GC leaves a tail of
-      // `q`, and the next write's tick folds it.
+      // At most `q`: on one phase per tick, a tick the hard-GC guard gives
+      // to GC leaves a tail of `q`, and the next write's tick folds it.
       const lastTails = after
         .slice(-30)
         .map((a) => a.tail)
