@@ -1247,6 +1247,8 @@ export class FoldPlanner {
     }
     const { state } = this.#current;
     const reserve = this.#reserveOf(state);
+    // Defensive: a skip adds no fresh node and reads nothing, so the last
+    // accepted check already covers the record cap.
     if (!this.#fits(0, reserve) || !this.#recordFits(state)) {
       this.#rejected = true;
       return false;
