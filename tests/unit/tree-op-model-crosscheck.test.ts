@@ -14,7 +14,9 @@
  * Every cell must be measured ≤ modelled, per kind (GETs, PUTs) and in
  * total, so a model that drops the path GETs fails here even where its
  * create term has slack. Every Paid cell and the Free + R2 depth-0 tick
- * must also fit the request ledger they run under.
+ * must also fit their assigned residual request budget. Budget-bound
+ * ticks stress the fold with a longer tail while retaining the normal
+ * route-read allowance; they do not measure a whole write invocation.
  */
 import { beforeAll, describe, expect, test } from "vitest";
 import {

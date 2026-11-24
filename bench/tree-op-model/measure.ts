@@ -34,7 +34,7 @@
  *
  * - the maintenance runner's own `current.json` GET;
  * - the closing `tail_hint` refresh after a lost head CAS
- *   (`MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS`, one unretried GET + CAS);
+ *   (one retried GET + an unretried CAS PUT);
  * - the write the tick shares an invocation with: its state read (the
  *   measured tree point read) plus the `Writer`'s `current.json` GET and
  *   `findLogTail` probe, then the commit hold.
@@ -51,8 +51,10 @@ import {
   logObjectKey,
   MAINTENANCE_FOLD_BASE_REQUESTS,
   MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS,
+  MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MemoryStorage,
   RequestLedger,
+  readCurrentJson,
   retryStorageCall,
   STORAGE_RETRY_MAX_ATTEMPTS,
   type Storage,
@@ -133,7 +135,8 @@ const recordedTotal = (cell: string): number => {
  * `current.json` GET (main's `tick:fold` cell less the fold's own
  * `MAINTENANCE_FOLD_BASE_REQUESTS + e`) and, after a lost head CAS, the
  * closing `tail_hint` refresh (`MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS`:
- * one unretried GET and one `If-Match` PUT).
+ * one logical GET and one `If-Match` PUT). The helper has no CAS retry
+ * loop, but its GET still uses the adapter's retry policy.
  */
 export const composedTickCalls = (): Calls => {
   const e = WRITE_TICK_FOLD_ENTRIES_PER_PASS;
@@ -144,7 +147,7 @@ export const composedTickCalls = (): Calls => {
       "the tail_hint refresh is no longer one GET + one CAS PUT; update composedTickCalls",
     );
   }
-  return sumCalls({ gets: runnerGets }, { unretriedGets: 1, casPuts: 1 });
+  return sumCalls({ gets: runnerGets + 1, casPuts: 1 });
 };
 
 /**
@@ -545,6 +548,21 @@ const measuredOf = (m: Meter): Measured => {
 
 const run = <T>(m: Meter, fn: () => Promise<T>): Promise<T> =>
   Promise.resolve(runWithContext(createObservabilityContext({ ledger: m.ledger }), fn));
+
+/** The runner's head read and closing hint refresh through the adapter retry stack. */
+export const measureTickOverhead = async (mode: FaultMode): Promise<Measured> => {
+  const bucket = new MemoryStorage();
+  await bucket.put(HEAD_KEY, encodeJsonBytes(logStateCurrentJson()));
+  const m = meter(bucket, mode, Number.MAX_SAFE_INTEGER);
+  await run(m, async () => {
+    await readCurrentJson(m.storage, HEAD_KEY);
+    await casUpdateCurrentJson(m.storage, HEAD_KEY, (head) => ({
+      ...head,
+      tail_hint: MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
+    }));
+  });
+  return measuredOf(m);
+};
 
 // ── Reads ────────────────────────────────────────────────────────────────
 

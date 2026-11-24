@@ -19,7 +19,10 @@
  *   changes (the profile's `maxFoldEntriesPerPass`), the shape the
  *   model's worst tick takes;
  * - `tick-budget`: a fold tick over more scattered changes than fit,
- *   so the request budget alone ends it: the most one tick folds.
+ *   so the request budget alone ends it. This is a synthetic stress
+ *   case: the residual budget assumes the host's normal route-read
+ *   tail, independently of the longer fold tail. It does not measure
+ *   a complete write invocation over that longer backlog.
  *
  * A cell's modelled count is the model evaluated at the measured
  * collection's size and depth (`collectionShape`), the host's read tail,

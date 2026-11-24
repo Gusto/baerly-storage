@@ -50,8 +50,8 @@ import {
  * (`If-None-Match: "*"`), which the adapter retries; `casPuts` are
  * `If-Match` PUTs, which it sends once (a resend after a lost ack would meet
  * its own write as a 412: `STORAGE_RETRY_MAX_ATTEMPTS` JSDoc);
- * `unretriedGets` are GETs issued by a non-retrying helper (the write tick's
- * best-effort `tail_hint` refresh).
+ * `unretriedGets` are GETs that explicitly bypass adapter retries;
+ * the best-effort `tail_hint` refresh uses a normal retried GET.
  */
 export interface Calls {
   readonly gets: number;
@@ -425,8 +425,7 @@ export interface FoldTickInput {
    * re-reads the head once to resolve the CAS's fate (one retried GET,
    * `packages/server/src/tree/publish.ts`; main's `compact()` has no such
    * read), and the tick also pays the closing best-effort `tail_hint`
-   * refresh (one non-retrying GET + CAS PUT,
-   * `MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS`).
+   * refresh (one retried GET + an unretried CAS PUT).
    */
   readonly headCasLost: boolean;
   readonly assumptions: DesignAssumptions;
@@ -467,7 +466,7 @@ export const foldTickCalls = (input: FoldTickInput): Calls => {
     { gets: 1 + 1 + 1 + input.concurrentCommits + input.entriesFolded },
     input.emptyBase ? {} : { gets: union + leaves },
     { creates: rewritten + splits, casPuts: 1 },
-    input.headCasLost ? { gets: 1, unretriedGets: 1, casPuts: 1 } : {},
+    input.headCasLost ? { gets: 2, casPuts: 1 } : {},
   );
 };
 
@@ -494,7 +493,7 @@ export interface GcTickState {
   /** A sweep is due, so the slice re-reads `current.json` before deleting (one GET). */
   readonly freshCurrentGet: boolean;
   /**
-   * The tick's rate-limited `tail_hint` refresh runs (one non-retrying
+   * The tick's rate-limited `tail_hint` refresh runs (one retried
    * GET + CAS PUT, `MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS`). Due when the
    * hint lags by `MAINTENANCE_TAIL_HINT_REFRESH_WRITES`.
    */
@@ -538,7 +537,7 @@ export interface GcTickInput {
  *   conflict re-read, the fresh `current.json` GET before a due sweep,
  *   each pending CAS attempt (GET + PUT), membership GETs, one DELETE per
  *   sweep;
- * - the `tail_hint` refresh (non-retrying GET + CAS PUT) when due;
+ * - the `tail_hint` refresh (retried GET + unretried CAS PUT) when due;
  * - retirement: the advisory gate GET, then, with something to retire, the
  *   floor CAS's GET + PUT and one DELETE per log object
  *   (`MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS`, 7 at all attempts).
@@ -564,7 +563,7 @@ export const gcTickCalls = (input: GcTickInput): Calls => {
     state.pendingBootstrapConflict ? { gets: 1 } : {},
     { gets: state.pendingCasAttempts, casPuts: state.pendingCasAttempts },
     state.freshCurrentGet ? { gets: 1 } : {},
-    state.tailHintRefresh ? { unretriedGets: 1, casPuts: 1 } : {},
+    state.tailHintRefresh ? { gets: 1, casPuts: 1 } : {},
     { gets: 1 },
     input.retirementDeletes > 0 ? { gets: 1, casPuts: 1, deletes: input.retirementDeletes } : {},
   );
