@@ -275,6 +275,23 @@ export const RECORD_OMITS_SUPERSEDED: TreeMutant = {
   },
 };
 
+/**
+ * A fold record that removes only the reused refs themselves from the
+ * captured tree, not the read nodes below a reused branch.
+ */
+export const RECORD_NO_DOWNWARD_CLOSURE: TreeMutant = {
+  name: "record-no-downward-closure",
+  defect: "the fold record lists a node under a reused branch as superseded",
+  options: {
+    steps: {
+      recordSuperseded: (root, read, reused) => {
+        const kept = new Set(reused.map((entry) => `${entry.attempt}/${entry.sha256}`));
+        return foldRecordSuperseded(root, read, []).filter((ref) => !kept.has(ref));
+      },
+    },
+  },
+};
+
 /** A fold record whose base floor is one past the floor of the head the CAS is sent against. */
 export const RECORD_FLOOR_NOT_CAPTURED: TreeMutant = {
   name: "record-floor-not-captured",
@@ -294,6 +311,7 @@ export const PUBLISH_MUTANTS: readonly TreeMutant[] = [
   PUBLISH_NODES_BEFORE_RECORD,
   RECORD_NAMES_REUSED_NODE,
   RECORD_OMITS_SUPERSEDED,
+  RECORD_NO_DOWNWARD_CLOSURE,
   RECORD_FLOOR_NOT_CAPTURED,
 ];
 
