@@ -69,7 +69,7 @@ import {
 } from "./maintenance.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { snapshotKey } from "./snapshot.ts";
-import { Writer } from "./writer.ts";
+import { UntickedWriter } from "../../../tests/fixtures/unticked-writer.ts";
 
 /**
  * Most storage calls one pass may issue fault-free so that, with every
@@ -118,7 +118,7 @@ const seed = async (
   entries: number,
 ): Promise<void> => {
   await provisionCollection(storage, key, "budget-test");
-  const writer = new Writer({ storage, currentJsonKey: key });
+  const writer = new UntickedWriter({ storage, currentJsonKey: key });
   for (let i = 0; i < entries; i++) {
     await writer.commit({
       op: "I",

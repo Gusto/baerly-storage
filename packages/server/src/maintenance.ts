@@ -40,7 +40,6 @@ import {
 import { compact, type CompactResult, type InternalCompactOptions } from "./compactor.ts";
 import { runGc, type InternalRunGcOptions, type RunGcResult } from "./gc.ts";
 import type {
-  InternalBoundedMaintenanceOptions,
   InternalMaintenanceOptions,
   LogRetentionOptions,
   MaintenanceOptions,
@@ -181,6 +180,12 @@ export interface MaintenanceProfile {
   readonly gcMaxMarks: number;
   readonly gcMaxSweeps: number;
   readonly maxFoldEntriesPerPass: number;
+  /**
+   * Live-tail length at which the write tick folds, whatever the
+   * tail-to-snapshot ratio: the count arm of the fold trigger. At most
+   * `maxFoldEntriesPerPass`; see `MAINTENANCE_FOLD_AT_TAIL_ENTRIES`.
+   */
+  readonly foldAtTailEntries: number;
   readonly maxFoldBytes: number;
   readonly maxFoldRows: number;
 }
@@ -512,22 +517,24 @@ const tailRatio = (current: CurrentJson, observedTail: number): number =>
 /**
  * The cheap DISPATCH gate the writer calls after a commit — zero
  * storage ops; it reads the post-commit {@link CurrentJson} already in
- * scope. Ratio-OR-boundary, WITHOUT the entry floor (the floor is part
- * of the fold-trigger Gate 1 checked inside {@link runBoundedMaintenance}).
- * Returning `false` lets the writer skip the dispatch entirely. Ratio
- * numerator is the DERIVED {@link estimateTailBytes};
- * `observedTail` threads from the caller (the writer's in-memory observed
- * tail `seq+1` under single-write commit). Both the boundary check and the
- * ratio key off `observedTail`, since the stored `tail_hint` is now only a
- * non-authoritative lower bound (compactor-advanced).
+ * scope. GC boundary, OR the live tail at the profile's
+ * `foldAtTailEntries`, OR the bytes ratio — the ratio WITHOUT the entry
+ * floor (the floor is part of the fold-trigger Gate 1 checked inside
+ * {@link runBoundedMaintenance}). Returning `false` lets the writer skip
+ * the dispatch entirely. Ratio numerator is the DERIVED
+ * {@link estimateTailBytes}; `observedTail` threads from the caller (the
+ * writer's in-memory observed tail `seq+1` under single-write commit).
+ * Every arm keys off `observedTail`, since the stored `tail_hint` is
+ * only a non-authoritative lower bound (compactor-advanced).
  */
 export const shouldFireMaintenance = (
   current: CurrentJson,
   prevSeq: number,
-  gcInterval: number,
+  profile: Pick<MaintenanceProfile, "gcInterval" | "foldAtTailEntries">,
   observedTail: number,
 ): boolean =>
-  crossesGcBoundary(prevSeq, observedTail, gcInterval) ||
+  crossesGcBoundary(prevSeq, observedTail, profile.gcInterval) ||
+  observedTail - current.log_seq_start >= profile.foldAtTailEntries ||
   tailRatio(current, observedTail) >= MAINTENANCE_TARGET_RATIO;
 
 /** Per-tier caps for {@link runBoundedMaintenance}, threaded by the adapter. */
@@ -648,7 +655,8 @@ const foldDeferredWarning = (f: FoldDeferredFields): string => {
  *      tail_hint refresh that bounds read/write forward-probes.
  *   1. Read `current.json` once.
  *   2. Hard-GC starvation boundary (`"single"` only) → GC slice, skip fold.
- *   3. Gate 1 (ratio AND entry floor, or a forced tick) trips → fold if the pre-fold
+ *   3. Gate 1 (live tail ≥ the profile's `foldAtTailEntries`, ratio AND
+ *      entry floor, or a forced tick) trips → fold if the pre-fold
  *      projection is viable, else defer and signal. On `"single"` a fold
  *      attempt is this tick's one phase — including one that compact()
  *      deferred after rebuilding, which signals the same way and ends the
@@ -670,7 +678,7 @@ export const runBoundedMaintenance = async (
     prevSeq: number;
     /**
      * Writer's in-memory observed tail (`seq + 1`). Given on the
-     * write-tick path so the runner's Gate-1 ratio + GC cadence key off
+     * write-tick path so the runner's Gate-1 triggers + GC cadence key off
      * the true tail without an O(gap) re-probe (the stored `tail_hint` is
      * only a lower bound). Absent on a scheduled tick ⇒ the runner probes.
      */
@@ -681,8 +689,8 @@ export const runBoundedMaintenance = async (
     disabled?: boolean;
     /**
      * Forced tick: the writing verb found the collection at
-     * its growth-refusal point, so Gate 1's ratio trigger and entry floor
-     * are bypassed and any pending tail folds. Every other step is
+     * its growth-refusal point, so Gate 1's count and ratio arms and entry
+     * floor are bypassed and any pending tail folds. Every other step is
      * unchanged: the pre-fold ceiling check, the hard-GC guard, and the
      * per-pass budget (`maxFoldEntriesPerPass`).
      */
@@ -694,7 +702,7 @@ export const runBoundedMaintenance = async (
   // Resolve the profile ONCE (the runner's single CF-free-safe default,
   // preserving the bare-`Db.create()` promise); all phase budgets read off it.
   const profile = options?.profile ?? MAINTENANCE_PROFILE_CF_FREE;
-  const { maxFoldEntriesPerPass, gcMaxMarks, gcMaxSweeps, gcInterval } = profile;
+  const { maxFoldEntriesPerPass, foldAtTailEntries, gcMaxMarks, gcMaxSweeps, gcInterval } = profile;
   const forceFold = args.forceFold === true;
   // A forced tick folds whatever is pending: one entry clears the floor.
   const minEntriesToCompact = forceFold
@@ -771,7 +779,7 @@ export const runBoundedMaintenance = async (
     const snapshotBytes = current.snapshot_bytes;
     const snapshotRows = current.snapshot_rows;
     const logSeqStart = current.log_seq_start;
-    // Tail for THIS tick's Gate-1 ratio + GC cadence. Under single-write
+    // Tail for THIS tick's Gate-1 triggers + GC cadence. Under single-write
     // commit `tail_hint` is only a lower bound (compactor-advanced), so the
     // tick can't read the true tail off `current.json`. Two sources:
     //   - write-tick: use the writer's in-memory `observedTail` directly
@@ -794,11 +802,12 @@ export const runBoundedMaintenance = async (
     }
     // Ratio TRIGGER numerator = DERIVED estimate (formerly exact stored field).
     const ratio = tailRatio(current, nextSeq);
-    const foldAtTailEntries = (options as InternalBoundedMaintenanceOptions | undefined)
-      ?.foldAtTailEntries;
+    // Hybrid trigger. The count arm bounds the tail in entries, each one a
+    // GET on every read and write; the bytes arm still folds a tail of
+    // entries large enough to outgrow the snapshot sooner.
     const gate1 =
       forceFold ||
-      (foldAtTailEntries !== undefined && nextSeq - logSeqStart >= foldAtTailEntries) ||
+      nextSeq - logSeqStart >= foldAtTailEntries ||
       (ratio >= MAINTENANCE_TARGET_RATIO && nextSeq - logSeqStart >= minEntriesToCompact);
     // SAFETY ceiling (conservative CF CPU/memory budget) — EXACT snapshot_bytes/rows, NEVER the estimate.
     // The pass is not projected: compact() stops at the first entry that
@@ -979,7 +988,7 @@ export const runBoundedMaintenance = async (
 
       // ── Step 2. Hard-GC starvation guard ("single" only). ────────────
       // A long fold-heavy drain would otherwise starve GC on every
-      // ratio-tripping tick. A COARSE cadence the fold may NOT preempt
+      // fold-tripping tick. A COARSE cadence the fold may NOT preempt
       // guarantees ~1 GC tick per GC_STARVATION_GUARD intervals.
       const hardGc = crossesGcBoundary(prevSeq, nextSeq, gcInterval * GC_STARVATION_GUARD);
       if (phasesPerTick === "single" && hardGc) {
@@ -1013,10 +1022,7 @@ export const runBoundedMaintenance = async (
             maxEntriesPerRun: maxFoldEntriesPerPass,
             // compact() re-checks the floor against the tail it discovers,
             // so it must accept whichever Gate-1 arm tripped.
-            minEntriesToCompact:
-              foldAtTailEntries === undefined
-                ? minEntriesToCompact
-                : Math.min(minEntriesToCompact, foldAtTailEntries),
+            minEntriesToCompact: Math.min(minEntriesToCompact, foldAtTailEntries),
             ceilingBytes: C,
             ceilingEntries: E,
             // B4: on the write-tick path the runner already knows a fresh
@@ -1156,7 +1162,7 @@ export const dispatchWriteTick = async (args: {
           storage: args.storage,
           currentJsonKey: args.currentJsonKey,
           prevSeq: args.prevSeq,
-          // The in-memory observed tail keys the runner's Gate-1 ratio +
+          // The in-memory observed tail keys the runner's Gate-1 triggers +
           // GC cadence off the true tail without an O(gap) re-probe (the
           // stored `tail_hint` is only a lower bound).
           observedTail: args.observedTail,

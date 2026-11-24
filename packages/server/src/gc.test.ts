@@ -36,7 +36,7 @@ import { compactInternal as compact, type InternalCompactOptions } from "./compa
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
 import { encodeSnapshotBody, snapshotKey } from "./snapshot.ts";
-import { Writer } from "./writer.ts";
+import { UntickedWriter } from "../../../tests/fixtures/unticked-writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
   await createCurrentJson(
@@ -118,7 +118,7 @@ describe("runGc", () => {
   test("marks the replaced snapshot after a second compaction run", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 40; i++) {
       await writer.commit({
         op: "I",

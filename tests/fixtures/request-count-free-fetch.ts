@@ -43,7 +43,7 @@ import {
 import { compact, type InternalCompactOptions } from "../../packages/server/src/compactor.ts";
 import { Db } from "../../packages/server/src/db.ts";
 import { snapshotKey } from "../../packages/server/src/snapshot.ts";
-import type { InternalBoundedMaintenanceOptions } from "../../packages/server/src/maintenance-options.ts";
+import type { BoundedMaintenanceOptions } from "../../packages/server/src/maintenance.ts";
 import {
   createObservabilityContext,
   runWithContext,
@@ -70,11 +70,8 @@ const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
  * `lcm(trigger, HARD_GC_INTERVAL)` commits, so one full cycle after a
  * warm-up interval reaches every phase, the worst included.
  */
-const runWrites = (trigger: number | undefined): number =>
-  HARD_GC_INTERVAL +
-  (trigger === undefined
-    ? 4 * HARD_GC_INTERVAL
-    : (trigger * HARD_GC_INTERVAL) / gcd(trigger, HARD_GC_INTERVAL));
+const runWrites = (trigger: number): number =>
+  HARD_GC_INTERVAL + (trigger * HARD_GC_INTERVAL) / gcd(trigger, HARD_GC_INTERVAL);
 /** Log retention window for the run, small so retirement is live early. */
 const RUN_RETENTION_WINDOW = 16;
 /** The largest `$in` list measured. */
@@ -86,11 +83,14 @@ export const FREE_FETCH_IN_SIZE = 16;
  * `cfMaintenanceDispatch` by the adapter's own tests, which run under
  * workerd; this program has no Workers globals to import the adapter with.
  */
-export const FREE_FETCH_TICK_OPTIONS: InternalBoundedMaintenanceOptions = {
+export const FREE_FETCH_TICK_OPTIONS = {
   phasesPerTick: "single",
-  profile: { ...MAINTENANCE_PROFILE_CF_FREE, gcMaxSweeps: CF_FREE_FETCH_GC_MAX_SWEEPS },
-  foldAtTailEntries: CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
-};
+  profile: {
+    ...MAINTENANCE_PROFILE_CF_FREE,
+    foldAtTailEntries: CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+    gcMaxSweeps: CF_FREE_FETCH_GC_MAX_SWEEPS,
+  },
+} as const satisfies BoundedMaintenanceOptions;
 
 /**
  * Indexes the measured collection declares. A declaration changes no call,
@@ -183,20 +183,10 @@ export interface FreeFetchRun {
   readonly reads: Partial<Record<FreeFetchRead, CallCounts>>;
 }
 
-/**
- * Run each write kind at `indexes` indexes. `foldAtTailEntries` overrides
- * the adapter's trigger; `null` runs the ratio trigger alone.
- */
-export const measureFreeFetchRun = async (
-  indexes: number,
-  foldAtTailEntries?: number | null,
-): Promise<FreeFetchRun> => {
+/** Run each write kind at `indexes` indexes. */
+export const measureFreeFetchRun = async (indexes: number): Promise<FreeFetchRun> => {
   const writes = {} as Record<FreeFetchWrite, CallCounts>;
-  const writesPerRun = runWrites(
-    foldAtTailEntries === undefined
-      ? CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES
-      : (foldAtTailEntries ?? undefined),
-  );
+  const writesPerRun = runWrites(FREE_FETCH_TICK_OPTIONS.profile.foldAtTailEntries);
   const reads = {} as Record<FreeFetchRead, CallCounts>;
   for (const kind of FREE_FETCH_WRITES) {
     const storage = await seed(indexes);
@@ -210,11 +200,8 @@ export const measureFreeFetchRun = async (
     ): Promise<CallCounts> => {
       // Every call leaves through `fetch`: the external pool.
       const charged = chargedStorage(storage, "external");
-      const { foldAtTailEntries: adapterTrigger, ...rest } = FREE_FETCH_TICK_OPTIONS;
-      const trigger = foldAtTailEntries === undefined ? adapterTrigger : foldAtTailEntries;
-      const options: InternalBoundedMaintenanceOptions = {
-        ...rest,
-        ...(trigger !== null && trigger !== undefined && { foldAtTailEntries: trigger }),
+      const options: BoundedMaintenanceOptions = {
+        ...FREE_FETCH_TICK_OPTIONS,
         logRetention: { window: RUN_RETENTION_WINDOW },
       };
       // `waitUntil` runs the tick after the response; queue it so `between`
@@ -318,14 +305,11 @@ export interface FreeFetchCell {
 const runs = new Map<string, Promise<FreeFetchRun>>();
 
 /** The free-fetch cells at `indexes` indexes, named like the route grid's. */
-export const freeFetchCells = async (
-  indexes: number,
-  foldAtTailEntries?: number | null,
-): Promise<FreeFetchCell[]> => {
-  const key = `${indexes}/${String(foldAtTailEntries)}`;
+export const freeFetchCells = async (indexes: number): Promise<FreeFetchCell[]> => {
+  const key = String(indexes);
   let pending = runs.get(key);
   if (pending === undefined) {
-    pending = measureFreeFetchRun(indexes, foldAtTailEntries);
+    pending = measureFreeFetchRun(indexes);
     runs.set(key, pending);
   }
   const run = await pending;

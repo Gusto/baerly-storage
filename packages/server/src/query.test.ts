@@ -24,6 +24,7 @@ import { runAllWithMeta, serializeManifestPointer, singleIdFromPredicate } from 
 
 const wireOf = (clauses: PredicateWire["clauses"]): PredicateWire => ({ clauses });
 import { Writer } from "./writer.ts";
+import { UntickedWriter } from "../../../tests/fixtures/unticked-writer.ts";
 import { provisionCollection, logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 
 const APP = "test";
@@ -40,8 +41,9 @@ const provision = async (storage: MemoryStorage, coll = COLL): Promise<void> => 
   await provisionCollection(storage, currentJsonKey(coll));
 };
 
+/** A seeding writer: its commits leave the tail for the test's own `compact()`. */
 const commit = (storage: MemoryStorage, coll = COLL): Writer =>
-  new Writer({ storage, currentJsonKey: currentJsonKey(coll) });
+  new UntickedWriter({ storage, currentJsonKey: currentJsonKey(coll) });
 
 describe("Db.collection read terminals", () => {
   let storage: MemoryStorage;

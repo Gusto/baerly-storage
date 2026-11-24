@@ -35,6 +35,7 @@ import {
   casUpdateCurrentJson,
   type Collection,
   CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+  CF_FREE_FETCH_GC_MAX_SWEEPS,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
   MAINTENANCE_PROFILE_NODE,
@@ -43,12 +44,13 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import {
+  type BoundedMaintenanceOptions,
   type MaintenanceProfile,
   runBoundedMaintenance,
 } from "@baerly/server/_internal/maintenance";
 import { runWithContext } from "@baerly/server/observability";
 import { createObservabilityContext } from "@baerly/server/_internal/observability";
-import { type InternalBoundedMaintenanceOptions, Writer } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import {
   APP,
   bootstrap as bootstrapCurrentJson,
@@ -139,7 +141,7 @@ const replay = async (
   storage: Storage,
   ops: readonly Op[],
   profile?: MaintenanceProfile,
-  overrides?: InternalBoundedMaintenanceOptions,
+  overrides?: BoundedMaintenanceOptions,
 ): Promise<void> => {
   const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
   const commitAll = async (): Promise<void> => {
@@ -161,7 +163,7 @@ const replay = async (
             phasesPerTick: "both", // fold AND gc per tick
             gcGraceMillis: 0, // sweep marked orphans the same pass (no 8-day clock advance)
             ...overrides,
-          } satisfies InternalBoundedMaintenanceOptions,
+          } satisfies BoundedMaintenanceOptions,
         };
   await runWithContext(createObservabilityContext({ maintenance }), commitAll);
 };
@@ -176,7 +178,7 @@ interface ProfileCase {
   readonly label: string;
   readonly profile: MaintenanceProfile;
   /** Host options the adapter adds on top of the profile. */
-  readonly options?: InternalBoundedMaintenanceOptions;
+  readonly options?: BoundedMaintenanceOptions;
 }
 
 // Four maintained cases plus the fold/GC-disabled reference make five full
@@ -190,12 +192,12 @@ const PROFILE_CASES: readonly ProfileCase[] = [
   // retirement between those frequent folds within this replay.
   {
     label: "cf-free-fetch",
-    profile: MAINTENANCE_PROFILE_CF_FREE,
-    options: {
+    profile: {
+      ...MAINTENANCE_PROFILE_CF_FREE,
       foldAtTailEntries: CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
-      phasesPerTick: "single",
-      logRetention: { window: 16 },
+      gcMaxSweeps: CF_FREE_FETCH_GC_MAX_SWEEPS,
     },
+    options: { phasesPerTick: "single", logRetention: { window: 16 } },
   },
 ];
 

@@ -326,17 +326,18 @@ export const capacityDecision = (args: {
    * - the pending tail, these writes included, holds a full pass
    *   (`maxFoldEntriesPerPass`).
    *
-   * Otherwise the runner's ratio trigger and entry floor apply as usual.
-   * The pass floor is the cheapest cadence that keeps the tail bounded at
-   * the ceiling: every pending entry costs each read one GET, and on
-   * Workers Free the ratio trigger alone would let a collection held at
-   * `E - 1` by same-size updates queue ~300 entries. One forced fold per
-   * pass also bounds the rebuild cost to one full snapshot per
-   * `maxFoldEntriesPerPass` writes, rather than one per write, and with it
-   * the snapshots each rebuild orphans: on cf-free that is under one
-   * orphan (20-entry pass) per hard-GC interval of 16 writes, against that
-   * slice's sweep budget of 10, so GC keeps up even though a forced fold
-   * is the tick's only phase.
+   * Otherwise the runner's own fold trigger applies as usual: the
+   * profile's count arm (`foldAtTailEntries`) or the bytes ratio. Every
+   * built-in profile's count arm is at most its pass, so it already folds
+   * any tail the pass floor would force; the pass floor keeps that bound
+   * at the ceiling independent of the trigger, since every pending entry
+   * costs each read one GET. One forced fold per pass also bounds the
+   * rebuild cost to one full snapshot per `maxFoldEntriesPerPass` writes,
+   * rather than one per write, and with it the snapshots each rebuild
+   * orphans: on cf-free that is under one orphan (20-entry pass) per
+   * hard-GC interval of 16 writes, against that slice's sweep budget of
+   * 10, so GC keeps up even though a forced fold is the tick's only
+   * phase.
    */
   const forcesTick = (p: SnapshotProjection): boolean => {
     const atRefusalPoint =

@@ -378,11 +378,20 @@ const foldAll = async (storage: Storage): Promise<void> => {
   expect(res.written, "fixture fold must land a snapshot").toBe(true);
 };
 
+/**
+ * Seeding writes run with write-tick maintenance off, so a fixture's live
+ * tail is the one it built: a bare `Db` otherwise folds in-band once the
+ * tail reaches the default profile's count trigger.
+ */
+const UNTICKED = createObservabilityContext({ maintenance: { disabled: true } });
+const unticked = <T>(write: () => Promise<T>): Promise<T> =>
+  Promise.resolve(runWithContext(UNTICKED, write));
+
 const insertMany = async (db: Db, count: number, make: (i: number) => Item): Promise<Item[]> => {
   const docs: Item[] = [];
   for (let i = 0; i < count; i++) {
     const doc = make(i);
-    await items(db).insert(doc);
+    await unticked(() => items(db).insert(doc));
     docs.push(doc);
   }
   return docs;
@@ -409,7 +418,7 @@ const seedStaleMarkers = async (
   const seeding = dbFor(storage, true);
   const docs = await insertMany(seeding, 36, (i) => ({ _id: `s-${pad2(i)}`, n: i, tag: "x" }));
   for (const doc of docs.slice(2)) {
-    await items(seeding).update(idOf(doc), { tag: "y" });
+    await unticked(() => items(seeding).update(idOf(doc), { tag: "y" }));
   }
   await foldAll(storage);
   for (const [i, doc] of docs.entries()) {
@@ -786,7 +795,7 @@ for (const variant of VARIANTS) {
     /**
      * Two buckets with byte-identical heads (same pinned bootstrap, same
      * 4-row fold) whose live tails differ: `short` carries 2 small updates,
-     * `long` 24 ~2 KiB inserts. Writes run outside a maintenance context,
+     * `long` 24 ~2 KiB inserts. Writes run with write-tick maintenance off,
      * so no write tick moves either head after the fold.
      */
     const seedSameHeadDifferentTail = async (): Promise<{ short: Prepared; long: Prepared }> => {
@@ -799,8 +808,8 @@ for (const variant of VARIANTS) {
         await foldAll(storage);
       }
       const baseRows = Array.from({ length: 4 }, (_, i) => base(i));
-      await items(dbFor(short)).update("base-0", { n: 100 });
-      await items(dbFor(short)).update("base-1", { n: 101 });
+      await unticked(() => items(dbFor(short)).update("base-0", { n: 100 }));
+      await unticked(() => items(dbFor(short)).update("base-1", { n: 101 }));
       const longTail = await insertMany(dbFor(long), 24, (i) => ({
         _id: `tail-${pad2(i)}`,
         n: 1000 + i,

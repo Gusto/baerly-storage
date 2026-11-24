@@ -451,9 +451,13 @@ describe("baerly inspect", () => {
     });
 
     test("retention_stalled: a closed gate with a foldable-length live tail", async () => {
+      // The count arm folds sooner than the bytes arm's entry floor.
+      expect(MAINTENANCE_PROFILE_CF_FREE.foldAtTailEntries).toBeLessThan(
+        WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+      );
       await provisionAt(
         { snapshot_bytes: MAINTENANCE_PROFILE_CF_FREE.maxFoldBytes + 1, snapshot_rows: 0 },
-        WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+        MAINTENANCE_PROFILE_CF_FREE.foldAtTailEntries,
       );
       const gate = await inspectGate();
       expect(gate["cf-free"]).toMatchObject({ verdict: "closed:bytes", retention_stalled: true });

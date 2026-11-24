@@ -33,6 +33,7 @@ import {
 import { Db } from "@baerly/server";
 import { compact, runGc } from "@baerly/server/_internal/maintenance";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
+import { createObservabilityContext as createTickContext } from "@baerly/server/_internal/observability";
 import {
   compactInternal,
   type InternalCompactOptions,
@@ -741,10 +742,13 @@ const runCompactionCascade = async (
   const t = freshTableName("compact");
   await provision(storage, app, tenant, t);
 
-  // Insert N rows to feed the snapshot fold.
-  for (let i = 0; i < 30; i++) {
-    await db.collection(t).insert({ _id: `pre-${i}`, k: "pre", n: i });
-  }
+  // Insert N rows to feed the snapshot fold. Write-tick maintenance is off
+  // so the tail is still whole when the explicit compaction below runs.
+  await runWithContext(createTickContext({ maintenance: { disabled: true } }), async () => {
+    for (let i = 0; i < 30; i++) {
+      await db.collection(t).insert({ _id: `pre-${i}`, k: "pre", n: i });
+    }
+  });
 
   const before = await db.collection(t).order({ _id: "asc" }).all();
   expect(before).toHaveLength(30);
@@ -801,9 +805,12 @@ const runGcCascade = async (
   const collectionPrefix = `app/${app}/tenant/${tenant}/manifests/${t}`;
   const pendingKey = gcPendingKey(collectionPrefix);
 
-  for (let i = 0; i < 30; i++) {
-    await db.collection(t).insert({ _id: `r-${i}`, k: "row", n: i });
-  }
+  // Write-tick maintenance off, so the compaction below is the only fold.
+  await runWithContext(createTickContext({ maintenance: { disabled: true } }), async () => {
+    for (let i = 0; i < 30; i++) {
+      await db.collection(t).insert({ _id: `r-${i}`, k: "row", n: i });
+    }
+  });
 
   const before = await db.collection(t).order({ _id: "asc" }).all();
   expect(before).toHaveLength(30);

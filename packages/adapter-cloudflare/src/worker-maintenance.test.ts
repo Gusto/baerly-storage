@@ -293,24 +293,26 @@ describe("early fold when storage is reached through fetch on Workers Free", () 
     expect(cfMaintenanceDispatch(ctx, () => undefined, new MemoryStorage()).options).toEqual(
       FREE_FETCH_TICK_OPTIONS,
     );
-    expect(FREE_FETCH_TICK_OPTIONS.foldAtTailEntries).toBe(CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES);
+    expect(FREE_FETCH_TICK_OPTIONS.profile.foldAtTailEntries).toBe(
+      CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+    );
   });
 
-  test("the R2 binding, cf-paid, and an unknown storage keep the ratio trigger", () => {
+  test("the R2 binding, cf-paid, and an unknown storage keep their profile's own trigger", () => {
     const ctx = mockExecutionContext();
     const binding = r2BindingStorage(getBinding());
-    expect(cfMaintenanceDispatch(ctx, () => undefined, binding).options).not.toHaveProperty(
-      "foldAtTailEntries",
+    expect(cfMaintenanceDispatch(ctx, () => undefined, binding).options?.profile).toBe(
+      MAINTENANCE_PROFILE_CF_FREE,
     );
-    expect(cfMaintenanceDispatch(ctx, () => undefined).options).not.toHaveProperty(
-      "foldAtTailEntries",
+    expect(cfMaintenanceDispatch(ctx, () => undefined).options?.profile).toBe(
+      MAINTENANCE_PROFILE_CF_FREE,
     );
     const paid = cfMaintenanceDispatch(
       ctx,
       (k) => (k === "BAERLY_MAINTENANCE_PROFILE" ? "cf-paid" : undefined),
       new MemoryStorage(),
     );
-    expect(paid.options).not.toHaveProperty("foldAtTailEntries");
+    expect(paid.options?.profile).toBe(MAINTENANCE_PROFILE_CF_PAID);
   });
 
   test("a Worker given non-binding storage folds the tail at the trigger, with no configuration", async () => {
@@ -338,8 +340,8 @@ describe("early fold when storage is reached through fetch on Workers Free", () 
       await post(n);
     }
     expect((await readCurrentJson(storage, key))!.json.log_seq_start).toBe(0);
-    // The write that brings the tail to the trigger folds it, far below
-    // the ratio trigger's first fold.
+    // The write that brings the tail to the trigger folds it, below the
+    // free profile's own count trigger.
     await post(CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES);
     expect((await readCurrentJson(storage, key))!.json.log_seq_start).toBe(
       CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
