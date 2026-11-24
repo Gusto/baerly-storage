@@ -1194,6 +1194,22 @@ export class FoldPlanner {
   }
 
   /**
+   * Levels of nodes {@link FoldPlanner.prefetch} would read for the next
+   * changes: every level below a root branch of the tree of the changes
+   * accepted so far, from the root's children down to the leaves. Zero
+   * when the root is a leaf, the tree is one leaf, a change has been
+   * rejected, or prefetching is off.
+   */
+  get prefetchLevels(): number {
+    const width = this.#input.parallelGets ?? TREE_FOLD_PARALLEL_CALLS;
+    const { state } = this.#current;
+    if (width <= 1 || this.#rejected || state.kind !== "tree" || state.root.kind !== "branch") {
+      return 0;
+    }
+    return state.root.level;
+  }
+
+  /**
    * Fresh nodes publishing the last accepted plan creates, by level from
    * the leaves up, the root's level last. While a checkpoint is pinned,
    * each level holds the larger of that plan's count and the pinned

@@ -1282,6 +1282,62 @@ describe("tick budget", () => {
     expect(clock.now()).toBeLessThanOrEqual(2_000);
   });
 
+  test("a tick whose check passes just under its budget reads ahead only what still fits, not the whole batch", async () => {
+    const updates = Array.from({ length: 40 }, (_, i) => row(id((i * 37) % 120), 500 + i));
+    /** A depth-2 tree of 120 rows, then `count` scattered updates. */
+    const scattered = async (count: number): Promise<Bucket> => {
+      const b = openBucket();
+      await b.writer.commit(Array.from({ length: 120 }, (_, i) => row(id(i), i)));
+      expectPublished(await fold(b, SMALL), 120);
+      await b.writer.commit(updates.slice(0, count));
+      return b;
+    };
+    /** `storage` counting the node GETs issued before the first write. */
+    const countingPlanReads = (storage: Storage) => {
+      const seen = { gets: 0, writing: false };
+      return {
+        seen,
+        storage: {
+          ...storage,
+          get: (key, opts) => {
+            seen.gets += isNodeKey(key) && !seen.writing ? 1 : 0;
+            return storage.get(key, opts);
+          },
+          put: (key, body, opts) => {
+            seen.writing = true;
+            return storage.put(key, body, opts);
+          },
+        } satisfies Storage,
+      };
+    };
+    const b = await scattered(updates.length);
+    // Every call takes 100 ms. The check before seq 121, the first entry
+    // of a 16-entry log batch, passes with less room than that batch's
+    // read-ahead takes: several rounds at each of two levels.
+    const clock = virtualClock(b.storage, () => 100);
+    const ticked = countingPlanReads(clock.storage);
+    const outcome = await fold(b, SMALL, {
+      storage: ticked.storage,
+      now: clock.now,
+      tickBudgetMs: 2_500,
+      knownTail: 120 + updates.length,
+    });
+    expect(outcome).toMatchObject({ kind: "published", stop: { reason: "tick-budget" } });
+    if (outcome.kind !== "published") {
+      return;
+    }
+    expect(outcome.foldEnd).toBeGreaterThan(121);
+    // The same prefix folded with no read-ahead at all reads exactly the
+    // nodes its entries need; the tick read no node beyond those.
+    const alone = await scattered(outcome.foldEnd - 120);
+    const serial = countingPlanReads(alone.storage);
+    expectPublished(
+      await fold(alone, SMALL, { storage: serial.storage, parallelCalls: 1 }),
+      outcome.foldEnd,
+    );
+    expect(ticked.seen.gets).toBe(serial.seen.gets);
+  });
+
   test("a tick past its budget issues no further log reads", async () => {
     const b = openBucket();
     await b.writer.commit(changes(5));
