@@ -61,25 +61,35 @@
  * arrival. Before each log batch and each entry the fold adds the time
  * elapsed since then to an estimate of publishing the plan so far, and
  * once that reaches the budget it admits no further entry and publishes
- * the prefix it planned, as when the call budget runs out. The estimate
- * is the publication's rounds of calls (`publicationStages`: the fold
- * record, each level of fresh nodes `parallelCalls` at a time, then the
- * head CAS and its re-read) times the slowest call the tick has timed so far: its head
- * GET, its root GET and its node GETs, issued at most `parallelCalls` at
- * once so none waits behind a host's cap. A round lasts as long as its slowest call, and erring
- * high only ends a tick early, while erring low can lose the tick. The
- * check never interrupts one entry's node reads or a publication. A fold
- * keeps planning past the budget until the prefix it would publish is
- * non-empty, so every tick that can fold an entry makes progress.
+ * the prefix it planned (stop `tick-budget`), as when the call budget
+ * runs out. The estimate is the publication's rounds of calls
+ * (`publicationStages`: the fold record, each level of fresh nodes
+ * `parallelCalls` at a time, then the head CAS and its re-read) times
+ * the slowest call the tick has timed so far: its head GET, its root
+ * GET and its node GETs, issued at most `parallelCalls` at once so none
+ * waits behind a host's cap. A round lasts as long as its slowest call,
+ * and erring high only ends a tick early, while erring low can lose the
+ * tick. Log reads are not timed, as they may queue behind a host's
+ * concurrency cap. The check never interrupts one entry's node reads or
+ * a publication, so a tick overshoots its last passing check by at most
+ * one entry: its log batch, its node reads and the publication rounds
+ * it adds. A fold keeps planning past the budget until the prefix it
+ * would publish is non-empty, so every tick that can fold an entry
+ * makes progress.
  *
- * **Node reads.** Before adding a batch of entries, the fold has the
+ * **Node reads.** Before adding entries of a log batch, the fold has the
  * planner read ahead, concurrently, the nodes their leaf paths route to
- * (`FoldPlanner.prefetch`), at most `parallelCalls` at a time, each
- * GET charged as it is issued. A stop
- * inside the batch may leave some of those GETs unused. While the prefix
- * the fold would publish is empty (at the floor, or pinned there), it
- * reads ahead one entry at a time, so read-ahead never charges the GETs
- * that would keep the first publishable entry from fitting.
+ * (`FoldPlanner.prefetch`), at most `parallelCalls` at a time, each GET
+ * charged as it is issued. It reads ahead as many of the batch's
+ * entries as still fit the tick budget, the read-ahead's own rounds
+ * (one per `parallelCalls` entries at each level below the root, at the
+ * slowest call timed) counted with the elapsed time and the publication
+ * estimate, and at least one entry; the rest of the batch is read ahead
+ * the same way when the fold reaches it. A stop inside a read-ahead may
+ * leave some of its GETs unused. While the prefix the fold would publish
+ * is empty (at the floor, or pinned there), it reads ahead one entry at
+ * a time, so read-ahead never charges the GETs that would keep the first
+ * publishable entry from fitting.
  *
  * **Stuck entry.** When not even the first entry fits this tick's
  * budget, the fold publishes nothing, keeps the floor and emits a
@@ -571,6 +581,35 @@ export const prepareTreeFold = async (
       0,
     );
   /**
+   * Estimated milliseconds to read ahead the nodes of `changes`: at the
+   * slowest call timed, one round per `width` changes at each level the
+   * read-ahead descends. An upper bound: a level may hold fewer distinct
+   * nodes than changes, and nodes already read are not read again.
+   */
+  const readAheadMs = (changes: readonly EntryChange[]): number =>
+    slowestCallMs *
+    planner.prefetchLevels *
+    Math.ceil(changes.filter((change) => change.kind === "change").length / width);
+  /**
+   * How many entries of `changes`, from index `i`, to read ahead. While
+   * nothing could publish, one: GETs charged for later entries could
+   * otherwise starve the entry that makes the prefix publishable, every
+   * tick. Otherwise the most whose read-ahead still fits the tick budget
+   * with the time elapsed and the publication estimate, and at least
+   * one, so a check that passed is overshot by at most one entry's reads.
+   */
+  const readAheadSize = (changes: readonly EntryChange[], i: number): number => {
+    if (publishable() === 0) {
+      return 1;
+    }
+    const room = tickBudgetMs - (now() - startedAt) - publishMs();
+    let size = changes.length - i;
+    while (size > 1 && readAheadMs(changes.slice(i, i + size)) >= room) {
+      size -= 1;
+    }
+    return size;
+  };
+  /**
    * Whether the tick budget stops the fold before the entry at `seq`:
    * the prefix the fold would publish is non-empty, and the time elapsed
    * plus the time to publish it reaches the tick budget.
@@ -679,10 +718,7 @@ export const prepareTreeFold = async (
         break reading;
       }
       if (i >= readAhead) {
-        // While nothing could publish, read ahead one entry at a time:
-        // GETs charged for later entries could otherwise starve the
-        // entry that makes the prefix publishable, every tick.
-        readAhead = publishable() === 0 ? i + 1 : batch.length;
+        readAhead = i + readAheadSize(changes, i);
         await planner.prefetch(
           changes
             .slice(i, readAhead)
