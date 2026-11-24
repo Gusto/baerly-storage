@@ -18,7 +18,8 @@
  *   `TREE_GC_SUPERSEDED_DELAY_MINUTES` after a probe of the storage
  *   server's clock first stamps them, so reads through the replaced
  *   root can finish. The delay is a margin, not a proof: a read that
- *   outlives it meets the reader's missing-node backstop. A winner
+ *   outlives it meets the reader's missing-node backstop. A superseded
+ *   node whose own attempt GC cannot trust is left to the sweep. A winner
  *   whose identity shows up in another record is quarantined: none of
  *   its superseded nodes is deleted, and once its floor's loser is done
  *   its record is retired leak-only.
@@ -863,6 +864,12 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
     let next = entry.next;
     while (next < record.superseded.length && budget > 0) {
       const ref = record.superseded[next]!;
+      if (!deletable(ref.slice(0, 32))) {
+        // A node of an untrusted identity may be adopted again: it is
+        // left to the sweep, never deleted from this list.
+        next += 1;
+        continue;
+      }
       const x = `${nodePrefix}${ref}`;
       budget -= 1;
       const found = await steps.isMember(x, view);

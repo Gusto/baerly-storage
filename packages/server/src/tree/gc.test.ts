@@ -929,6 +929,30 @@ const strayPageFailure = (mutant?: TreeMutant) =>
     return joined(problems);
   });
 
+/**
+ * Attempt A changes one row and W changes it again, superseding every
+ * node A wrote. Once they are due, an attempt reusing A's identity
+ * starts and adopts some of them by writing A's value back. W is a
+ * trusted winner, but the identity its superseded nodes carry is not:
+ * GC must not delete them while that attempt can still land.
+ */
+const supersededReuseFailure = (mutant?: TreeMutant) =>
+  guarded(async () => {
+    const bucket = await GcBucket.seeded();
+    const reused = "a".repeat(32);
+    await bucket.fold([["k03", 103]], { attempt: reused });
+    await bucket.fold([["k03", 303]], { attempt: "c".repeat(32) });
+    await bucket.tick(gcConfig(mutant));
+    bucket.advance(DELAY + 1);
+    const retry = await bucket.startFold([["k03", 103]], { attempt: reused });
+    await bucket.tick(gcConfig(mutant));
+    const outcome = await retry.release();
+    if (outcome.kind !== "published" || outcome.adopted === 0) {
+      return `setup: the retry was ${outcome.kind}, adopting ${outcome.adopted}`;
+    }
+    return joined(await bucket.violations());
+  });
+
 // ---------------------------------------------------------------------
 // Record path
 // ---------------------------------------------------------------------
@@ -1141,6 +1165,10 @@ describe("attempt identity and closure", () => {
 
   test("a quarantined slot drops and retires its winner's record leak-only", async () => {
     await expect(quarantineClearsFailure()).resolves.toBeUndefined();
+  });
+
+  test("a winner's superseded node whose own identity is untrusted is not deleted", async () => {
+    await expect(supersededReuseFailure()).resolves.toBeUndefined();
   });
 
   test("a record of another head history is never evidence for the new history's winner", async () => {
@@ -1512,7 +1540,13 @@ describe("mutation", () => {
     [PUBLISH_REUSES_ATTEMPT, [reuseCounterFailure]],
     [
       GC_IGNORES_DUPLICATE_IDENTITY,
-      [reuseFailure, lateDuplicateFailure, sweepReuseFailure, quarantineClearsFailure],
+      [
+        reuseFailure,
+        lateDuplicateFailure,
+        sweepReuseFailure,
+        quarantineClearsFailure,
+        supersededReuseFailure,
+      ],
     ],
     [GC_PROCESSES_OPEN_FLOOR, [openFloorFailure]],
     [GC_IGNORES_GENERATION, [regenerationFailure]],
