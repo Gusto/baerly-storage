@@ -9,6 +9,8 @@ import {
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   WRITE_TICK_GC_MAX_SWEEPS,
 } from "@baerly/protocol";
+import { TREE_GC_TICK_RESERVED_CALLS } from "../../packages/server/src/tree/constants.ts";
+import { treeGcCandidateCharge } from "../../packages/server/src/tree/gc.ts";
 import { loadRequestCountSnapshot, parseCell } from "../../scripts/request-counts.ts";
 import {
   ALL_ATTEMPTS,
@@ -22,6 +24,9 @@ import {
   findLogTailGets,
   FOLD_RECORD_CREATES,
   foldTickCalls,
+  treeGcCandidateCalls,
+  treeGcClassAPerMinute,
+  treeGcTickBound,
   GC_WORST_STATE,
   gcTickCalls,
   type GcTickState,
@@ -423,4 +428,26 @@ describe("Paid ledger", () => {
       expect(sum.maxK).toBeGreaterThanOrEqual(PAID_HOST.entriesPerPass);
     },
   );
+});
+
+describe("tree GC tick", () => {
+  test("the static bound at 64 checks, depth 0 to 4, and at 512 checks on depth 2", () => {
+    expect([0, 1, 2, 3, 4].map((d) => treeGcTickBound(64, d, false) - 3)).toEqual([
+      235, 235, 619, 811, 1003,
+    ]);
+    expect(treeGcTickBound(64, 1, true)).toBe(304);
+    expect(treeGcTickBound(512, 2, true)).toBe(4720);
+    expect(treeGcTickBound(64, 0, true)).toBeLessThanOrEqual(900);
+  });
+
+  test("the model agrees with the tick's own sizing", () => {
+    for (const depth of [0, 1, 2, 3]) {
+      expect(treeGcCandidateCalls(depth)).toBe(treeGcCandidateCharge(depth));
+    }
+    expect(treeGcTickBound(0, 0, true)).toBe(TREE_GC_TICK_RESERVED_CALLS);
+  });
+
+  test("tree GC adds about four Class A writes a minute at one fold a minute, whatever the write rate", () => {
+    expect(treeGcClassAPerMinute(1)).toBe(4);
+  });
 });
