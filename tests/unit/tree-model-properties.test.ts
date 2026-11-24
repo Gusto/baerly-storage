@@ -302,7 +302,9 @@ describe("log-path properties", () => {
 /**
  * A stand-in fold and GC that touch only the head: a fold publishes a root
  * named for the log tail it captured, CASing on the head it captured; a
- * GC tick moves the fence. The folded seq stays 0, because the `Writer`
+ * GC tick writes the head the way its log-retirement CAS does, keeping
+ * `proto_tree` and changing another field (here `mean_entry_bytes`, which
+ * nothing in this system reads). The folded seq stays 0, because the `Writer`
  * refuses a head whose `log_seq_start` moved without a snapshot. It writes
  * no nodes, and its reader folds the whole log, which nothing retires.
  * Enough to run the lost-CAS schedules before the tree fold exists.
@@ -312,7 +314,7 @@ const headOnlyFoldSystem =
   () => {
     const base = logPathSystem();
     type Head = Record<string, unknown> & {
-      proto_tree?: { root: string | null; gc_fence_epoch: number };
+      proto_tree?: { root: string | null; attempt: string };
     };
     const readHead = async (world: TreeWorld): Promise<{ head: Head; etag: string }> => {
       const got = await world.storage.get(world.currentJsonKey);
@@ -354,7 +356,7 @@ const headOnlyFoldSystem =
               }
               const next: Head = {
                 ...head,
-                proto_tree: { root, gc_fence_epoch: head.proto_tree?.gc_fence_epoch ?? 0 },
+                proto_tree: { root, attempt: tail.toString(16).padStart(32, "0") },
               };
               const published = await casHead(world, next, etag);
               if (opts.failAfterCas) {
@@ -370,12 +372,8 @@ const headOnlyFoldSystem =
       gc: {
         tick: async (world) => {
           const { head, etag } = await readHead(world);
-          const fence = head.proto_tree ?? { root: null, gc_fence_epoch: 0 };
-          await casHead(
-            world,
-            { ...head, proto_tree: { ...fence, gc_fence_epoch: fence.gc_fence_epoch + 1 } },
-            etag,
-          );
+          const mean = typeof head["mean_entry_bytes"] === "number" ? head["mean_entry_bytes"] : 0;
+          await casHead(world, { ...head, mean_entry_bytes: mean + 1 }, etag);
           return { deleted: [] };
         },
       },

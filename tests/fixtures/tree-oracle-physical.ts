@@ -819,8 +819,8 @@ export interface MaterializeOptions {
   readonly floor: number;
   /** Attempt identity of every node, or one per node path (child indices from the root). */
   readonly attempt: string | ((path: readonly number[]) => string);
-  /** Head GC fence epoch. Default 0. */
-  readonly gcFenceEpoch?: number;
+  /** Head `proto_tree.attempt`, the installer. Default the root's attempt. */
+  readonly installer?: string;
   /** Head chunk salt. Default {@link TEST_CHUNK_SALT}; it must be the salt the shape was built under. */
   readonly chunkSalt?: string;
   /** A root branch's `level_nodes` to store instead of the shape's own counts. */
@@ -932,7 +932,9 @@ export const materializeTree = (
             floor: options.floor,
             rows: shape === null ? 0 : rowsOf(shape),
             bytes: shape === null ? 0 : bytesOf(shape),
-            gcFenceEpoch: options.gcFenceEpoch ?? 0,
+            attempt:
+              options.installer ??
+              (typeof options.attempt === "string" ? options.attempt : options.attempt([])),
             chunkSalt: options.chunkSalt ?? TEST_CHUNK_SALT,
           }),
         ),
@@ -948,7 +950,7 @@ export const treeHead = (fields: {
   floor: number;
   rows: number;
   bytes: number;
-  gcFenceEpoch: number;
+  attempt: string;
   chunkSalt: string;
 }): Record<string, unknown> => ({
   schema_version: HEAD_SCHEMA_VERSION,
@@ -960,7 +962,7 @@ export const treeHead = (fields: {
   snapshot_rows: fields.rows,
   proto_tree: {
     root: fields.root,
-    gc_fence_epoch: fields.gcFenceEpoch,
+    attempt: fields.attempt,
     chunk_salt: fields.chunkSalt,
   },
 });
@@ -1549,8 +1551,8 @@ const readHead = (image: TreeImage, prefix: string, out: TreeViolation[]): HeadV
   const names = Object.keys(t).toSorted();
   if (
     names.length !== 3 ||
-    names[0] !== "chunk_salt" ||
-    names[1] !== "gc_fence_epoch" ||
+    names[0] !== "attempt" ||
+    names[1] !== "chunk_salt" ||
     names[2] !== "root"
   ) {
     return bad(`proto_tree keys ${JSON.stringify(Object.keys(t))}`);
@@ -1560,8 +1562,9 @@ const readHead = (image: TreeImage, prefix: string, out: TreeViolation[]): HeadV
   if (typeof salt !== "string" || !CHUNK_SALT.test(salt)) {
     return bad("proto_tree.chunk_salt is not 32 lowercase hex characters");
   }
-  if (!isNonNegativeSafe(t["gc_fence_epoch"])) {
-    return bad("gc_fence_epoch is not a non-negative safe integer");
+  const installer = t["attempt"];
+  if (typeof installer !== "string" || !ATTEMPT.test(installer)) {
+    return bad("proto_tree.attempt is not 32 lowercase hex characters");
   }
   const root = t["root"];
   if (root !== null && typeof root !== "string") {

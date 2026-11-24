@@ -1121,7 +1121,7 @@ describe("every canonical tree checks clean", () => {
       floor: 0,
       rows: 0,
       bytes: 0,
-      gcFenceEpoch: 0,
+      attempt: A1,
       chunkSalt: SALT,
     });
     delete head["proto_tree"];
@@ -1144,7 +1144,7 @@ describe("every canonical tree checks clean", () => {
       floor: 0,
       rows: 0,
       bytes: 0,
-      gcFenceEpoch: 0,
+      attempt: A1,
       chunkSalt: SALT,
     });
     delete head["proto_tree"];
@@ -1709,11 +1709,11 @@ const MUTANTS: readonly {
       }),
   },
   {
-    name: "a gc_fence_epoch of -1",
+    name: "an uppercase installer attempt",
     expected: ["head-malformed"],
     build: () =>
       headCase((h) => {
-        h.proto_tree["gc_fence_epoch"] = -1;
+        h.proto_tree["attempt"] = A1.toUpperCase();
       }),
   },
   {

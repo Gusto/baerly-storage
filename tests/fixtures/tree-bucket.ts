@@ -68,6 +68,8 @@ export class TreeBucket {
   #bytes = 0;
   #tree: SealedTree | null = null;
   #hasTree = false;
+  /** The attempt that sealed the head's tree: its `proto_tree.attempt`. */
+  #installer = "";
   #attempts = 0;
 
   private constructor(config: TreeConfig, key: ChunkKey, prefix: string) {
@@ -145,11 +147,8 @@ export class TreeBucket {
     const docs = [...rows.rows.values()].map((row) => canonicalDocument(row, "bucket row"));
     const plan = await buildTree(docs, this.#key, this.config);
     this.#attempts += 1;
-    const sealed = await sealTree(plan, {
-      prefix: this.prefix,
-      attempt: this.#attempts.toString(16).padStart(32, "0"),
-      floor: through,
-    });
+    const attempt = this.#attempts.toString(16).padStart(32, "0");
+    const sealed = await sealTree(plan, { prefix: this.prefix, attempt, floor: through });
     for (const level of sealed.levels) {
       for (const node of level) {
         await this.storage.put(node.key, node.bytes, { ifNoneMatch: "*" });
@@ -159,6 +158,7 @@ export class TreeBucket {
       return;
     }
     this.#tree = sealed;
+    this.#installer = attempt;
     this.#hasTree = true;
     this.#floor = through;
     this.#tailHint = Math.max(this.#tailHint, through);
@@ -210,7 +210,7 @@ export class TreeBucket {
       ...(this.#hasTree && {
         proto_tree: {
           root: this.#tree?.root?.key ?? null,
-          gc_fence_epoch: 0,
+          attempt: this.#installer,
           chunk_salt: TREE_TEST_CHUNK_SALT,
         },
       }),

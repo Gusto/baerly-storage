@@ -34,7 +34,7 @@ const seededRoot = async () => {
 
 const treeHeadJson = (overrides: Record<string, unknown> = {}, tree?: unknown) => ({
   ...logStateCurrentJson({ log_seq_start: 2, tail_hint: 2 }),
-  proto_tree: tree ?? { root: null, gc_fence_epoch: 0, chunk_salt: TREE_TEST_CHUNK_SALT },
+  proto_tree: tree ?? { root: null, attempt: ATTEMPT, chunk_salt: TREE_TEST_CHUNK_SALT },
   ...overrides,
 });
 
@@ -56,21 +56,21 @@ const invalidResponse = (run: () => unknown): BaerlyError => {
 describe("tree head", () => {
   test("a fresh head without proto_tree is an empty tree with no salt", async () => {
     const head = parse(logStateCurrentJson());
-    expect(head).toMatchObject({ root: null, gcFenceEpoch: 0 });
+    expect(head).toMatchObject({ root: null, attempt: null });
     expect(head.json.proto_tree).toBeUndefined();
     expect(head.key).toBe(treeHeadKey(P));
     await expect(importTreeChunkKey(head)).resolves.toBeNull();
   });
 
-  test("a valid head names its root and epoch, and its salt imports as the chunk key", async () => {
+  test("a valid head names its root and installer, and its salt imports as the chunk key", async () => {
     const { root } = await seededRoot();
     const head = parse(
       treeHeadJson(
         { snapshot_rows: 2, snapshot_bytes: root.summary.bytes },
-        { gc_fence_epoch: 7, chunk_salt: TREE_TEST_CHUNK_SALT, root: root.key },
+        { attempt: ATTEMPT, chunk_salt: TREE_TEST_CHUNK_SALT, root: root.key },
       ),
     );
-    expect(head).toMatchObject({ root: root.key, gcFenceEpoch: 7 });
+    expect(head).toMatchObject({ root: root.key, attempt: ATTEMPT });
     expect(head).not.toHaveProperty("chunkSalt");
     const key = (await importTreeChunkKey(head))!;
     const expected = await testChunkKey();
@@ -79,7 +79,7 @@ describe("tree head", () => {
 
   test("a folded head with a null root is an empty tree", () => {
     const head = parse(treeHeadJson());
-    expect(head).toMatchObject({ root: null, gcFenceEpoch: 0 });
+    expect(head).toMatchObject({ root: null, attempt: ATTEMPT });
     expect(head.json.proto_tree).toBeDefined();
   });
 
@@ -98,51 +98,46 @@ describe("tree head", () => {
     ["proto_tree is an array", treeHeadJson({ proto_tree: [] })],
     [
       "proto_tree has an extra field",
-      treeHeadJson({}, { root: null, gc_fence_epoch: 0, chunk_salt: salt, extra: 1 }),
+      treeHeadJson({}, { root: null, attempt: ATTEMPT, chunk_salt: salt, extra: 1 }),
     ],
-    ["proto_tree lacks chunk_salt", treeHeadJson({}, { root: null, gc_fence_epoch: 0 })],
-    ["proto_tree lacks root", treeHeadJson({}, { gc_fence_epoch: 0, chunk_salt: salt })],
+    ["proto_tree lacks chunk_salt", treeHeadJson({}, { root: null, attempt: ATTEMPT })],
+    ["proto_tree lacks root", treeHeadJson({}, { attempt: ATTEMPT, chunk_salt: salt })],
     [
       "chunk_salt is uppercase",
-      treeHeadJson({}, { root: null, gc_fence_epoch: 0, chunk_salt: salt.toUpperCase() }),
+      treeHeadJson({}, { root: null, attempt: ATTEMPT, chunk_salt: salt.toUpperCase() }),
     ],
     [
       "chunk_salt is 31 characters",
-      treeHeadJson({}, { root: null, gc_fence_epoch: 0, chunk_salt: salt.slice(1) }),
+      treeHeadJson({}, { root: null, attempt: ATTEMPT, chunk_salt: salt.slice(1) }),
     ],
     [
       "chunk_salt is 33 characters",
-      treeHeadJson({}, { root: null, gc_fence_epoch: 0, chunk_salt: `${salt}0` }),
+      treeHeadJson({}, { root: null, attempt: ATTEMPT, chunk_salt: `${salt}0` }),
     ],
-    ["chunk_salt is a number", treeHeadJson({}, { root: null, gc_fence_epoch: 0, chunk_salt: 1 })],
+    ["chunk_salt is a number", treeHeadJson({}, { root: null, attempt: ATTEMPT, chunk_salt: 1 })],
+    ["proto_tree lacks attempt", treeHeadJson({}, { root: null, chunk_salt: salt })],
+    ["attempt is null", treeHeadJson({}, { root: null, attempt: null, chunk_salt: salt })],
     [
-      "gc_fence_epoch is negative",
-      treeHeadJson({}, { root: null, gc_fence_epoch: -1, chunk_salt: salt }),
-    ],
-    [
-      "gc_fence_epoch is fractional",
-      treeHeadJson({}, { root: null, gc_fence_epoch: 1.5, chunk_salt: salt }),
+      "attempt is uppercase",
+      treeHeadJson({}, { root: null, attempt: ATTEMPT.toUpperCase(), chunk_salt: salt }),
     ],
     [
-      "gc_fence_epoch is a string",
-      treeHeadJson({}, { root: null, gc_fence_epoch: "0", chunk_salt: salt }),
+      "attempt is 31 characters",
+      treeHeadJson({}, { root: null, attempt: ATTEMPT.slice(1), chunk_salt: salt }),
     ],
-    [
-      "gc_fence_epoch is not a safe integer",
-      treeHeadJson({}, { root: null, gc_fence_epoch: 2 ** 53, chunk_salt: salt }),
-    ],
-    ["root is a number", treeHeadJson({}, { root: 1, gc_fence_epoch: 0, chunk_salt: salt })],
+    ["attempt is a number", treeHeadJson({}, { root: null, attempt: 0, chunk_salt: salt })],
+    ["root is a number", treeHeadJson({}, { root: 1, attempt: ATTEMPT, chunk_salt: salt })],
     [
       "root is under another collection",
-      treeHeadJson({}, { root: OTHER_KEY, gc_fence_epoch: 0, chunk_salt: salt }),
+      treeHeadJson({}, { root: OTHER_KEY, attempt: ATTEMPT, chunk_salt: salt }),
     ],
     [
       "root is not a node key",
-      treeHeadJson({}, { root: `${P}/_v99/gc-pending.json`, gc_fence_epoch: 0, chunk_salt: salt }),
+      treeHeadJson({}, { root: `${P}/_v99/gc-pending.json`, attempt: ATTEMPT, chunk_salt: salt }),
     ],
     [
       "a null root has totals",
-      treeHeadJson({ snapshot_rows: 1 }, { root: null, gc_fence_epoch: 0, chunk_salt: salt }),
+      treeHeadJson({ snapshot_rows: 1 }, { root: null, attempt: ATTEMPT, chunk_salt: salt }),
     ],
   ];
 
@@ -156,7 +151,7 @@ describe("tree head", () => {
   test("a malformed salt is named, never echoed", () => {
     const secret = "fedcba9876543210fedcba987654321";
     const error = invalidResponse(() =>
-      parse(treeHeadJson({}, { root: null, gc_fence_epoch: 0, chunk_salt: secret })),
+      parse(treeHeadJson({}, { root: null, attempt: ATTEMPT, chunk_salt: secret })),
     );
     expect(error.message).toContain("proto_tree.chunk_salt");
     expect(error.message).not.toContain(secret);
@@ -177,7 +172,7 @@ describe("tree root", () => {
     parse(
       treeHeadJson(overrides, {
         root: rootKey,
-        gc_fence_epoch: 0,
+        attempt: ATTEMPT,
         chunk_salt: TREE_TEST_CHUNK_SALT,
       }),
     );

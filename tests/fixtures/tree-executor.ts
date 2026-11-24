@@ -150,7 +150,7 @@ export interface TreeFoldPublishTransition {
   readonly of: number;
 }
 
-/** One GC tick: fence, authority record, deletes, log retirement. */
+/** One GC tick: its state reads and writes, deletes, log retirement. */
 export interface TreeGcTransition {
   readonly kind: "gc";
   readonly crash?: TreeCrashPoint;
@@ -726,7 +726,7 @@ const captureImage = async (bucket: Storage): Promise<TreeBucketImage> => {
 export interface TreeHead {
   readonly snapshot: unknown;
   readonly log_seq_start: number;
-  readonly proto_tree?: { readonly root: string | null; readonly gc_fence_epoch: number };
+  readonly proto_tree?: { readonly root: string | null; readonly attempt: string };
 }
 
 /** The head in `image`, or `null` before the first commit. */

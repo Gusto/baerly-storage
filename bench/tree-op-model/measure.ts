@@ -89,6 +89,9 @@ import {
 
 /** The collection every measured bucket holds. */
 export const MEASURE_PREFIX = "app/helpdesk/tenant/acme/manifests/tickets";
+
+/** The attempt identity of every node of a measured tree, and its head's installer. */
+const MEASURE_ATTEMPT = `${"0".repeat(31)}1`;
 const COLLECTION = "tickets";
 const HEAD_KEY = treeHeadKey(MEASURE_PREFIX);
 const LOG_KEY_PREFIX = logObjectKey(MEASURE_PREFIX, 0).slice(0, -"0.json".length);
@@ -254,7 +257,7 @@ export const buildBaseTree = async (spec: CollectionSpec, seed: number): Promise
   const plan = await buildTree(docs, await testChunkKey(), DEFAULT_TREE_CONFIG);
   const sealed = await sealTree(plan, {
     prefix: MEASURE_PREFIX,
-    attempt: "0".repeat(31) + "1",
+    attempt: MEASURE_ATTEMPT,
     floor: 0,
   });
   const objects = new Map<string, Uint8Array>();
@@ -271,7 +274,7 @@ export const buildBaseTree = async (spec: CollectionSpec, seed: number): Promise
       snapshot_rows: root.summary.rows,
       snapshot_bytes: root.summary.bytes,
     }),
-    proto_tree: { root: root.key, gc_fence_epoch: 0, chunk_salt: TREE_TEST_CHUNK_SALT },
+    proto_tree: { root: root.key, attempt: MEASURE_ATTEMPT, chunk_salt: TREE_TEST_CHUNK_SALT },
   };
   objects.set(HEAD_KEY, encodeJsonBytes(head));
   return {

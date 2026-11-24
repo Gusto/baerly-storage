@@ -23,7 +23,7 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import { encodeJsonBytes, sha256Hex } from "@baerly/protocol";
-import { treeNodeKey } from "../../packages/server/src/tree/key.ts";
+import { parseTreeNodeKey, treeNodeKey } from "../../packages/server/src/tree/key.ts";
 import {
   TREE_LAYOUT,
   type TreeConfig,
@@ -106,7 +106,8 @@ const physicalViolations = async (run: FoldRun, layout: TreeLayout): Promise<str
     floor: run.floor,
     rows: totals.rows,
     bytes: totals.bytes,
-    gcFenceEpoch: 0,
+    attempt:
+      run.rootKey === null ? "0".repeat(32) : parseTreeNodeKey(FOLD_PREFIX, run.rootKey)!.attempt,
     chunkSalt: TREE_TEST_CHUNK_SALT,
   });
   image.set(headKey(FOLD_PREFIX), imageObject(encodeJsonBytes(head)));
