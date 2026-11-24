@@ -263,6 +263,7 @@ The shipped snapshot level is `L9`. The key shape reserves room for a future mul
 Compaction and GC are write-triggered and bounded. After a successful commit (a winning `log/<seq>` create), the writer may dispatch `runBoundedMaintenance` with the post-commit context:
 
 - Reads never dispatch maintenance.
+- The fold triggers on either of two arms: the live tail reaches the maintenance profile's `foldAtTailEntries` entries (20 on cf-free, 64 on cf-paid and Node), or its estimated bytes reach `MAINTENANCE_TARGET_RATIO` × the snapshot's with at least `WRITE_TICK_MIN_ENTRIES_TO_COMPACT` entries pending. The count arm bounds the tail every read and write replays, one GET per entry; the bytes arm folds a tail of large entries sooner. [Scale ceilings](scale-ceilings.md#when-a-fold-fires-and-when-it-defers) gives the figures.
 - The fold handles at most the maintenance profile's `maxFoldEntriesPerPass` entries per pass. The Cloudflare/free-safe default is `WRITE_TICK_FOLD_ENTRIES_PER_PASS`; the Node adapter threads the larger `NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS`.
 - The fold starts only while the snapshot is under both ceilings: bytes `C` (`snapshot_bytes <= C`) and rows `E` (`snapshot_rows <= E`). The fold applies the longest prefix of the slice whose rebuilt row count stays within `E`, stopping before the first entry that would add a row past it. Only the byte ceiling is operator-overridable: `C` defaults to `MAINTENANCE_MAX_FOLD_BYTES_DEFAULT` and can be raised via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, whereas `E` (`MAINTENANCE_MAX_FOLD_ROWS`) is a hardcoded constant with no env override.
 - GC marks and sweeps bounded batches from `gc/pending.json`, over the `log/` and `snapshot/` prefixes only — never `content/` ([Legacy content side objects](#legacy-content-side-objects)).
@@ -278,7 +279,7 @@ The two maintenance triggers carry different `minEntriesToCompact` defaults, del
 
 | Trigger | Floor | Why |
 | --- | --- | --- |
-| In-band write tick (`runBoundedMaintenance`) | 50 (`WRITE_TICK_MIN_ENTRIES_TO_COMPACT`) | A write is not a scheduling decision — folding on every write would thrash snapshot rewrites. |
+| In-band write tick (`runBoundedMaintenance`) | The profile's `foldAtTailEntries` (20 / 64); 50 (`WRITE_TICK_MIN_ENTRIES_TO_COMPACT`) on the bytes arm | A write is not a scheduling decision — folding on every write would thrash snapshot rewrites, and the count bounds what every read replays. |
 | Scheduled (`runScheduledMaintenance`, `tier` `"node"` or unset) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The scheduler firing **is** the decision that it is time to work; the only live tail worth leaving unfolded is none. |
 | Scheduled, `tier: "cf-paid"` (`CLOUDFLARE_PAID_TIER`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The tier exists for per-pass caps (`maxEntriesPerRun: 200`, GC bounds), not an in-band count floor. |
 | Scheduled, `tier: "cf-free"` (`CLOUDFLARE_FREE_TIER`) | 20 (`maxFoldEntriesPerPass`) | Explicit so `minEntriesToCompact <= P` (25) and each pass stays bounded. A whole pass fits the R2 binding's ledger. |
