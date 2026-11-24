@@ -447,7 +447,10 @@ describe("tree GC tick", () => {
     expect(treeGcTickBound(0, 0, true)).toBe(TREE_GC_TICK_RESERVED_CALLS);
   });
 
-  test("tree GC adds about four Class A writes a minute at one fold a minute, whatever the write rate", () => {
-    expect(treeGcClassAPerMinute(1)).toBe(4);
+  test("tree GC's Class A rate: writes per fold, a probe a minute, a record LIST per tick", () => {
+    // One fold and one tick a minute.
+    expect(treeGcClassAPerMinute(1, 1)).toBe(6);
+    // Thirty writes a minute, each ticking: the record LIST is the term that grows.
+    expect(treeGcClassAPerMinute(1, 30) - treeGcClassAPerMinute(1, 1)).toBe(29);
   });
 });
