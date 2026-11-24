@@ -227,6 +227,18 @@ export const TREE_GC_SWEEP_AGE_MINUTES = 60;
 export const TREE_GC_CLOCK_PROBE_MINUTES = 1;
 
 /**
+ * How far, in local-clock minutes, a tick's local time must read before
+ * the previous probe's local time for the tick to probe early. Writers
+ * on different instances share one state, and their local clocks
+ * differ: a smaller backward reading is skew between instances, so the
+ * tick waits for the probe interval as usual instead of probing on every
+ * tick. Only a jump this large, a real clock reset, re-probes early.
+ * Local time is only ever compared with local time; it never decides a
+ * deletion.
+ */
+export const TREE_GC_CLOCK_RESET_MINUTES = 60;
+
+/**
  * Candidate checks one GC tick makes, the sweep page's listed keys
  * included: the floor a tick uses wherever its ledger does not admit
  * more. At depth 0 or 1 each check costs 3 calls, so a tick costs about
