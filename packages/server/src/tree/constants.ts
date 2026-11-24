@@ -93,6 +93,16 @@ export const TREE_READ_PARALLEL_GETS: number = MAX_PARALLEL_LOG_READS;
  */
 export const TREE_FOLD_PLAN_DEADLINE_MS = 10_000;
 
+/**
+ * Most node GETs a fold planner issues at once when it reads ahead the
+ * leaf paths of a batch of changes (`FoldPlanner.prefetch`). Planning
+ * wall time is almost all storage latency, so reading a batch's nodes
+ * together rather than one after another divides it by about this
+ * width. Workers may cap simultaneous storage binding calls at about 6
+ * (unverified); a deployed measurement tunes this value.
+ */
+export const TREE_FOLD_PARALLEL_GETS = 6;
+
 /** Most child entries one branch may hold. */
 export const BRANCH_MAX_ENTRIES = 256;
 

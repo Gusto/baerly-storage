@@ -62,6 +62,14 @@
  * keeps planning past the deadline until the prefix it would publish is
  * non-empty, so every tick that can fold an entry makes progress.
  *
+ * **Node reads.** Before adding a batch of entries, the fold has the
+ * planner read ahead, concurrently, the nodes their leaf paths route to
+ * (`FoldPlanner.prefetch`), each GET charged as it is issued. A stop
+ * inside the batch may leave some of those GETs unused. While the prefix
+ * the fold would publish is empty (at the floor, or pinned there), it
+ * reads ahead one entry at a time, so read-ahead never charges the GETs
+ * that would keep the first publishable entry from fitting.
+ *
  * **Stuck entry.** When not even the first entry fits this tick's
  * budget, the fold publishes nothing, keeps the floor and emits a
  * counted structured warning naming the seq. The check uses the budget
@@ -137,6 +145,12 @@ export interface TreeFoldInput {
    * `TREE_FOLD_PLAN_DEADLINE_MS`.
    */
   readonly planDeadlineMs?: number;
+  /**
+   * Most node GETs the planner issues at once. Default
+   * `TREE_FOLD_PARALLEL_GETS`; `1` reads each node only when a change
+   * needs it.
+   */
+  readonly parallelGets?: number;
   /**
    * The wall clock, in milliseconds; tests pass a fake one. Default
    * `Date.now`. On Workers it advances only across I/O, which is where a
@@ -477,6 +491,7 @@ export const prepareTreeFold = async (
     config,
     budget,
     spent: headCharge + (root === null ? 0 : GET_CHARGE),
+    ...(input.parallelGets !== undefined && { parallelGets: input.parallelGets }),
   });
   const totals = input.depthZero === undefined ? null : new DepthZeroTotals(root);
 
@@ -512,9 +527,10 @@ export const prepareTreeFold = async (
    * Whether the deadline stops the fold before the entry at `seq`: it
    * has elapsed and the prefix the fold would publish is non-empty.
    */
+  /** How many entries the fold would publish if it stopped now. */
+  const publishable = (): number => (pinned === null ? planner.accepted : pinnedAt);
   const pastDeadline = (seq: number): boolean => {
-    const publishable = pinned === null ? planner.accepted : pinnedAt;
-    if (publishable === 0 || now() < deadline) {
+    if (publishable() === 0 || now() < deadline) {
       return false;
     }
     stop = { reason: "deadline", seq };
@@ -531,8 +547,7 @@ export const prepareTreeFold = async (
   };
 
   /** Add one entry's change; returns whether the fold reads on. */
-  const addEntry = async (item: WindowEntry): Promise<boolean> => {
-    const change = changeOf(item, collection);
+  const addEntry = async (item: WindowEntry, change: EntryChange): Promise<boolean> => {
     if (change.kind === "invalid") {
       hold({ reason: "invalid-entry", seq: item.seq, error: change.error });
       pending.add(change.docId);
@@ -610,8 +625,25 @@ export const prepareTreeFold = async (
         bytes,
       }));
     }
-    for (const item of batch) {
-      if (pastDeadline(item.seq) || !(await addEntry(item))) {
+    const changes = batch.map((item) => changeOf(item, collection));
+    /** Entries of the batch whose nodes have been read ahead. */
+    let readAhead = 0;
+    for (const [i, item] of batch.entries()) {
+      if (pastDeadline(item.seq)) {
+        break reading;
+      }
+      if (i >= readAhead) {
+        // While nothing could publish, read ahead one entry at a time:
+        // GETs charged for later entries could otherwise starve the
+        // entry that makes the prefix publishable, every tick.
+        readAhead = publishable() === 0 ? i + 1 : batch.length;
+        await planner.prefetch(
+          changes
+            .slice(i, readAhead)
+            .flatMap((change) => (change.kind === "change" ? [change.mutation] : [])),
+        );
+      }
+      if (!(await addEntry(item, changes[i]!))) {
         break reading;
       }
       next = item.seq + 1;

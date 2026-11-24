@@ -66,7 +66,11 @@ import {
   type PlannedTree,
 } from "./build.ts";
 import type { ChunkKey } from "./chunk.ts";
-import { TREE_HEAD_CAS_CHARGE, TREE_RETRIED_CALL_CHARGE } from "./constants.ts";
+import {
+  TREE_FOLD_PARALLEL_GETS,
+  TREE_HEAD_CAS_CHARGE,
+  TREE_RETRIED_CALL_CHARGE,
+} from "./constants.ts";
 import { treeNodeKey } from "./key.ts";
 import { bytesEqual, DEFAULT_TREE_CONFIG, type TreeConfig, type TreeLayout } from "./layout.ts";
 import {
@@ -955,7 +959,35 @@ export interface FoldPlannerInput extends Omit<PlanFoldInput, "mutations"> {
   readonly budget: number;
   /** Calls already charged before planning: the head GET and the root GET. */
   readonly spent: number;
+  /**
+   * Most node GETs {@link FoldPlanner.prefetch} issues at once. Default
+   * `TREE_FOLD_PARALLEL_GETS`; `1` turns prefetching off, so every node
+   * is read as a change first needs it.
+   */
+  readonly parallelGets?: number;
 }
+
+/** A prefetched node body, or the error its GET threw. */
+type Prefetched =
+  | { readonly ok: true; readonly body: Uint8Array | null }
+  | { readonly ok: false; readonly error: unknown };
+
+/** A prefetched branch, decoded to route the prefetch, with what it was decoded against. */
+interface Peeked {
+  readonly expected: TreeNodeExpectation;
+  readonly decoded: DecodedTreeNode;
+}
+
+/** Whether decoding against `a` and against `b` checks the same things. */
+const sameExpectation = (a: TreeNodeExpectation, b: TreeNodeExpectation): boolean =>
+  a.prefix === b.prefix &&
+  a.root === b.root &&
+  a.level === b.level &&
+  a.floor === b.floor &&
+  a.entry?.lo === b.entry?.lo &&
+  a.entry?.hi === b.entry?.hi &&
+  a.entry?.rows === b.entry?.rows &&
+  a.entry?.bytes === b.entry?.bytes;
 
 /**
  * Thrown inside a change when its next node GET would not fit, and
@@ -1046,6 +1078,17 @@ interface ReadNode {
  * charged. Rejection is prefix-only: after it, every later change is
  * refused.
  *
+ * **Prefetch.** {@link FoldPlanner.prefetch} reads, concurrently, the
+ * nodes the next changes' leaf paths route to in the current tree. Each
+ * of its GETs is charged when issued, under the same check as a GET a
+ * change issues, and a change that later needs the node takes the body
+ * without another GET or charge. Every node a prefetch reads is one the
+ * changes would read on demand, so plans, reads and charges are those of
+ * reading on demand as long as the planner accepts every prefetched
+ * change (`tests/unit/tree-fold-prefetch.test.ts`). When the budget
+ * rejects one first, its prefetched GETs may go unused; they stay
+ * charged, so the charge still counts every GET issued.
+ *
  * **Checkpoints.** The planner keeps a checkpoint, a plan and its
  * reserve, at every accepted seq. A fold whose look-ahead passes an
  * entry it cannot publish yet (an invalid survivor a later entry may
@@ -1058,8 +1101,11 @@ export class FoldPlanner {
   readonly #input: FoldPlannerInput;
   readonly #config: TreeConfig;
   readonly #steps: PlanSteps;
-  readonly #decode: NodeLoader;
   readonly #fetched = new Map<string, DecodedTreeNode>();
+  /** Prefetched node bodies no change has needed yet. */
+  readonly #prefetched = new Map<string, Promise<Prefetched>>();
+  /** Prefetched branches already decoded to route the prefetch. */
+  readonly #peeked = new Map<string, Peeked>();
   readonly #read: DecodedTreeNode[] = [];
   readonly #docs: DocsCache = new WeakMap();
   readonly #readNodes = new Map<number, Map<string, ReadNode>>();
@@ -1090,7 +1136,6 @@ export class FoldPlanner {
     this.#input = input;
     this.#config = input.config ?? DEFAULT_TREE_CONFIG;
     this.#steps = planSteps(this.#config, input.chunkKey);
-    this.#decode = decodingLoader(input.get, this.#config);
     this.#checkpoints = [{ state: this.#initialState(input.root), reserve: 0, fetched: 0 }];
   }
 
@@ -1221,6 +1266,119 @@ export class FoldPlanner {
     }
     this.#spentBetween += calls;
     return true;
+  }
+
+  /**
+   * Read ahead, concurrently, the nodes that `mutations`, the next
+   * changes in seq order, route to in the tree of the changes accepted
+   * so far: for each level, the node each one's leaf path enters, from
+   * the root down to the leaf. At most `parallelGets` GETs are in flight
+   * at once. Each GET is charged as it is issued, and only while it fits
+   * the budget with the current reserve, as a change's own GET is; when
+   * one does not fit, prefetching stops there. A failed GET or a body
+   * that does not decode is not reported here: the change that needs the
+   * node reads it as usual and meets the failure then.
+   *
+   * Adds no change. After a rejection it reads nothing.
+   */
+  async prefetch(mutations: readonly TreeMutation[]): Promise<void> {
+    const width = this.#input.parallelGets ?? TREE_FOLD_PARALLEL_GETS;
+    const { state } = this.#current;
+    if (width <= 1 || this.#rejected || state.kind !== "tree" || state.root.kind !== "branch") {
+      return;
+    }
+    // A delete outside the document-ID domain is dropped unread.
+    const ids = mutations.filter(({ id, doc }) => doc !== null || isDocId(id)).map(({ id }) => id);
+    const { prefix } = this.#input;
+    /** Branches of one level, each with the ids routed into it. */
+    let frontier: { readonly children: readonly PlannedChild[]; readonly ids: string[] }[] = [
+      { children: state.root.children, ids },
+    ];
+    for (let level = state.root.level - 1; level >= 0 && frontier.length > 0; level--) {
+      const routed = new Map<PlannedChild, string[]>();
+      for (const { children, ids: inBranch } of frontier) {
+        for (const id of inBranch) {
+          const child =
+            children.find((c) => compareDocIds(id, childSummary(c).hi) <= 0) ?? children.at(-1)!;
+          const into = routed.get(child);
+          if (into === undefined) {
+            routed.set(child, [id]);
+          } else {
+            into.push(id);
+          }
+        }
+      }
+      const reads: string[] = [];
+      for (const child of routed.keys()) {
+        if (child.kind === "reused") {
+          const key = treeNodeKey(prefix, child.entry.attempt, child.entry.sha256);
+          if (!this.#fetched.has(key) && !this.#prefetched.has(key)) {
+            reads.push(key);
+          }
+        }
+      }
+      let fits = true;
+      for (let start = 0; start < reads.length && fits; start += width) {
+        const batch: Promise<Prefetched>[] = [];
+        for (const key of reads.slice(start, start + width)) {
+          if (!this.#fits(TREE_RETRIED_CALL_CHARGE, this.#current.reserve)) {
+            fits = false;
+            break;
+          }
+          this.#gets += 1;
+          const got = (async () => this.#input.get(key))().then(
+            (body): Prefetched => ({ ok: true, body }),
+            (error: unknown): Prefetched => ({ ok: false, error }),
+          );
+          this.#prefetched.set(key, got);
+          batch.push(got);
+        }
+        await Promise.all(batch);
+      }
+      if (!fits || level === 0) {
+        break;
+      }
+      // Open the branches of this level; one that is unread, missing,
+      // failed or does not decode ends its paths here.
+      frontier = [];
+      for (const [child, routedIds] of routed) {
+        let children: readonly PlannedChild[] | null = null;
+        if (child.kind === "fresh") {
+          children = child.node.kind === "branch" ? child.node.children : null;
+        } else {
+          const decoded = await this.#peek(child.entry, level);
+          children =
+            decoded?.node.kind === "branch"
+              ? decoded.node.children.map((entry): PlannedChild => ({ kind: "reused", entry }))
+              : null;
+        }
+        if (children !== null) {
+          frontier.push({ children, ids: routedIds });
+        }
+      }
+    }
+  }
+
+  /** The node `entry` names at `level`, if read or prefetched and valid; never charges. */
+  async #peek(entry: TreeChildEntry, level: number): Promise<DecodedTreeNode | null> {
+    const key = treeNodeKey(this.#input.prefix, entry.attempt, entry.sha256);
+    const read = this.#fetched.get(key);
+    if (read !== undefined) {
+      return read;
+    }
+    const got = await this.#prefetched.get(key);
+    if (got === undefined || !got.ok) {
+      return null;
+    }
+    const expected = { prefix: this.#input.prefix, root: false, level, entry };
+    let decoded: DecodedTreeNode;
+    try {
+      decoded = await decodeNode(key, got.body, expected, this.#config);
+    } catch {
+      return null;
+    }
+    this.#peeked.set(key, { expected, decoded });
+    return decoded;
   }
 
   /**
@@ -1453,21 +1611,47 @@ export class FoldPlanner {
     };
   }
 
-  /** Read a node through `get`, once, charging the GET if it fits. */
+  /**
+   * Read a node once: take its prefetched body, whose GET is already
+   * charged, or read it through `get`, charging the GET if it fits.
+   */
   readonly #load: NodeLoader = async (key, expected) => {
     const cached = this.#fetched.get(key);
     if (cached !== undefined) {
       return cached;
     }
-    if (!this.#fits(TREE_RETRIED_CALL_CHARGE, this.#current.reserve)) {
-      throw new OverBudget();
+    const prefetched = this.#prefetched.get(key);
+    let body: Uint8Array | null;
+    if (prefetched !== undefined) {
+      this.#prefetched.delete(key);
+      const peeked = this.#peeked.get(key);
+      this.#peeked.delete(key);
+      const got = await prefetched;
+      if (!got.ok) {
+        throw got.error;
+      }
+      body = got.body;
+      if (peeked !== undefined && sameExpectation(peeked.expected, expected)) {
+        // Decoding is a pure function of the key, the body and these
+        // checks, so the routing decode stands for this one.
+        return this.#take(key, peeked.decoded);
+      }
+    } else {
+      if (!this.#fits(TREE_RETRIED_CALL_CHARGE, this.#current.reserve)) {
+        throw new OverBudget();
+      }
+      this.#gets += 1;
+      body = await this.#input.get(key);
     }
-    this.#gets += 1;
-    const decoded = await this.#decode(key, expected);
+    return this.#take(key, await decodeNode(key, body, expected, this.#config));
+  };
+
+  /** Record `decoded` as read, in read order. */
+  #take(key: string, decoded: DecodedTreeNode): DecodedTreeNode {
     this.#fetched.set(key, decoded);
     this.#read.push(decoded);
     return decoded;
-  };
+  }
 
   readonly #record: OnRead = (level, entry, decoded) => {
     let byLo = this.#readNodes.get(level);

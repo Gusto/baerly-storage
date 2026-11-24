@@ -25,6 +25,8 @@
  * - A fold whose head changed under it reports `cas-lost`, deletes
  *   nothing, and a re-run folds correctly.
  * - An entry no fresh tick can fold is refused with a counted warning.
+ * - A tick reads the nodes of a batch of entries concurrently and makes
+ *   the same storage calls as reading them one at a time.
  * - A tick past its planning deadline publishes the prefix it planned,
  *   at least one entry, and the next tick continues from there.
  */
@@ -633,6 +635,46 @@ describe("invalid survivors and the look-ahead fallback", () => {
     expect([...seen].toSorted()).toEqual(["fallback", "past"]);
   });
 
+  test("over a branch root, reading ahead never refuses a budget at which on-demand reads publish", async () => {
+    const id = (i: number) => `r${String(i).padStart(3, "0")}`;
+    /** 120 rows, then an invalid survivor for `r050` at seq 120, its repair, and 12 scattered rows. */
+    const open = async (): Promise<Bucket> => {
+      const b = openBucket();
+      await b.writer.commit(Array.from({ length: 120 }, (_, i) => row(id(i), i)));
+      expectPublished(await fold(b, SMALL), 120);
+      await b.writer.appendRaw({ op: "I", doc_id: id(50), after: { _id: "x", n: 0 } });
+      await b.writer.commit([
+        row(id(50), 1),
+        ...Array.from({ length: 12 }, (_, i) => row(id((i * 37 + 5) % 120), 200 + i)),
+      ]);
+      return b;
+    };
+    let published = 0;
+    for (let budget = 20; budget <= 260; budget += 2) {
+      const ends: string[] = [];
+      for (const parallelGets of [1, undefined]) {
+        const b = await open();
+        const before = b.counted.calls.get + b.counted.calls.put;
+        const outcome = await fold(b, SMALL, {
+          budget,
+          knownTail: 134,
+          ...(parallelGets !== undefined && { parallelGets }),
+        });
+        expect(b.counted.calls.get + b.counted.calls.put - before).toBeLessThanOrEqual(budget);
+        ends.push(outcome.kind);
+        if (outcome.kind === "published") {
+          await judge(b.storage, SMALL_LAYOUT, outcome.foldEnd);
+        }
+      }
+      const [serial, ahead] = ends;
+      if (serial === "published") {
+        published += 1;
+        expect(ahead, `budget ${budget}`).toBe("published");
+      }
+    }
+    expect(published).toBeGreaterThan(0);
+  });
+
   test.each([
     [
       "an _id that breaks the key-segment rule",
@@ -900,6 +942,43 @@ describe("deadline", () => {
     }
   });
 
+  test("a deadline that elapses during a log read stops the fold before it reads that batch's nodes", async () => {
+    const id = (i: number) => `r${String(i).padStart(3, "0")}`;
+    const b = openBucket();
+    await b.writer.commit(Array.from({ length: 120 }, (_, i) => row(id(i), i)));
+    expectPublished(await fold(b, SMALL), 120);
+    await b.writer.commit(Array.from({ length: 20 }, (_, i) => row(id((i * 37) % 120), 500 + i)));
+    const clock = { t: 0 };
+    const reads: string[] = [];
+    const storage: Storage = {
+      ...b.storage,
+      get: (key, opts) => {
+        const isLog = key.startsWith(LOG_PREFIX);
+        reads.push(isLog ? "log" : "other");
+        if (isLog) {
+          // The first entry's read stays inside the deadline; the next batch's does not.
+          clock.t += 600;
+        }
+        return b.storage.get(key, opts);
+      },
+    };
+    const outcome = await fold(b, SMALL, {
+      storage,
+      now: () => clock.t,
+      planDeadlineMs: 1000,
+      knownTail: 140,
+    });
+    expect(outcome).toMatchObject({
+      kind: "published",
+      foldEnd: 121,
+      stop: { reason: "deadline", seq: 121 },
+    });
+    const lastLog = reads.lastIndexOf("log");
+    expect(lastLog).toBeGreaterThan(reads.indexOf("log"));
+    expect(reads.slice(lastLog + 1)).toEqual([]);
+    await judge(b.storage, SMALL_LAYOUT, 121);
+  });
+
   test("past the deadline, a fold pinned at its floor reads on until the pin releases", async () => {
     const b = openBucket();
     await b.writer.appendRaw({ op: "I", doc_id: "c", after: { _id: "x", n: 0 } });
@@ -912,6 +991,62 @@ describe("deadline", () => {
       stop: { reason: "deadline", seq: 3 },
     });
     await judge(b.storage, SMALL_LAYOUT, 3);
+  });
+});
+
+describe("node reads", () => {
+  /** Tracks the most node GETs in flight; each resolves after a macrotask. */
+  const overlapping = (b: Bucket) => {
+    const seen = { inFlight: 0, max: 0 };
+    const storage: Storage = {
+      ...b.storage,
+      get: async (key, opts) => {
+        if (!key.includes("/_v99/n/")) {
+          return b.storage.get(key, opts);
+        }
+        seen.inFlight += 1;
+        seen.max = Math.max(seen.max, seen.inFlight);
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          return await b.storage.get(key, opts);
+        } finally {
+          seen.inFlight -= 1;
+        }
+      },
+    };
+    return { storage, seen };
+  };
+
+  test("a tick reads nodes concurrently and makes the same calls as reading them one at a time", async () => {
+    const base = Array.from({ length: 120 }, (_, i) => row(`r${String(i).padStart(3, "0")}`, i));
+    const scattered = Array.from({ length: 30 }, (_, i) =>
+      row(`r${String((i * 37) % 120).padStart(3, "0")}`, 1000 + i),
+    );
+    const runs = [];
+    for (const parallelGets of [1, undefined]) {
+      const b = openBucket();
+      await b.writer.commit(base);
+      expectPublished(await fold(b, SMALL), 120);
+      await b.writer.commit(scattered);
+      const before = { ...b.counted.calls };
+      const slow = overlapping(b);
+      const outcome = await fold(b, SMALL, {
+        storage: slow.storage,
+        knownTail: 150,
+        ...(parallelGets !== undefined && { parallelGets }),
+      });
+      expectPublished(outcome, 150);
+      const calls = {
+        get: b.counted.calls.get - before.get,
+        put: b.counted.calls.put - before.put,
+      };
+      runs.push({ calls, max: slow.seen.max, shape: await judge(b.storage, SMALL_LAYOUT, 150) });
+    }
+    const [serial, parallel] = runs as [(typeof runs)[0], (typeof runs)[0]];
+    expect(serial.max).toBe(1);
+    expect(parallel.max).toBeGreaterThan(1);
+    expect(parallel.calls).toEqual(serial.calls);
+    expect(shapeDigest(parallel.shape as never)).toBe(shapeDigest(serial.shape as never));
   });
 });
 
