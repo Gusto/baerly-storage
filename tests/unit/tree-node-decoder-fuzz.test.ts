@@ -14,8 +14,8 @@
  * `SyntaxError` or `RangeError`. An accepted input must be the canonical
  * encoding of what it decoded to, both by `encodeNode` and by a
  * re-derivation from the raw `JSON.parse` output that shares no code
- * with the codec (no `null`, finite numbers, at most 100 levels,
- * keys in the order parsed), and the decoded node must satisfy the node rules
+ * with the codec (finite numbers, at most 100 levels, keys in the
+ * order parsed), and the decoded node must satisfy the node rules
  * as checked here independently (byte-order comparison with
  * `TextEncoder`, not `compareDocIds`). Boundary values (depth 99 to
  * 6,000, sizes at every ceiling, 256 and 257 entries, unpaired-surrogate
@@ -167,6 +167,7 @@ const docId = fc
 const docValue: fc.Arbitrary<unknown> = fc.letrec((tie) => ({
   value: fc.oneof(
     { depthSize: "small" },
+    fc.constant(null),
     fc.string({ maxLength: 4 }),
     fc.boolean(),
     fc.integer(),
@@ -746,12 +747,12 @@ const refuse = (detail: string): never => {
 
 /**
  * The canonical text of a document value, written without the codec:
- * no `null`, finite numbers only, at most 100 levels (the document is
+ * `null` as is, finite numbers only, at most 100 levels (the document is
  * level 1), object keys in their parsed order.
  */
 const writeCanonical = (value: unknown, depth: number): string => {
   if (value === null) {
-    return refuse("null in a document");
+    return "null";
   }
   if (typeof value === "number") {
     return Number.isFinite(value) ? JSON.stringify(value) : refuse("non-finite number");

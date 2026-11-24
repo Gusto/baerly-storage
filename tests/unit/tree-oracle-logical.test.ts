@@ -157,6 +157,7 @@ interface FoldCase {
 
 const idArb = fc.constantFrom(...ID_POOL);
 const leafArb = fc.oneof(
+  fc.constant(null),
   fc.integer({ min: -5, max: 5 }),
   fc.string({ maxLength: 3 }),
   fc.boolean(),
@@ -329,7 +330,7 @@ const scribble = (value: unknown): void => {
     for (const key of Object.keys(record)) {
       if (key !== "_id") {
         scribble(record[key]);
-        if (typeof record[key] !== "object") {
+        if (typeof record[key] !== "object" || record[key] === null) {
           record[key] = "scribbled";
         }
       }
@@ -726,7 +727,7 @@ describe("logical fold domain", () => {
   });
 
   test("a surviving row outside the document domain is InvalidResponse", () => {
-    expect(codeOf(() => foldEntries([entry(0, "I", "a", { _id: "a", n: null })]))).toBe(
+    expect(codeOf(() => foldEntries([entry(0, "I", "a", { _id: "a", n: undefined })]))).toBe(
       "InvalidResponse",
     );
     expect(codeOf(() => foldEntries([entry(0, "I", "a", { _id: "b" })]))).toBe("InvalidResponse");
@@ -852,7 +853,7 @@ describe("logical fold domain", () => {
 
   test("a later entry repairs a corrupt one, because only survivors are validated", () => {
     const view = foldEntries([
-      entry(0, "I", "a", { _id: "a", n: null }),
+      entry(0, "I", "a", { _id: "a", n: undefined }),
       entry(1, "U", "a", { _id: "a", n: 1 }),
       entry(2, "I", "b", { _id: "x" }),
       entry(3, "D", "b"),

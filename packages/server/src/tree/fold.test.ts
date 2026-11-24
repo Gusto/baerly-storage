@@ -536,6 +536,31 @@ describe("depth-0 limit", () => {
   });
 });
 
+describe("null values", () => {
+  test("a document holding null folds into the tree and reads back unchanged", async () => {
+    const b = openBucket();
+    const value = { _id: "c", n: null, a: [null, { z: null }] } as unknown as DocumentData;
+    await b.writer.commit([row("a", 1), { id: "c", value }, row("d", 4)]);
+    expectPublished(await fold(b, SMALL), 3);
+    await judge(b.storage, SMALL_LAYOUT, 3);
+    const report = checkTreeImage({
+      image: await captureTreeImage(b.storage, PREFIX),
+      prefix: PREFIX,
+      layout: SMALL_LAYOUT,
+    });
+    expect(report.rows.find((r) => r["_id"] === "c")).toStrictEqual(value);
+  });
+});
+
+/** A field nested 100 arrays deep: level 101 in a document, past the depth limit. */
+const tooDeep = (): unknown => {
+  let value: unknown = 1;
+  for (let i = 0; i < 100; i++) {
+    value = [value];
+  }
+  return value;
+};
+
 describe("invalid survivors and the look-ahead fallback", () => {
   /**
    * `a`, `b`, then an invalid post-image for `c` at seq 2, `d`, `e`, then
@@ -562,7 +587,7 @@ describe("invalid survivors and the look-ahead fallback", () => {
     await b.writer.appendRaw({
       op: "U",
       doc_id: "c",
-      after: { _id: "c", n: null } as unknown as DocumentData,
+      after: { _id: "c", n: tooDeep() } as unknown as DocumentData,
     });
     await b.writer.commit([row("d", 4)]);
     const outcome = await fold(b, SMALL);
@@ -624,7 +649,7 @@ describe("invalid survivors and the look-ahead fallback", () => {
     ],
     [
       "a post-image that is not stored data",
-      { op: "U", doc_id: "c", after: { _id: "c", v: null } },
+      { op: "U", doc_id: "c", after: { _id: "c", v: tooDeep() } },
       "Replace or delete that row.",
     ],
   ])(

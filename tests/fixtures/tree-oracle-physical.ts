@@ -293,10 +293,10 @@ class DomainError extends Error {}
 const ARRAY_INDEX = /^(?:0|[1-9][0-9]*)$/;
 
 /**
- * The canonical form of a document value. Strings (any UTF-16, nothing
- * normalized), booleans, finite numbers, arrays and plain objects (prototype
- * `Object.prototype` or `null`, only own enumerable string-keyed data
- * properties) are in the domain; `null`, `undefined`, functions, symbols,
+ * The canonical form of a document value. `null`, strings (any UTF-16,
+ * nothing normalized), booleans, finite numbers, arrays and plain objects
+ * (prototype `Object.prototype` or `null`, only own enumerable string-keyed
+ * data properties) are in the domain; `undefined`, functions, symbols,
  * bigints, accessors, array holes, own array properties other than the
  * indices and `length`, and every other object are not. Object keys
  * keep their own-property order (`Reflect.ownKeys`: array-index names
@@ -318,7 +318,7 @@ const canonValue = (value: unknown, depth: number): unknown => {
     }
     case "object": {
       if (value === null) {
-        throw new DomainError("null value");
+        return null;
       }
       if (depth > MAX_DOCUMENT_DEPTH) {
         throw new DomainError(`nests deeper than ${MAX_DOCUMENT_DEPTH} levels`);

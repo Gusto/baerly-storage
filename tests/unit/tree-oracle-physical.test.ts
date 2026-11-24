@@ -314,6 +314,32 @@ describe("canonical encoding and node body vectors", () => {
     expect(sha256(bytes)).toBe("dfae1ae1d4a8faa24de23b27130d5123f5642e1a086b8167bab3ece62403ed50");
   });
 
+  test("null is a value: kept at the top level, in arrays and in nested objects (42 bytes)", () => {
+    const got = canonDocument(JSON.parse('{"_id":"x","n":null,"a":[null,{"z":null}]}'));
+    expect("invalid" in got).toBe(false);
+    const doc = got as Exclude<typeof got, { invalid: string }>;
+    const text = JSON.stringify(doc.doc);
+    expect(text).toBe('{"_id":"x","n":null,"a":[null,{"z":null}]}');
+    expect(doc.bytes).toBe(42);
+    expect(sha256(utf8(text))).toBe(
+      "a5329eea8932321291f63e59cfd1e9915de316218c8f19bc18085a54b095cd07",
+    );
+  });
+
+  test("a leaf body holding nulls decodes to the same document (184 bytes)", () => {
+    const body =
+      '{"format":"baerly-tree-node-proto","schema_version":1,"collection":"tickets","attempt":"00112233445566778899aabbccddeeff","level":0,"docs":[{"_id":"x","n":null,"a":[null,{"z":null}]}]}';
+    const bytes = utf8(body);
+    expect(bytes.byteLength).toBe(184);
+    const digest = sha256(bytes);
+    expect(digest).toBe("7b8e0082efcbeadef0692b316bda2cdc79f03f3e47b4bc44fe3023afa350b5c1");
+    const got = decodeNodeBody(P, `${P}/_v99/n/${A1}/${digest}`, bytes, { root: false });
+    expect(got.violations).toEqual([]);
+    expect(got.node!.docs!.map((d) => d.doc)).toStrictEqual([
+      { _id: "x", n: null, a: [null, { z: null }] },
+    ]);
+  });
+
   const withAccessor = (target: object, key: string): object =>
     Object.defineProperty(target, key, { get: () => 1, enumerable: true });
   const holey = (): unknown[] => {
@@ -1828,12 +1854,17 @@ const MUTANTS: readonly {
     },
   },
   {
-    name: "a stored document holding null",
+    name: "a stored document nested deeper than 100 levels",
     expected: ["document-invalid"],
     build: () => {
       const c = smallCase();
       editNode(c.image, [0, 0], (body) => {
-        body["docs"][0].z = null;
+        // The document is level 1, so 100 arrays under it make level 101.
+        let deep: unknown = 1;
+        for (let i = 0; i < 100; i++) {
+          deep = [deep];
+        }
+        body["docs"][0].z = deep;
       });
       return c;
     },
