@@ -815,6 +815,35 @@ describe("create-conflict adoption", () => {
     expect(sent).not.toContain(HEAD);
     await expect(bucket.head()).resolves.toMatchObject({ etag: fold.head.etag });
   });
+
+  test("a level with several failed creates throws the failure of the first node in write order", async () => {
+    const bucket = await Bucket.seeded();
+    const fold = await bucket.prepare(MIXED);
+    const attempt = attemptOf(0xfa11);
+    const sealed = await sealTree(fold.plan.tree, {
+      prefix: PREFIX,
+      attempt,
+      floor: fold.floor,
+    });
+    const leaves = sealed.levels[0]!.map((node) => node.key);
+    expect(leaves.length).toBeGreaterThan(2);
+    const storage: Storage = {
+      ...bucket.storage,
+      put: async (key, body, opts) => {
+        const at = leaves.indexOf(key);
+        if (at === -1) {
+          return bucket.storage.put(key, body, opts);
+        }
+        // Later leaves fail first, so completion order is the reverse of write order.
+        await new Promise((resolve) => setTimeout(resolve, 2 * (leaves.length - at)));
+        throw new BaerlyError("AccessDenied", `injected: leaf ${at} denied`);
+      },
+    };
+    await expect(bucket.publish(fold, { storage, attempt })).rejects.toMatchObject({
+      code: "AccessDenied",
+      message: "injected: leaf 0 denied",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------
