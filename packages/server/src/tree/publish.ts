@@ -578,6 +578,7 @@ export const publishTree = async (input: PublishTreeInput): Promise<TreePublishO
       (rootKey !== null
         ? now.root === rootKey
         : now.root === null &&
+          // Defensive: only this CAS installs this fresh identity, at this floor.
           now.json.log_seq_start === floor &&
           storedSalt(now) === tree.chunk_salt &&
           now.json.snapshot_rows === 0 &&
