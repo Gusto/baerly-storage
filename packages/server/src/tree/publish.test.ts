@@ -45,6 +45,7 @@ import {
   PUBLISH_REUSES_UNPROVEN_REF,
   RECORD_FLOOR_NOT_CAPTURED,
   RECORD_NAMES_REUSED_NODE,
+  RECORD_NO_DOWNWARD_CLOSURE,
   RECORD_OMITS_SUPERSEDED,
   type TreeMutant,
 } from "../../../../tests/fixtures/tree-mutants.ts";
@@ -473,9 +474,31 @@ const writeOrderFailure = async (mutant?: TreeMutant): Promise<string | undefine
  * captured one does not, `superseded` exactly the reverse, and `base`
  * and `result` name the captured head and the published root.
  */
-const recordExactnessFailure = async (mutant?: TreeMutant): Promise<string | undefined> => {
+const recordExactnessFailure = (mutant?: TreeMutant): Promise<string | undefined> =>
+  exactnessOfFold(MIXED, mutant);
+
+/**
+ * As {@link recordExactnessFailure}, for a fold that updates one row and
+ * deletes an absent one: the plan reads below a branch it then reuses
+ * whole, so only the downward closure from that reused ref keeps the
+ * read nodes under it out of `superseded`.
+ */
+const downwardClosureFailure = (mutant?: TreeMutant): Promise<string | undefined> =>
+  exactnessOfFold(
+    [
+      ["k01", 99],
+      ["k15x", null],
+    ],
+    mutant,
+  );
+
+/** The exactness of the record of `changes` published onto the seeded tree under `mutant`. */
+const exactnessOfFold = async (
+  changes: readonly Change[],
+  mutant?: TreeMutant,
+): Promise<string | undefined> => {
   const bucket = await Bucket.seeded();
-  const fold = await bucket.prepare(MIXED);
+  const fold = await bucket.prepare(changes);
   const before = await bucket.reachable();
   let outcome: TreePublishOutcome;
   try {
@@ -911,6 +934,10 @@ describe("head CAS fate", () => {
 describe("fold record", () => {
   test("the mixed fold's record names exactly what it creates and what it supersedes", async () => {
     await expect(recordExactnessFailure()).resolves.toBeUndefined();
+  });
+
+  test("a read node under a reused branch is not superseded", async () => {
+    await expect(downwardClosureFailure()).resolves.toBeUndefined();
   });
 
   test("the record is canonical JSON of its fields, in order, keyed by the hash of its body", async () => {
@@ -1357,7 +1384,9 @@ describe("head transition", () => {
 // ---------------------------------------------------------------------
 
 describe("published trees", () => {
-  const ids = fc.stringMatching(/^[a-z0-9]{1,2}$/);
+  // Short ids land around the seeded rows; the seeded ids update or delete them.
+  const seededIds = Array.from({ length: 20 }, (_, i) => `k${String(i).padStart(2, "0")}`);
+  const ids = fc.oneof(fc.stringMatching(/^[a-z0-9]{1,2}$/), fc.constantFrom(...seededIds));
   const tickArbitrary = fc.array(
     fc.array(fc.tuple(ids, fc.option(fc.integer({ min: 0, max: 9999 }), { freq: 4 })), {
       minLength: 1,
@@ -1366,10 +1395,11 @@ describe("published trees", () => {
     { minLength: 1, maxLength: 5 },
   );
 
-  fcTest.prop({ ticks: tickArbitrary }, { numRuns: 40 })(
+  fcTest.prop({ seeded: fc.boolean(), ticks: tickArbitrary }, { numRuns: 40 })(
     "every published tree passes the physical oracle, each entry matching its child's body, and its record is exact",
-    async ({ ticks }) => {
-      const bucket = await Bucket.open();
+    async ({ seeded, ticks }) => {
+      // The seeded tree is depth 3, so a fold can read below a branch it reuses.
+      const bucket = seeded ? await Bucket.seeded() : await Bucket.open();
       for (const tick of ticks) {
         const fold = await bucket.prepare(tick);
         const before = await bucket.reachable();
@@ -1394,6 +1424,7 @@ describe("mutation", () => {
     [PUBLISH_NODES_BEFORE_RECORD, [writeOrderFailure, crashSweepFailure]],
     [RECORD_NAMES_REUSED_NODE, [recordExactnessFailure]],
     [RECORD_OMITS_SUPERSEDED, [recordExactnessFailure]],
+    [RECORD_NO_DOWNWARD_CLOSURE, [downwardClosureFailure]],
     [RECORD_FLOOR_NOT_CAPTURED, [recordTripwireFailure]],
   ]);
 
