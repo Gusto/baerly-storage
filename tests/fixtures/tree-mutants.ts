@@ -298,10 +298,52 @@ export const SCAN_SKIPS_ADMISSION: TreeMutant = {
   options: { steps: { admitsScan: () => true } },
 };
 
-/** The reader mutants the read acceptance suite must catch. */
+/** A reader that reports every missing node as corrupt, even when the root moved under it. */
+export const MISSING_NODE_IS_CORRUPT: TreeMutant = {
+  name: "missing-node-is-corrupt",
+  defect: "a node missing after a fold moved the root is InvalidResponse, not a restart",
+  options: { steps: { missingNodeAction: () => "corrupt" } },
+};
+
+/** A reader that restarts every time the root moved, however often it already restarted. */
+export const READ_RESTARTS_WITHOUT_BOUND: TreeMutant = {
+  name: "read-restarts-without-bound",
+  defect: "a read restarts on every root move instead of refusing the second",
+  options: {
+    steps: { missingNodeAction: ({ rootMoved }) => (rootMoved ? "restart" : "corrupt") },
+  },
+};
+
+/** A reader that re-reads the head on the first not-found, without GETting the node again. */
+export const MISSING_NODE_NOT_REFETCHED: TreeMutant = {
+  name: "missing-node-not-refetched",
+  defect: "a node GET that finds nothing is not issued once more",
+  options: { steps: { regetsMissingNode: () => false } },
+};
+
+/** A reader that re-GETs a missing node and re-reads the head whatever the ledger has left. */
+export const MISSING_NODE_SKIPS_LEDGER: TreeMutant = {
+  name: "missing-node-skips-ledger",
+  defect: "a missing node's re-GET and head re-read are issued whatever the ledger left",
+  options: { steps: { admitsMissingNodeCall: () => true } },
+};
+
+/** A reader that restarts whatever the request ledger has left. */
+export const RESTART_SKIPS_LEDGER: TreeMutant = {
+  name: "restart-skips-ledger",
+  defect: "a read restart is admitted whatever its charge and the ledger left",
+  options: { steps: { admitsRestart: () => true } },
+};
+
+/** The reader mutants the read acceptance suites must catch. */
 export const READ_MUTANTS: readonly TreeMutant[] = [
   READ_REFRESHES_TAIL_HINT,
   READ_IGNORES_TAIL_DELETES,
   READ_DESCENDS_EVERY_CHILD,
   SCAN_SKIPS_ADMISSION,
+  MISSING_NODE_IS_CORRUPT,
+  READ_RESTARTS_WITHOUT_BOUND,
+  MISSING_NODE_NOT_REFETCHED,
+  RESTART_SKIPS_LEDGER,
+  MISSING_NODE_SKIPS_LEDGER,
 ];

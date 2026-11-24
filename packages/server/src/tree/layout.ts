@@ -314,7 +314,40 @@ export interface TreeSteps {
    * every attempt counted, is admitted when the request has `left`.
    */
   readonly admitsScan?: (charged: number, left: number) => boolean;
+  /** Whether a read GETs a node it found missing once more before it re-reads the head. */
+  readonly regetsMissingNode?: () => boolean;
+  /**
+   * Whether one GET a missing node calls for (its re-GET or the head
+   * re-read), charged `charged` storage calls for every attempt, is
+   * admitted when the request has `left`.
+   */
+  readonly admitsMissingNodeCall?: (charged: number, left: number) => boolean;
+  /**
+   * What a read does about a node still missing after its re-GET, given
+   * whether the head's root has moved off the root that routed to it and
+   * whether the view has already restarted once.
+   */
+  readonly missingNodeAction?: (seen: MissingNodeSeen) => MissingNodeAction;
+  /**
+   * Whether a read restart whose GETs need `charged` storage calls,
+   * every attempt counted, is admitted when the request has `left`.
+   */
+  readonly admitsRestart?: (charged: number, left: number) => boolean;
 }
+
+/** What a read knows about a node still missing after its re-GET. */
+export interface MissingNodeSeen {
+  /** The re-read head names a different root than the one that routed to the node. */
+  readonly rootMoved: boolean;
+  /** The view has already restarted once. */
+  readonly restarted: boolean;
+}
+
+/**
+ * A read's answer to a missing node: read again from the new root,
+ * refuse retriably, or report the node as corrupt.
+ */
+export type MissingNodeAction = "restart" | "refuse" | "corrupt";
 
 /** Whether two byte arrays hold the same bytes. */
 export const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
