@@ -25,6 +25,8 @@
  * - A fold whose head changed under it reports `cas-lost`, deletes
  *   nothing, and a re-run folds correctly.
  * - An entry no fresh tick can fold is refused with a counted warning.
+ * - A tick past its planning deadline publishes the prefix it planned,
+ *   at least one entry, and the next tick continues from there.
  */
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
@@ -834,6 +836,82 @@ describe("stuck entry", () => {
       kind: "refused",
       stop: { reason: "budget", seq: 0 },
     });
+  });
+});
+
+describe("deadline", () => {
+  /** A fake wall clock that every GET of the fold advances by `getMs`. */
+  const slowClock = (b: Bucket, getMs: number) => {
+    const clock = { t: 0 };
+    const storage: Storage = {
+      ...b.storage,
+      get: (key, opts) => {
+        clock.t += getMs;
+        return b.storage.get(key, opts);
+      },
+    };
+    return { storage, now: () => clock.t };
+  };
+
+  test("a tick past its deadline publishes the planned prefix, and later ticks continue to the same root", async () => {
+    const log = changes(20);
+    const whole = openBucket();
+    await whole.writer.commit(log);
+    expectPublished(await fold(whole, SMALL), 20);
+    const one = await judge(whole.storage, SMALL_LAYOUT, 20);
+
+    const split = openBucket();
+    await split.writer.commit(log);
+    const slow = slowClock(split, 250);
+    let floor = 0;
+    let stoppedByDeadline = 0;
+    for (let tick = 0; floor < 20; tick++) {
+      expect(tick).toBeLessThan(40);
+      const outcome = await fold(split, SMALL, { ...slow, planDeadlineMs: 1000 });
+      expect(outcome.kind).toBe("published");
+      if (outcome.kind !== "published") {
+        break;
+      }
+      expect(outcome.foldEnd).toBeGreaterThan(floor);
+      if (outcome.foldEnd < 20) {
+        expect(outcome.stop).toEqual({ reason: "deadline", seq: outcome.foldEnd });
+        stoppedByDeadline += 1;
+      }
+      floor = outcome.foldEnd;
+      await judge(split.storage, SMALL_LAYOUT, floor);
+    }
+    expect(stoppedByDeadline).toBeGreaterThan(1);
+    expect(shapeDigest((await judge(split.storage, SMALL_LAYOUT, 20)) as never)).toBe(
+      shapeDigest(one as never),
+    );
+  });
+
+  test("a deadline that elapsed before the first entry still folds one entry", async () => {
+    const b = openBucket();
+    await b.writer.commit(changes(5));
+    for (const floor of [0, 1, 2]) {
+      await expect(fold(b, SMALL, { planDeadlineMs: 0 })).resolves.toMatchObject({
+        kind: "published",
+        floor,
+        foldEnd: floor + 1,
+        stop: { reason: "deadline", seq: floor + 1 },
+      });
+      await judge(b.storage, SMALL_LAYOUT, floor + 1);
+    }
+  });
+
+  test("past the deadline, a fold pinned at its floor reads on until the pin releases", async () => {
+    const b = openBucket();
+    await b.writer.appendRaw({ op: "I", doc_id: "c", after: { _id: "x", n: 0 } });
+    await b.writer.commit([row("a", 1), row("c", 2), row("d", 3)]);
+    // Seq 0 is an invalid survivor that seq 2 supersedes: only a prefix
+    // through seq 2 publishes, so the deadline waits for it.
+    await expect(fold(b, SMALL, { planDeadlineMs: 0 })).resolves.toMatchObject({
+      kind: "published",
+      foldEnd: 3,
+      stop: { reason: "deadline", seq: 3 },
+    });
+    await judge(b.storage, SMALL_LAYOUT, 3);
   });
 });
 

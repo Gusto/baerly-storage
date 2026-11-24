@@ -670,6 +670,9 @@ export const measureFold = async (
       budget,
       knownTail: tailLength,
       config: DEFAULT_TREE_CONFIG,
+      // Counts must not depend on how fast this host plans, so the
+      // wall-clock deadline never stops a measured fold.
+      planDeadlineMs: Number.POSITIVE_INFINITY,
       ...(depthZero !== undefined && { depthZero }),
     });
     if (prepared.kind !== "prepared") {
