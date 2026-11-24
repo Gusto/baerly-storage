@@ -158,11 +158,12 @@ export interface PublishTreeInput {
  * The storage calls publishing a plan issues, stage by stage in order:
  * the fold record create, the fresh nodes of each level from the leaves
  * up (`freshByLevel`, as `FoldPlanner.publicationNodes` gives them),
- * then the head CAS and its fate re-read. The calls of one stage run concurrently and a stage
- * starts once the one before has completed, so a stage of `n` calls
- * takes `ceil(n / parallelCalls)` rounds. The re-read is counted though
- * it follows only a CAS that throws; a create conflict's adoption GET is
- * not, since it doubles a stage only on that failure path.
+ * then the head CAS and its fate re-read. The calls of one stage run
+ * concurrently and a stage starts once the one before has completed, so
+ * a stage of `n` calls takes `ceil(n / parallelCalls)` rounds. The
+ * re-read is counted though it follows only a CAS that throws; a create
+ * conflict's adoption GET is not, since it doubles a stage only on that
+ * failure path.
  */
 export const publicationStages = (freshByLevel: readonly number[]): readonly number[] => [
   1, // the fold record
