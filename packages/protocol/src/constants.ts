@@ -990,10 +990,11 @@ export const NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS: number = 200;
  * ({@link MAINTENANCE_TARGET_RATIO}) trips. The bytes arm alone bounds the
  * tail in bytes, not in requests, and every read and write GETs each tail
  * entry: with it alone a 32 MiB snapshot of 5 KiB documents on Workers
- * Paid let a point read issue 6,333 GETs. With `q` the tail stays at or
- * under `q` (`q` itself only when the hard-GC guard gives a tick to GC),
- * so a point read replays at most `q` entries, for one snapshot rewrite
- * per `q` writes. A fold's request count does not change.
+ * Paid let a point read issue 6,333 GETs. With `q` the tick that sees a
+ * tail of `q` folds it, so a read replays at most `q` entries, or `q + 1`
+ * when the hard-GC guard gave that tick to GC and the read races the next
+ * write's tick, for one snapshot rewrite per `q` writes. A fold's request
+ * count does not change.
  *
  * **Sizing: an economic order quantity.** Folding every `q` writes costs
  * one fold, `F` in tail-entry GETs replayed, per `q` writes; between folds
