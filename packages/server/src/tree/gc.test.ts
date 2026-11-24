@@ -13,7 +13,13 @@
  * `tests/fixtures/tree-mutants.ts` to turn its checks red.
  */
 import { describe, expect, test } from "vitest";
-import { BaerlyError, encodeJsonBytes, RequestLedger, type Storage } from "@baerly/protocol";
+import {
+  BaerlyError,
+  encodeJsonBytes,
+  GC_MARK_LIST_PAGE_KEYS,
+  RequestLedger,
+  type Storage,
+} from "@baerly/protocol";
 import { ledgeredStorage } from "../../../../tests/fixtures/ledgered-storage.ts";
 import {
   freshGcHead,
@@ -881,6 +887,46 @@ const quarantineClearsFailure = (mutant?: TreeMutant) =>
     return joined(problems);
   });
 
+/**
+ * A full record page made only of keys that do not parse, all sorting
+ * before the real records: the page does not show the floors past it,
+ * so no winner slot whose record lies there is dropped, and once the
+ * stray keys are gone everything is reclaimed.
+ */
+const strayPageFailure = (mutant?: TreeMutant) =>
+  guarded(async () => {
+    const bucket = await GcBucket.seeded();
+    await bucket.fold(MIXED);
+    await bucket.tick(gcConfig(mutant));
+    const first = await bucket.state();
+    const floors = first?.work.map((entry) => entry.floor) ?? [];
+    if (floors.length === 0) {
+      return "setup: no work entry";
+    }
+    const strays = Array.from({ length: GC_MARK_LIST_PAGE_KEYS }, (_, i) => `${GC_RECORDS}0/${i}`);
+    for (const key of strays) {
+      await bucket.memory.put(key, new TextEncoder().encode("{}"));
+    }
+    bucket.advance(DELAY + 1);
+    await bucket.tick(gcConfig(mutant));
+    const problems: string[] = [];
+    const after = await bucket.state();
+    const kept = after?.work.map((entry) => entry.floor) ?? [];
+    const lost = floors.filter((floor) => !kept.includes(floor));
+    if (lost.length > 0) {
+      problems.push(`slots past the page dropped: floors ${lost.join(", ")}`);
+    }
+    for (const key of strays) {
+      await bucket.memory.delete(key);
+    }
+    await reclaim(bucket, gcConfig(mutant));
+    const left = await reclaimedProblems(bucket);
+    if (left !== undefined) {
+      problems.push(left);
+    }
+    return joined(problems);
+  });
+
 // ---------------------------------------------------------------------
 // Record path
 // ---------------------------------------------------------------------
@@ -989,6 +1035,10 @@ describe("record path", () => {
     expect(after!.ticks).toBeGreaterThan(before!.ticks);
     await reclaim(bucket);
     await expect(reclaimedProblems(bucket)).resolves.toBeUndefined();
+  });
+
+  test("a full record page of keys that do not parse drops no slot past the page", async () => {
+    await expect(strayPageFailure()).resolves.toBeUndefined();
   });
 
   test("a floor with no evidence of its winner is stuck, then retired leak-only after the sweep age", async () => {

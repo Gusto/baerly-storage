@@ -423,11 +423,13 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
 
   // 5. The record page.
   const records: ListedRecord[] = [];
-  let recordPageFull = false;
+  // Keys that do not parse still fill the page, so fullness counts every listed key.
+  let recordKeysListed = 0;
   for await (const entry of storage.list(treeRecordKeyPrefix(prefix), {
     maxKeys: GC_MARK_LIST_PAGE_KEYS,
     ...(signal !== undefined && { signal }),
   })) {
+    recordKeysListed += 1;
     const parts = parseTreeRecordKey(prefix, entry.key);
     if (parts === null) {
       counter("unknown_key_total");
@@ -440,7 +442,7 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
       tail: `${parts.attempt}/${parts.sha256}`,
     });
   }
-  recordPageFull = records.length >= GC_MARK_LIST_PAGE_KEYS;
+  const recordPageFull = recordKeysListed >= GC_MARK_LIST_PAGE_KEYS;
   const lastListedFloor = records.at(-1)?.floor ?? -1;
   /** Whether the record page shows every record at `floor`. */
   const pageCovers = (floor: number): boolean => !recordPageFull || lastListedFloor > floor;
