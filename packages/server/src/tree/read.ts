@@ -58,10 +58,44 @@
  * at most `2 + TREE_MAX_LEVEL` GETs, which every host's ledger covers at
  * every attempt.
  *
+ * Missing node. GC deletes a node only once no current root reaches it,
+ * so a node a read routed to from the head it captured can be gone by
+ * the time its GET lands, when a fold moved the root and GC ran in
+ * between. A node GET, the root's included, that returns not-found is
+ * issued once more, which tells a transient miss from a real one. If it
+ * is still missing, the read re-reads the head. The re-GET and the head
+ * re-read are each admitted first, at every attempt, against the
+ * request ledger; without room the read refuses with `MaintenancePending`
+ * rather than meet the ledger's `CapacityExceeded`. Then:
+ *
+ * - the head names the same root: the node is corrupt, `InvalidResponse`
+ *   from the decoder's `present` check;
+ * - the root moved and the view has not restarted: the view restarts
+ *   once from the new head, re-reading its root and tail, then runs the
+ *   read again. The restart is admitted only when the request ledger has
+ *   room for its GETs, every attempt charged: the root GET first, then,
+ *   from the new root, the head check's log calls and the base GETs the
+ *   read may issue (`depth` for a point read, the scan bound for a range,
+ *   count or scan);
+ * - the root moved again after the restart, or the ledger has no room
+ *   for it: `MaintenancePending` with `retryAfter`, so the caller retries
+ *   from a fresh head instead of the read restarting without bound.
+ *
+ * A restart replaces the view's head, root and tail, and a view restarts
+ * at most once over its life. Every GET of a batch settles before the
+ * read acts on a missing node, so no call of the abandoned attempt
+ * outlives it.
+ *
  * Reads are pure: they never PUT or DELETE, run maintenance or repair
  * anything, and a refusal writes nothing.
  */
-import { BaerlyError, type DocumentData, type LogEntry, type Storage } from "@baerly/protocol";
+import {
+  BaerlyError,
+  type DocumentData,
+  type LogEntry,
+  MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
+  type Storage,
+} from "@baerly/protocol";
 import { foldLogEntriesOnto, walkLogRange } from "../log-walk.ts";
 import { probeReadTail } from "../log-tail.ts";
 import { assertPostImageIdentity } from "../post-image-identity.ts";
@@ -73,14 +107,21 @@ import {
 } from "../read-admission.ts";
 import { assertSnapshotDocId, compareDocIds } from "../snapshot-doc-id.ts";
 import { TREE_READ_PARALLEL_GETS, TREE_RETRIED_CALL_CHARGE } from "./constants.ts";
-import { readTreeHead, readTreeRoot, type TreeHead } from "./head.ts";
+import { assertRootMatchesHead, readTreeHead, type TreeHead } from "./head.ts";
 import { collectionOfPrefix, treeNodeKey } from "./key.ts";
-import { DEFAULT_TREE_CONFIG, type TreeConfig, type TreeLayout } from "./layout.ts";
+import {
+  DEFAULT_TREE_CONFIG,
+  type MissingNodeAction,
+  type MissingNodeSeen,
+  type TreeConfig,
+  type TreeLayout,
+} from "./layout.ts";
 import {
   type DecodedTreeNode,
   decodeNode,
   type TreeChildEntry,
   type TreeDocument,
+  type TreeNodeExpectation,
 } from "./node-codec.ts";
 
 // ---------------------------------------------------------------------
@@ -314,36 +355,107 @@ const asRow = (doc: TreeDocument): DocumentData => doc as unknown as DocumentDat
 const OUTGROWN =
   "Do not retry unchanged: delete or shrink rows, or export the collection with baerly admin dump.";
 
+const READ_AGAIN =
+  "Retry after the delay in retryAfter (Retry-After header, seconds): maintenance replaced the " +
+  "data this read was reading, and a new read starts from the current data.";
+
+/**
+ * What a read does about a node still missing after its re-GET: report
+ * corruption when the root has not moved, restart once when it has, and
+ * refuse when it moves again after that restart.
+ */
+const missingNodeAction = (seen: MissingNodeSeen): MissingNodeAction => {
+  if (!seen.rootMoved) {
+    return "corrupt";
+  }
+  return seen.restarted ? "refuse" : "restart";
+};
+
+/**
+ * The retriable refusal of a read that found a node missing, as it does
+ * when maintenance replaces the tree under it. `bound` says why it did
+ * not go on: no room to re-GET the node or re-read the head, the root
+ * moved again after the restart, or no room for the restart. `state`
+ * says the same in words.
+ */
+const readAgainRefusal = (
+  collection: string,
+  bound: "missingNodeStorageCalls" | "rootMovedAgain" | "restartStorageCalls",
+  state: string,
+): BaerlyError =>
+  new BaerlyError(
+    "MaintenancePending",
+    `this read of collection ${JSON.stringify(collection)} was refused and returned no rows: ` +
+      `${state}. Retry after ${MAINTENANCE_PENDING_RETRY_AFTER_SECONDS}s.`,
+    {
+      resolution: READ_AGAIN,
+      retryAfter: MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
+      cause: { bound },
+    },
+  );
+
+/**
+ * A node GET that found nothing, twice. Thrown inside a read attempt and
+ * always caught by the view, which re-reads the head to decide; never
+ * escapes this module.
+ */
+class MissingNode {
+  readonly key: string;
+  readonly expected: TreeNodeExpectation;
+  /** The head whose root routed to the node. */
+  readonly head: TreeHead;
+
+  constructor(key: string, expected: TreeNodeExpectation, head: TreeHead) {
+    this.key = key;
+    this.expected = expected;
+    this.head = head;
+  }
+}
+
+/** Which base GETs a read may issue, for admitting its restart. */
+type ReadShape = "open" | "point" | "scan";
+
+/** One captured state of a view: the head, its validated root and its tail. */
+interface ViewState {
+  readonly head: TreeHead | null;
+  readonly root: DecodedTreeNode | null;
+  readonly tail: TreeTail;
+  readonly budget: ReadBudget;
+}
+
+const NO_TAIL: TreeTail = Object.freeze({ tail: 0, entries: 0, overlay: new Map() });
+
 /** An open read: the head, its validated root and its tail. */
 export class TreeView {
   readonly #storage: Storage;
+  readonly #prefix: string;
   readonly #config: TreeConfig;
   readonly #collection: string;
   readonly #envelope: ReadEnvelope;
-  readonly #budget: ReadBudget;
-  /** The tree head, or `null` when the collection has no `current.json`. */
-  readonly head: TreeHead | null;
-  /** The validated root, or `null` for an empty tree. */
-  readonly root: DecodedTreeNode | null;
-  readonly tail: TreeTail;
+  #state: ViewState;
+  #restarted = false;
 
-  private constructor(
-    target: TreeReadTarget,
-    collection: string,
-    envelope: ReadEnvelope,
-    budget: ReadBudget,
-    head: TreeHead | null,
-    root: DecodedTreeNode | null,
-    tail: TreeTail,
-  ) {
+  private constructor(target: TreeReadTarget, budget: ReadBudget, envelope: ReadEnvelope) {
     this.#storage = target.storage;
+    this.#prefix = target.prefix;
     this.#config = target.config ?? DEFAULT_TREE_CONFIG;
-    this.#collection = collection;
+    this.#collection = collectionOfPrefix(target.prefix);
     this.#envelope = envelope;
-    this.#budget = budget;
-    this.head = head;
-    this.root = root;
-    this.tail = tail;
+    this.#state = { head: null, root: null, tail: NO_TAIL, budget };
+  }
+
+  /** The tree head, or `null` when the collection has no `current.json`. */
+  get head(): TreeHead | null {
+    return this.#state.head;
+  }
+
+  /** The validated root, or `null` for an empty tree. */
+  get root(): DecodedTreeNode | null {
+    return this.#state.root;
+  }
+
+  get tail(): TreeTail {
+    return this.#state.tail;
   }
 
   /**
@@ -360,31 +472,23 @@ export class TreeView {
    * no monolithic snapshot, and only a range, count or scan materializes
    * the base, which {@link range} admits.
    *
+   * A root missing after its re-GET is handled as the module header's
+   * "Missing node" says.
+   *
    * @throws BaerlyError code="InvalidResponse" — a malformed head, root
-   *   or log entry.
+   *   or log entry, or a root missing while the head still names it.
    * @throws BaerlyError code="CapacityExceeded" — the tail does not fit
    *   the read envelope or the request ledger.
+   * @throws BaerlyError code="MaintenancePending" — maintenance replaced
+   *   the tree under the read and it could not read again; retriable.
    */
   static async open(target: TreeReadTarget): Promise<TreeView> {
-    const config = target.config ?? DEFAULT_TREE_CONFIG;
     const collection = collectionOfPrefix(target.prefix);
     const envelope = currentReadEnvelope();
-    const budget = new ReadBudget(collection, envelope);
+    const view = new TreeView(target, new ReadBudget(collection, envelope), envelope);
     const head = await readTreeHead(target.storage, target.prefix);
-    if (head === null) {
-      return new TreeView(target, collection, envelope, budget, null, null, {
-        tail: 0,
-        entries: 0,
-        overlay: new Map(),
-      });
-    }
-    const root = await readTreeRoot(target.storage, head, config);
-    // A tree head's `snapshot` is null, so the call count is the strict
-    // range plus the probe's closing slot.
-    budget.admitHead({ ...head.json, snapshot_rows: 0, snapshot_bytes: 0 });
-    const readTail = config.steps.readTail ?? readTreeTail;
-    const tail = await readTail({ storage: target.storage, head, collection, budget });
-    return new TreeView(target, collection, envelope, budget, head, root, tail);
+    await view.#read("open", () => Promise.resolve(), head);
+    return view;
   }
 
   /** The tree's depth (the root's level), or `null` for an empty tree. */
@@ -399,16 +503,23 @@ export class TreeView {
    *
    * @throws BaerlyError code="InvalidConfig" — `id` is not a valid `_id`.
    * @throws BaerlyError code="InvalidResponse" — a fetched node fails
-   *   strict decode.
+   *   strict decode, or is missing while the head still names its root.
+   * @throws BaerlyError code="MaintenancePending" — maintenance replaced
+   *   the tree under the read and it could not read again; retriable.
    */
   async get(id: string): Promise<DocumentData | undefined> {
     assertSnapshotDocId(id);
-    const written = this.tail.overlay.get(id);
-    if (written !== undefined) {
-      return written ?? undefined;
-    }
-    const [doc] = await this.#base({ gte: id, lte: id });
-    return doc;
+    return this.#read("point", async () => {
+      const written = this.tail.overlay.get(id);
+      if (written !== undefined) {
+        return written ?? undefined;
+      }
+      if (this.#restarted && this.root !== null) {
+        this.#admitRestart(this.#state.budget, this.root.node.level * TREE_RETRIED_CALL_CHARGE);
+      }
+      const [doc] = await this.#base({ gte: id, lte: id });
+      return doc;
+    });
   }
 
   /**
@@ -422,11 +533,13 @@ export class TreeView {
    *   over what the request has left, and nothing below the root was
    *   fetched; or the answer is over the output bound.
    * @throws BaerlyError code="InvalidResponse" — a fetched node fails
-   *   strict decode.
+   *   strict decode, or is missing while the head still names its root.
+   * @throws BaerlyError code="MaintenancePending" — maintenance replaced
+   *   the tree under the read and it could not read again; retriable.
    */
   async range(range: TreeRange): Promise<DocumentData[]> {
     const rows = await this.#rows(range);
-    this.#budget.admitOutput(rows.length);
+    this.#state.budget.admitOutput(rows.length);
     return rows;
   }
 
@@ -445,27 +558,193 @@ export class TreeView {
   }
 
   /** The rows of {@link range}, before the output bound. */
-  async #rows(range: TreeRange): Promise<DocumentData[]> {
+  #rows(range: TreeRange): Promise<DocumentData[]> {
     assertRange(range);
-    this.#admitScan();
-    const overlay = this.tail.overlay;
-    const rows: (readonly [string, DocumentData])[] = [];
-    for (const doc of await this.#base(range)) {
-      const id = doc["_id"] as string;
-      if (!overlay.has(id)) {
-        rows.push([id, doc]);
+    return this.#read("scan", async () => {
+      this.#admitScan();
+      const overlay = this.tail.overlay;
+      const rows: (readonly [string, DocumentData])[] = [];
+      for (const doc of await this.#base(range)) {
+        const id = doc["_id"] as string;
+        if (!overlay.has(id)) {
+          rows.push([id, doc]);
+        }
+      }
+      const based = rows.length;
+      for (const [id, doc] of overlay) {
+        if (doc !== null && inRange(id, range)) {
+          rows.push([id, doc]);
+        }
+      }
+      if (rows.length > based) {
+        rows.sort(([a], [b]) => compareDocIds(a, b));
+      }
+      return rows.map(([, doc]) => doc);
+    });
+  }
+
+  /**
+   * Run `attempt` against the view's state, loading `load` first when
+   * given. A missing node re-reads the head ({@link #afterMissing}); a
+   * restart loads the new head, admitted for `shape`, and runs `attempt`
+   * again.
+   */
+  async #read<T>(shape: ReadShape, attempt: () => Promise<T>, load?: TreeHead | null): Promise<T> {
+    let pending = load;
+    let restart = false;
+    for (;;) {
+      try {
+        if (pending !== undefined) {
+          await this.#load(pending, restart ? shape : undefined);
+          pending = undefined;
+        }
+        return await attempt();
+      } catch (error) {
+        if (this.#restarted && error instanceof BaerlyError && error.code === "CapacityExceeded") {
+          const cause = error.cause as { refused?: boolean; bound?: string } | undefined;
+          if (
+            cause?.refused === true ||
+            cause?.bound === "headStorageCalls" ||
+            cause?.bound === "probeStorageCalls"
+          ) {
+            throw readAgainRefusal(
+              this.#collection,
+              "restartStorageCalls",
+              "maintenance replaced the tree it was reading, and this request ran out of " +
+                "storage calls while reading it again",
+            );
+          }
+        }
+        if (!(error instanceof MissingNode)) {
+          throw error;
+        }
+        pending = await this.#afterMissing(error);
+        restart = true;
       }
     }
-    const based = rows.length;
-    for (const [id, doc] of overlay) {
-      if (doc !== null && inRange(id, range)) {
-        rows.push([id, doc]);
-      }
+  }
+
+  /**
+   * Decide on a node still missing after its re-GET: re-read the head,
+   * then report corruption, refuse, or return the head to restart from.
+   *
+   * @throws BaerlyError code="InvalidResponse" — the root has not moved.
+   * @throws BaerlyError code="MaintenancePending" — the root moved again
+   *   after the view restarted.
+   */
+  async #afterMissing(missing: MissingNode): Promise<TreeHead | null> {
+    this.#admitMissingNodeCall("re-read the head");
+    const head = await readTreeHead(this.#storage, this.#prefix);
+    const decide = this.#config.steps.missingNodeAction ?? missingNodeAction;
+    const action = decide({
+      rootMoved: (head?.root ?? null) !== missing.head.root,
+      restarted: this.#restarted,
+    });
+    if (action === "corrupt") {
+      // The decoder's `present` check refuses a missing body.
+      await decodeNode(missing.key, null, missing.expected, this.#config);
+      throw new BaerlyError("Internal", `tree node ${missing.key}: decoded a missing body`);
     }
-    if (rows.length > based) {
-      rows.sort(([a], [b]) => compareDocIds(a, b));
+    if (action === "refuse") {
+      throw readAgainRefusal(
+        this.#collection,
+        "rootMovedAgain",
+        "maintenance replaced the tree it was reading, and it moved again after the read restarted",
+      );
     }
-    return rows.map(([, doc]) => doc);
+    this.#restarted = true;
+    return head;
+  }
+
+  /**
+   * Capture `head`: GET and strictly decode its root, run the head check
+   * and read the tail. On a restart, `restart` is the shape of the read
+   * being restarted, and the restart is admitted against the ledger
+   * before the root GET and again, with the new root, before the tail.
+   */
+  async #load(head: TreeHead | null, restart?: ReadShape): Promise<void> {
+    const budget = new ReadBudget(this.#collection, this.#envelope);
+    if (head === null) {
+      this.#state = { head: null, root: null, tail: NO_TAIL, budget };
+      return;
+    }
+    // The head check's calls: the strict range and the probe's closing slot.
+    const logCalls =
+      (1 + Math.max(0, head.json.tail_hint - head.json.log_seq_start)) * TREE_RETRIED_CALL_CHARGE;
+    if (restart !== undefined) {
+      this.#admitRestart(budget, (head.root === null ? 0 : TREE_RETRIED_CALL_CHARGE) + logCalls);
+    }
+    const root = await this.#fetchRoot(head);
+    if (restart !== undefined && root !== null) {
+      this.#admitRestart(
+        budget,
+        logCalls + this.#baseCalls(root, restart) * TREE_RETRIED_CALL_CHARGE,
+      );
+    }
+    // A tree head's `snapshot` is null, so the call count is the strict
+    // range plus the probe's closing slot.
+    budget.admitHead({ ...head.json, snapshot_rows: 0, snapshot_bytes: 0 });
+    const readTail = this.#config.steps.readTail ?? readTreeTail;
+    const tail = await readTail({
+      storage: this.#storage,
+      head,
+      collection: this.#collection,
+      budget,
+    });
+    this.#state = { head, root, tail, budget };
+  }
+
+  /** Base GETs below `root` a read of `shape` may issue. */
+  #baseCalls(root: DecodedTreeNode, shape: ReadShape): number {
+    const depth = root.node.level;
+    if (shape === "open") {
+      return 0;
+    }
+    if (shape === "point") {
+      return depth;
+    }
+    return treeScanBaseCalls(root.node.root!.bytes, depth, this.#config.layout);
+  }
+
+  /**
+   * Admit one GET a missing node calls for, the node's re-GET or the
+   * head re-read, at every attempt, so a healthy bucket racing GC never
+   * meets the request ledger's `CapacityExceeded` here.
+   *
+   * @throws BaerlyError code="MaintenancePending" — the GET's charge is
+   *   more than the request has left.
+   */
+  #admitMissingNodeCall(what: string): void {
+    const charged = TREE_RETRIED_CALL_CHARGE;
+    const left = remainingStorageCalls(this.#envelope.requestPool ?? "internal");
+    const admits = this.#config.steps.admitsMissingNodeCall ?? ((c: number, l: number) => c <= l);
+    if (!admits(charged, left)) {
+      throw readAgainRefusal(
+        this.#collection,
+        "missingNodeStorageCalls",
+        `a node it was reading is missing, as when maintenance replaces the tree, and this ` +
+          `request has ${left} storage calls left, under the ${charged} it needs to ${what}`,
+      );
+    }
+  }
+
+  /**
+   * Admit a restart whose remaining GETs need `charged` storage calls.
+   *
+   * @throws BaerlyError code="MaintenancePending" — more than the request
+   *   has left.
+   */
+  #admitRestart(budget: ReadBudget, charged: number): void {
+    const left = remainingStorageCalls(budget.requestPool);
+    const admits = this.#config.steps.admitsRestart ?? ((c: number, l: number) => c <= l);
+    if (!admits(charged, left)) {
+      throw readAgainRefusal(
+        this.#collection,
+        "restartStorageCalls",
+        `maintenance replaced the tree it was reading, and reading it again needs up to ` +
+          `${charged} storage calls, over the ${left} this request has left`,
+      );
+    }
   }
 
   /**
@@ -491,7 +770,10 @@ export class TreeView {
         ? 0
         : treeScanBaseCalls(root.node.root!.bytes, root.node.level, this.#config.layout) *
           TREE_RETRIED_CALL_CHARGE;
-    const left = remainingStorageCalls(this.#budget.requestPool);
+    if (this.#restarted) {
+      this.#admitRestart(this.#state.budget, charged);
+    }
+    const left = remainingStorageCalls(this.#state.budget.requestPool);
     const admits = this.#config.steps.admitsScan ?? ((c: number, l: number) => c <= l);
     if (!admits(charged, left)) {
       throw new BaerlyError(
@@ -507,13 +789,19 @@ export class TreeView {
   /** The base documents in `range`, in order, fetching only the nodes routing selects. */
   async #base(range: TreeRange): Promise<DocumentData[]> {
     const out: DocumentData[] = [];
-    if (this.root !== null) {
-      await this.#walk(this.root, range, out);
+    const { head, root } = this.#state;
+    if (head !== null && root !== null) {
+      await this.#walk(head, root, range, out);
     }
     return out;
   }
 
-  async #walk(decoded: DecodedTreeNode, range: TreeRange, out: DocumentData[]): Promise<void> {
+  async #walk(
+    head: TreeHead,
+    decoded: DecodedTreeNode,
+    range: TreeRange,
+    out: DocumentData[],
+  ): Promise<void> {
     const node = decoded.node;
     if (node.kind === "leaf") {
       for (const doc of node.docs) {
@@ -527,24 +815,79 @@ export class TreeView {
     const selected = select(node.children, range);
     for (let start = 0; start < selected.length; start += TREE_READ_PARALLEL_GETS) {
       const batch = selected.slice(start, start + TREE_READ_PARALLEL_GETS);
-      const children = await Promise.all(batch.map((entry) => this.#child(node.level, entry)));
-      for (const child of children) {
-        await this.#walk(child, range, out);
+      // Settle every GET of the batch before acting on a failure, so none
+      // outlives this attempt.
+      const settled = await Promise.allSettled(
+        batch.map((entry) => this.#child(head, node.level, entry)),
+      );
+      const failed = settled.find((result) => result.status === "rejected");
+      if (failed !== undefined) {
+        throw failed.reason;
+      }
+      for (const child of settled) {
+        await this.#walk(
+          head,
+          (child as PromiseFulfilledResult<DecodedTreeNode>).value,
+          range,
+          out,
+        );
       }
     }
   }
 
+  /** GET the root `head` names and decode it as that head's root, or `null` for an empty tree. */
+  async #fetchRoot(head: TreeHead): Promise<DecodedTreeNode | null> {
+    if (head.root === null) {
+      return null;
+    }
+    const expected: TreeNodeExpectation = {
+      prefix: head.prefix,
+      root: true,
+      floor: head.json.log_seq_start,
+    };
+    const body = await this.#fetch(head, head.root, expected);
+    const decoded = await decodeNode(head.root, body, expected, this.#config);
+    assertRootMatchesHead(head, decoded);
+    return decoded;
+  }
+
   /** Fetch the child `entry` names and decode it against `entry`. */
-  async #child(parentLevel: number, entry: TreeChildEntry): Promise<DecodedTreeNode> {
-    const prefix = this.head!.prefix;
-    const key = treeNodeKey(prefix, entry.attempt, entry.sha256);
+  async #child(
+    head: TreeHead,
+    parentLevel: number,
+    entry: TreeChildEntry,
+  ): Promise<DecodedTreeNode> {
+    const key = treeNodeKey(head.prefix, entry.attempt, entry.sha256);
+    const expected: TreeNodeExpectation = {
+      prefix: head.prefix,
+      root: false,
+      level: parentLevel - 1,
+      entry,
+    };
+    return decodeNode(key, await this.#fetch(head, key, expected), expected, this.#config);
+  }
+
+  /**
+   * GET the node at `key`, routed from `head`, and GET it once more when
+   * the first finds nothing.
+   *
+   * @throws MissingNode — both GETs found nothing.
+   */
+  async #fetch(head: TreeHead, key: string, expected: TreeNodeExpectation): Promise<Uint8Array> {
     const got = await this.#storage.get(key);
-    return decodeNode(
-      key,
-      got?.body ?? null,
-      { prefix, root: false, level: parentLevel - 1, entry },
-      this.#config,
-    );
+    if (got !== null) {
+      return got.body;
+    }
+    const reget = this.#config.steps.regetsMissingNode ?? (() => true);
+    let again = null;
+    if (reget()) {
+      this.#admitMissingNodeCall("GET the node again");
+      again = await this.#storage.get(key);
+    }
+    if (again === null) {
+      throw new MissingNode(key, expected, head);
+    }
+    return again.body;
   }
 }
 
