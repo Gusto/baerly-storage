@@ -255,6 +255,11 @@ export interface TreeSteps {
   readonly branchCut?: (count: number, hash: number, layout: TreeLayout) => boolean;
   /** The depth-0 rule: whether a row set with these totals is one root leaf. */
   readonly singleLeaf?: (rows: number, bytes: number, layout: TreeLayout) => boolean;
+  /**
+   * Whether the fold planner may accept a plan whose fold record would
+   * list `keys` keys, fresh and superseded together.
+   */
+  readonly recordKeysFit?: (keys: number) => boolean;
   /** The fold planner's ordering of its mutations by `_id`, in `utf8-scalar-v1` order. */
   readonly sortMutations?: <M extends { readonly id: string }>(mutations: readonly M[]) => M[];
   /**

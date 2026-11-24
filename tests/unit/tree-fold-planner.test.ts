@@ -22,9 +22,12 @@
  */
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
-import { sealTree } from "../../packages/server/src/tree/build.ts";
+import { freshNodeCount, sealTree } from "../../packages/server/src/tree/build.ts";
 import { chunkHash } from "../../packages/server/src/tree/chunk.ts";
-import { TREE_RETRIED_CALL_CHARGE } from "../../packages/server/src/tree/constants.ts";
+import {
+  TREE_GC_RECORD_MAX_KEYS,
+  TREE_RETRIED_CALL_CHARGE,
+} from "../../packages/server/src/tree/constants.ts";
 import {
   createTreeConfig,
   TREE_LAYOUT,
@@ -36,6 +39,7 @@ import {
   FoldPlanner,
   planFold,
   publicationReserve,
+  recordKeysFit,
   type TreeFoldPlan,
   type TreeMutation,
 } from "../../packages/server/src/tree/plan.ts";
@@ -635,6 +639,65 @@ describe("checkpoints and the look-ahead fallback", () => {
 // ---------------------------------------------------------------------
 // Prefix split
 // ---------------------------------------------------------------------
+
+describe("the fold record's key cap", () => {
+  const base: RowChange[] = Array.from({ length: 20 }, (_, i) => ({
+    id: `k${i}`,
+    value: { _id: `k${i}` },
+  }));
+  const changes: TreeMutation[] = Array.from({ length: 12 }, (_, i) => ({
+    id: `k${(i * 7) % 20}`,
+    doc: canonicalDocument({ _id: `k${(i * 7) % 20}`, v: i }, "row"),
+  }));
+
+  test("a record may list at most TREE_GC_RECORD_MAX_KEYS keys", () => {
+    expect(recordKeysFit(TREE_GC_RECORD_MAX_KEYS)).toBe(true);
+    expect(recordKeysFit(TREE_GC_RECORD_MAX_KEYS + 1)).toBe(false);
+  });
+
+  test("a change whose record could list more keys than the cap ends the fold before it", async () => {
+    const plain = configOf(SMALL_LAYOUT);
+    const run = await FoldRun.open(plain);
+    await run.fold(base);
+    const root = await run.captured();
+    const input = (config: TreeConfig) => ({
+      prefix: FOLD_PREFIX,
+      root,
+      chunkKey,
+      get: (key: string) => Promise.resolve(run.store.get(key) ?? null),
+      config,
+      spent: FOLD_SPENT_BEFORE_PLANNING,
+      budget: UNBOUNDED,
+    });
+    // The record bound after each change: fresh nodes, plus the captured
+    // root and every node read, the most a record can supersede.
+    const bounds: number[] = [];
+    const unbounded = new FoldPlanner(input(plain));
+    for (const change of changes) {
+      await expect(unbounded.add(change)).resolves.toBe(true);
+      const plan = unbounded.plan!;
+      bounds.push(freshNodeCount(plan.tree!.root) + 1 + plan.read.length);
+    }
+    // The first change whose bound exceeds every earlier one.
+    const k = bounds.findIndex((bound, i) => i > 0 && bounds.slice(0, i).every((b) => bound > b));
+    expect(k).toBeGreaterThan(0);
+    const cap = bounds[k]! - 1;
+    const capped = new FoldPlanner(
+      input(createTreeConfig({ layout: SMALL_LAYOUT, steps: { recordKeysFit: (n) => n <= cap } })),
+    );
+    let accepted = 0;
+    for (const change of changes) {
+      if (!(await capped.add(change))) {
+        break;
+      }
+      accepted += 1;
+    }
+    expect(accepted).toBe(k);
+    expect(capped.accepted).toBe(k);
+    // The rejection is prefix-only, like a budget stop.
+    await expect(capped.add(changes[0]!)).resolves.toBe(false);
+  });
+});
 
 describe("prefix split", () => {
   for (const [name, layout] of [
