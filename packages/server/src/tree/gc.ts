@@ -44,9 +44,11 @@
  * **Clock.** The only clock is the `serverDate` of GC's own state write.
  * A tick probes it (a state CAS) at most once per
  * `TREE_GC_CLOCK_PROBE_MINUTES` of local time, judged only against the
- * local time of the previous probe. Due tests use that probe's server
- * time, or the last one between probes. A probe that reports no server
- * time stamps nothing and makes nothing due.
+ * local time of the previous probe; a local time reading earlier than
+ * that one probes only past `TREE_GC_CLOCK_RESET_MINUTES`, so writers
+ * whose clocks are skewed do not probe on every tick. Due tests use
+ * that probe's server time, or the last one between probes. A probe
+ * that reports no server time stamps nothing and makes nothing due.
  *
  * **Tick.** Only a probe tick collects, so GC's LISTs and DELETEs run
  * at most once per probe interval, whatever the write rate. Any other
@@ -74,6 +76,7 @@ import { retireLogRange } from "../log-retention.ts";
 import { ctxMetrics, getCurrentContext } from "../observability/context.ts";
 import {
   TREE_GC_CLOCK_PROBE_MINUTES,
+  TREE_GC_CLOCK_RESET_MINUTES,
   TREE_GC_MAX_SWEEP_MARKS,
   TREE_GC_MAX_WORK_ENTRIES,
   TREE_GC_SUPERSEDED_DELAY_MINUTES,
@@ -162,15 +165,17 @@ export const stateBindsHead = (state: TreeGcState, head: TreeHead): boolean =>
 /**
  * Whether a tick probes the server clock, by local time alone: the
  * first probe, at least `TREE_GC_CLOCK_PROBE_MINUTES` after the last,
- * or when the local clock reads earlier than the last probe's.
+ * or more than `TREE_GC_CLOCK_RESET_MINUTES` before it (a clock reset).
+ * A smaller backward reading is skew between instances, and waits.
  */
 export const probeIsDue = (probedLocalAt: string | null, local: Date): boolean => {
   if (probedLocalAt === null) {
     return true;
   }
-  const last = Date.parse(probedLocalAt);
+  const elapsed = local.getTime() - Date.parse(probedLocalAt);
   return (
-    local.getTime() < last || local.getTime() - last >= TREE_GC_CLOCK_PROBE_MINUTES * MINUTE_MS
+    elapsed >= TREE_GC_CLOCK_PROBE_MINUTES * MINUTE_MS ||
+    elapsed < -TREE_GC_CLOCK_RESET_MINUTES * MINUTE_MS
   );
 };
 

@@ -65,6 +65,7 @@ import {
 } from "../../../../tests/fixtures/tree-mutants.ts";
 import { createObservabilityContext, runWithContext } from "../observability/context.ts";
 import {
+  TREE_GC_CLOCK_RESET_MINUTES,
   TREE_GC_SUPERSEDED_DELAY_MINUTES,
   TREE_GC_SWEEP_AGE_MINUTES,
   TREE_GC_TICK_CANDIDATES,
@@ -95,6 +96,7 @@ const DELAY = TREE_GC_SUPERSEDED_DELAY_MINUTES;
  */
 const ONE_CHECK_LEDGER = TREE_GC_TICK_RESERVED_CALLS + 4 * 3 + 12;
 const AGE = TREE_GC_SWEEP_AGE_MINUTES;
+const RESET = TREE_GC_CLOCK_RESET_MINUTES;
 const LONG = 60_000;
 
 /**
@@ -1261,9 +1263,29 @@ describe("state and clock", () => {
     await expect(bucket.tick()).resolves.toMatchObject({ result: { probed: false } });
     bucket.advance(0.6, 0);
     await expect(bucket.tick()).resolves.toMatchObject({ result: { probed: true } });
-    // A local clock that went backwards probes at once.
+    // A local clock a little behind the last probe's is skew, and waits.
     bucket.advance(-10, 0);
+    await expect(bucket.tick()).resolves.toMatchObject({ result: { probed: false } });
+    // A jump back past the reset bound is a clock reset, and probes at once.
+    bucket.advance(-RESET, 0);
     await expect(bucket.tick()).resolves.toMatchObject({ result: { probed: true } });
+  });
+
+  test("writers on two instances whose clocks are 2 minutes apart do not probe on every tick", async () => {
+    const bucket = await GcBucket.seeded();
+    let probes = 0;
+    const ticks = 24;
+    for (let i = 0; i < ticks; i++) {
+      // Fifteen seconds apart, alternating between an instance on time and one 2 minutes behind.
+      bucket.advance(0.25);
+      const behind = i % 2 === 1 ? 2 * 60_000 : 0;
+      bucket.local -= behind;
+      const { result } = await bucket.tick();
+      bucket.local += behind;
+      probes += result.probed ? 1 : 0;
+    }
+    // Six minutes of ticks: about one probe a minute, not one a tick.
+    expect(probes).toBeLessThanOrEqual(7);
   });
 
   test("between probes a tick lists and deletes nothing, even with work due; the next probe does it", async () => {
