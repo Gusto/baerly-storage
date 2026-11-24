@@ -7,7 +7,7 @@ import { describe, expect, test } from "vitest";
 import { sha256Hex } from "@baerly/protocol";
 import { TREE_GC_RECORD_MAX_KEYS } from "./constants.ts";
 import { parseTreeRecordKey } from "./key.ts";
-import { type FoldRecord, sealFoldRecord } from "./record.ts";
+import { decodeFoldRecord, type FoldRecord, sealFoldRecord } from "./record.ts";
 
 const P = "app/helpdesk/tenant/acme/manifests/tickets";
 const A1 = "00112233445566778899aabbccddeeff";
@@ -93,5 +93,60 @@ describe("sealFoldRecord", () => {
       fresh: many(TREE_GC_RECORD_MAX_KEYS - 2),
     });
     expect(sealed.bytes.byteLength).toBeGreaterThan(TREE_GC_RECORD_MAX_KEYS * 60);
+  });
+});
+
+describe("decodeFoldRecord", () => {
+  const reseal = async (body: Uint8Array): Promise<string> =>
+    `${P}/_v99/r/0000000000000007/${A1}/${await sha256Hex(body)}`;
+
+  test("decodes exactly what sealFoldRecord sealed", async () => {
+    const sealed = await sealFoldRecord(P, RECORD);
+    await expect(decodeFoldRecord(P, sealed.key, sealed.bytes)).resolves.toEqual(RECORD);
+  });
+
+  test.each<[string, (text: string) => string]>([
+    ["whitespace", (text) => text.replace(",", ", ")],
+    [
+      "reordered fields",
+      (text) =>
+        text.replace(
+          '"format":"baerly-tree-fold-record-proto","schema_version":1',
+          '"schema_version":1,"format":"baerly-tree-fold-record-proto"',
+        ),
+    ],
+    ["an extra field", (text) => text.replace(/}$/, ',"extra":1}')],
+    ["another format", (text) => text.replace("fold-record-proto", "fold-record-other")],
+    ["a newer schema", (text) => text.replace('"schema_version":1', '"schema_version":2')],
+    [
+      "unsorted fresh",
+      (text) => text.replace(`"${sha(1)}","${sha(2)}"`, `"${sha(2)}","${sha(1)}"`),
+    ],
+    ["a string floor", (text) => text.replace('"floor":7', '"floor":"7"')],
+    ["not JSON", () => "{"],
+  ])("a body with %s is InvalidResponse, even keyed by its own hash", async (_name, edit) => {
+    const sealed = await sealFoldRecord(P, RECORD);
+    const body = new TextEncoder().encode(edit(new TextDecoder().decode(sealed.bytes)));
+    await expect(decodeFoldRecord(P, await reseal(body), body)).rejects.toMatchObject({
+      code: "InvalidResponse",
+    });
+  });
+
+  test("a body that does not hash to its key, or a key of another floor or attempt, is InvalidResponse", async () => {
+    const sealed = await sealFoldRecord(P, RECORD);
+    const other = sealed.bytes.slice();
+    other[other.length - 2] = other[other.length - 2]! ^ 1;
+    await expect(decodeFoldRecord(P, sealed.key, other)).rejects.toMatchObject({
+      code: "InvalidResponse",
+    });
+    for (const key of [
+      sealed.key.replace("/0000000000000007/", "/0000000000000008/"),
+      sealed.key.replace(`/${A1}/`, `/${A2}/`),
+      sealed.key.replace("/_v99/r/", "/_v99/n/"),
+    ]) {
+      await expect(decodeFoldRecord(P, key, sealed.bytes)).rejects.toMatchObject({
+        code: "InvalidResponse",
+      });
+    }
   });
 });
