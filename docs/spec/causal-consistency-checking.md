@@ -3,7 +3,7 @@ title: Causal-consistency property checking
 audience: spec
 doc_type: verification
 summary: Low-complexity verification of causal consistency via a known global timeline.
-last-reviewed: 2026-08-13
+last-reviewed: 2026-11-24
 tags: [protocol, verification, property-testing]
 related: [sync-protocol.md]
 ---
@@ -245,6 +245,10 @@ The optional `current.json.log_delete_floor` safety envelope is covered by deter
 - the commit-path rejection that keys on the same clamped floor (`Writer#assertCommitAboveDeleteFloor`, `packages/server/src/writer.ts`, exercised by `packages/server/src/log-retirement-aba.test.ts`): a create that resolved below `min(log_delete_floor, log_seq_start)` fails with a non-retriable `AmbiguousCommit` because the log object it wrote sits beneath every reader's floor, which does not prove the logical mutation is invisible, under the two schedules that reach it — a create PUT delayed across a fold plus a drained retirement pass, and a lost-ack retry of the same `seq` across the same — with the phantom log object DELETEd best-effort and each rejection counted on `db.write.ambiguous_commit_total`, whose `cleanup` label reports that DELETE and whose failure arm never masks the throw; the check itself sits after both the fresh-win and the own-session-adoption break in the commit loop, so neither path can acknowledge such a commit; the over-rejection guards on the other side of it, namely a commit at the live tail of a collection that now carries a positive floor, the merely-folded band (`log_seq_start` advanced, `log_delete_floor` still absent and so decoding to `0`) which is accepted rather than rejected, and an out-of-bound stored floor which is clamped to `min(log_delete_floor, log_seq_start)` rather than trusted; the one over-rejection that is deliberately accepted, a create folded _and_ retired before the post-create read, whose mutation is visible through the snapshot and whose commit fails anyway; and the two-history result that argues for explicit failure over discard-and-re-probe — every object in the bucket at the readback decision point is byte-identical whether the writer's own create or a foreign writer's landed and was folded, and no surviving object names the writer's session.
 
 `retireLogRange` is the first pass to write `log_delete_floor`. Every maintenance trigger runs it through the shared `retireLogs` helper in `maintenance.ts`: `runScheduledMaintenance` after its GC phase, and `runBoundedMaintenance` on the hard-GC early-return path and as its final step. The concurrency and floor-CAS schedules are covered deterministically in `packages/server/src/log-retention.test.ts`; the crash schedule is covered by `tests/integration/maintenance-crash-fuzz.test.ts` arm 7 under fast-check. The randomized cascade itself does not schedule a retirement pass.
+
+## Snapshot reclamation coverage
+
+`packages/server/src/gc-throughput.test.ts` drives a simulated clock through the real seven-day grace at a snapshot replacement rate above the candidate ledger's weekly capacity and checks that retained snapshots plateau. `packages/server/src/gc-snapshot-floor.test.ts` covers the grace-aged floor's deletion gates alongside the per-object path: canonical keys, same generation, fresh pointer rescue, strict fold floor, and bounded sweep work.
 
 ## Conclusion
 

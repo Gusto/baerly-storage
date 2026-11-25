@@ -51,6 +51,19 @@ export interface GcPending {
    * Empty string `""` before the first sweep.
    */
   last_swept_at: string;
+  /**
+   * Constant-size snapshot grace evidence. After `due_at`, the observed
+   * `pending_floor` joins `eligible_floor` and the next grace starts at a
+   * newly observed fold floor. Only canonical snapshots strictly below
+   * the eligible floor, in the same generation, may use this evidence.
+   * Optional schema-v1 extension; older writers may safely discard it.
+   */
+  snapshot_gc?: {
+    eligible_floor: number;
+    pending_floor: number;
+    due_at: string;
+    generation?: string;
+  };
 }
 
 /**
@@ -314,6 +327,7 @@ export const mergeGcPending = (
     schema_version: GC_PENDING_SCHEMA_VERSION,
     candidates,
     last_swept_at: lastSweptAt,
+    ...(latest.snapshot_gc !== undefined && { snapshot_gc: latest.snapshot_gc }),
   };
 };
 
@@ -414,6 +428,25 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
       "InvalidResponse",
       `gc/pending.json at ${key}: last_swept_at must be a string`,
     );
+  }
+  if (r["snapshot_gc"] !== undefined) {
+    const checkpoint = r["snapshot_gc"] as NonNullable<GcPending["snapshot_gc"]>;
+    if (
+      checkpoint === null ||
+      typeof checkpoint !== "object" ||
+      !Number.isSafeInteger(checkpoint.eligible_floor) ||
+      checkpoint.eligible_floor < 0 ||
+      !Number.isSafeInteger(checkpoint.pending_floor) ||
+      checkpoint.pending_floor < checkpoint.eligible_floor ||
+      typeof checkpoint.due_at !== "string" ||
+      !Number.isFinite(Date.parse(checkpoint.due_at)) ||
+      (checkpoint.generation !== undefined && typeof checkpoint.generation !== "string")
+    ) {
+      throw new BaerlyError(
+        "InvalidResponse",
+        `gc/pending.json at ${key}: snapshot_gc must carry ordered non-negative integer floors, a valid due_at, and an optional string generation`,
+      );
+    }
   }
   // `log_scan_cursor` is deprecated: stale log objects are now reclaimed
   // by a sequence window (see `log-retention.ts`) rather than a LIST/mark/cursor.

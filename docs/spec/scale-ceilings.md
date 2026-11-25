@@ -3,7 +3,7 @@ title: Scale ceilings
 audience: spec
 doc_type: verification
 summary: The single owner of every published scale figure — the workload envelope, the per-host snapshot ceilings C and E, the host support tiers — and where each number comes from.
-last-reviewed: 2026-11-16
+last-reviewed: 2026-11-24
 tags: [capacity, verification, fold, ceilings]
 related: ["../about/graduation.md", "../about/workload-fit.md", "../about/cost-model.md"]
 ---
@@ -65,7 +65,7 @@ S3-compatible storage on Workers needs Paid. Workers Free with S3 over HTTP is n
 
 A Worker cannot tell Free from Paid, so the default `cf-free` profile assumes the free plan for storage reached through `fetch` too: the request ledger caps it at 45 calls per request, so a request that would pass Free's 50 gets a typed `CapacityExceeded` instead of the platform throwing at call 51. To keep a write and the maintenance it dispatches inside that cap, the write tick folds once 7 writes are pending (`CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES`) and a GC slice deletes at most 3 replaced snapshots (`CF_FREE_FETCH_GC_MAX_SWEEPS`). This applies to a Paid Worker on S3 that has not set `cf-paid`; set it to leave the 45-call cap.
 
-Folding every ~7 writes also limits the write rate under that profile. GC reclaims about 1,000 replaced snapshots per collection per 7-day grace period, so at ~900 writes per day per collection about 129 folds a day leave ~900 replaced snapshots in the bucket, at most ~450 MiB for 512 KiB snapshots; above that rate, replaced snapshots accumulate.
+Snapshot reclamation records grace-aged fold floors in constant-size metadata, so its throughput is not capped by the 1,000-entry candidate ledger per grace period. With ongoing GC, replaced snapshots become eligible after at most two 7-day grace periods plus GC scheduling delay, then drain under the profile's per-pass sweep and request budgets. Retained snapshot bytes therefore grow with fold rate, snapshot size and that retention interval; GC must still run often enough to keep its bounded deletion work ahead of snapshot production. See [snapshot reclamation](sync-protocol.md#protocol-invariants).
 
 ### How solid these are
 
