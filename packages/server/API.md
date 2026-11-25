@@ -419,7 +419,7 @@ interface LogEntry {
 }
 ```
 
-**Cursor priming.** First call: pass `cursor=` (empty string). The server's fast path returns immediately _iff_ the log already has entries for this collection — you get `events: [...]` and an opaque `next_cursor`. **If the collection is empty, the first call blocks for the full long-poll budget (~25 s) before returning `events: []` and a new `next_cursor`.** Either prime by inserting one row first if you need an immediate response, or budget your client / test for the full timeout. Every later call passes the returned cursor back, even after an empty batch — treat it as an opaque string. An empty batch can still carry a new `next_cursor` (a position after changes already folded into the snapshot, or one that has learned the collection's generation), so always keep the returned cursor; `events` is empty when the budget elapsed with no new writes. A cursor survives log folds; it expires only when the client falls behind what the log retains.
+**Cursor priming.** Seed the first call from the read you render: every read response's `_meta.since_cursor` (the by-id 404 included) names exactly the state it returned, so polling from it delivers each later change once and nothing the read already showed. A separate `cursor=` (empty string) poll reads the log at another moment, so a change that commits and folds between the two requests is missed or delivered twice. With no read to seed from, pass `cursor=`. The server's fast path returns immediately _iff_ the log already has entries for this collection — you get `events: [...]` and an opaque `next_cursor`. **If the collection is empty, the first call blocks for the full long-poll budget (~25 s) before returning `events: []` and a new `next_cursor`.** Either prime by inserting one row first if you need an immediate response, or budget your client / test for the full timeout. Every later call passes the returned cursor back, even after an empty batch — treat it as an opaque string. An empty batch can still carry a new `next_cursor` (a position after changes already folded into the snapshot, or one that has learned the collection's generation), so always keep the returned cursor; `events` is empty when the budget elapsed with no new writes. A cursor survives log folds; it expires only when the client falls behind what the log retains.
 
 **Test-mode tuning.** Vitest's default per-test timeout is 5 s; the long-poll's 25 s budget will dominate that. Shrink it on the worker factory under a test-only env switch:
 
@@ -437,7 +437,7 @@ In `vitest.config.mts`'s miniflare bindings, set them as numbers (`SINCE_TIMEOUT
 
 React apps use `@gusto/baerly-storage/client/react` (see next section) instead of poking `/v1/since` by hand; hand-rolled subscribers in other frameworks `fetch` it directly. The wire shape above is the public contract; there is no cursor-tailing helper.
 
-**Handle `410 CursorExpired` or your loop will spin.** The cursor never works again: back off, re-read, then restart with `cursor=` (empty). Causes: RECIPES.md, `CursorExpired`.
+**Handle `410 CursorExpired` or your loop will spin.** The cursor never works again: back off, re-read, then resume from the re-read's `_meta.since_cursor`. Causes: RECIPES.md, `CursorExpired`.
 
 ## React: `createBaerlyReact`
 

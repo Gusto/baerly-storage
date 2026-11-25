@@ -86,7 +86,7 @@ The generic on `client.collection<N>(name)` is the collection name (constrained 
 
 ### `BaerlyError code="CursorExpired"` (HTTP 410)
 
-**Cause:** a `/v1/since` cursor can no longer resume: the changes after it are no longer retained, or `baerly admin restore --force` truncated the generation it was minted in. `retriable` is `false`; the same cursor never succeeds again. A malformed cursor is `SchemaError` (400) instead. **Fix:** re-read the rows you show, then resume with `cursor=` (empty); the changes between the dead cursor and the restart are not replayed. Back off before the restart so a cursor that expires on every lap cannot become a hot loop. The React hooks do this for you.
+**Cause:** a `/v1/since` cursor can no longer resume: the changes after it are no longer retained, or `baerly admin restore --force` truncated the generation it was minted in. `retriable` is `false`; the same cursor never succeeds again. A malformed cursor is `SchemaError` (400) instead. **Fix:** re-read the rows you show, then resume from that read's `_meta.since_cursor` (`cursor=`, empty, against a server that omits it); the changes between the dead cursor and the re-read are not replayed, and the re-read already shows them. Back off before the restart so a cursor that expires on every lap cannot become a hot loop. The React hooks do this for you.
 
 ### `_id must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
 
