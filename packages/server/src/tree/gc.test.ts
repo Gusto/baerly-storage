@@ -654,7 +654,7 @@ const lateDuplicateFailure = (mutant?: TreeMutant) =>
  * adopts one of them. The sweep must not delete it while that attempt
  * can still land.
  */
-const sweepReuseFailure = (mutant?: TreeMutant) =>
+const sweepReuseFailure = (mutant?: TreeMutant, duplicateRecord = false) =>
   guarded(async () => {
     const bucket = await GcBucket.seeded();
     const reused = "a".repeat(32);
@@ -676,6 +676,17 @@ const sweepReuseFailure = (mutant?: TreeMutant) =>
     }
     if (!stamped) {
       return "setup: no mark of the lost attempt was stamped";
+    }
+    if (duplicateRecord) {
+      const duplicate = await bucket.prepare([
+        ["k07", 77],
+        ["k09", 99],
+      ]);
+      await bucket.refreshTailHint();
+      const lostAgain = await bucket.publish(duplicate, { attempt: reused });
+      if (lostAgain.kind !== "cas-lost") {
+        return `setup: the duplicate was ${lostAgain.kind}`;
+      }
     }
     const retry = await bucket.startFold([["k07", 77]], { attempt: reused });
     await bucket.tickFor(AGE + 5, gcConfig(mutant));
@@ -1158,6 +1169,10 @@ describe("attempt identity and closure", () => {
     },
     LONG,
   );
+
+  test("retiring duplicate records preserves an open publisher's sweep protection", async () => {
+    await expect(sweepReuseFailure(undefined, true)).resolves.toBeUndefined();
+  });
 
   test("a winner whose identity reappears is quarantined even when its record outlives the tick", async () => {
     await expect(quarantineFailure()).resolves.toBeUndefined();
