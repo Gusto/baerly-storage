@@ -28,9 +28,10 @@ function write(rel: string, body: string): void {
 }
 
 test("passes on a doc with valid frontmatter and resolved related link", () => {
+  const today = new Date().toISOString().slice(0, 10);
   write(
     "a.md",
-    `---\ntitle: A\naudience: meta\nlast-reviewed: 2026-05-28\nrelated: ["./b.md"]\n---\n`,
+    `---\ntitle: A\naudience: meta\nlast-reviewed: ${today}\nrelated: ["./b.md"]\n---\n`,
   );
   write("b.md", `---\ntitle: B\naudience: meta\n---\n`);
   const r = runScript(tmpRoot);
