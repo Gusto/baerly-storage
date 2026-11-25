@@ -54,20 +54,6 @@ describe("createApp", () => {
     expect(res.status).toBe(200);
   });
 
-  test("GET /v1/spec returns the static IR anonymously (no bearer, no collections)", async () => {
-    const storage = new MemoryStorage();
-    // Verifier that REJECTS (no identity) — /v1/spec must still serve.
-    const verifier: Verifier = async () => null;
-    const app = createApp({ app: "t", storage, verifier });
-
-    const res = await app.fetch(new Request("http://localhost/v1/spec"));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body["specVersion"]).toBe("1");
-    expect(Array.isArray(body["errorCodes"])).toBe(true);
-    expect("collections" in body).toBe(false); // anonymous → no tenant names
-  });
-
   test("GET /v1/spec returns the static IR when the verifier throws", async () => {
     const storage = new MemoryStorage();
     const verifier: Verifier = async () => {
@@ -85,24 +71,6 @@ describe("createApp", () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(body["specVersion"]).toBe("1");
     expect("collections" in body).toBe(false);
-  });
-
-  test("GET /v1/spec includes declared collections when the verifier accepts", async () => {
-    const storage = new MemoryStorage();
-    const verifier: Verifier = async () => ({ tenantPrefix: "acme", identity: {} });
-    const app = createApp({
-      app: "t",
-      storage,
-      verifier,
-      config: { collections: { notes: {}, tasks: {} } },
-    });
-
-    const res = await app.fetch(
-      new Request("http://localhost/v1/spec", { headers: { authorization: "Bearer dev" } }),
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { collections?: Array<{ name: string }> };
-    expect(body.collections?.map((c) => c.name).toSorted()).toEqual(["notes", "tasks"]);
   });
 
   test("oversized content-length POST returns 413 via the kernel's defence-in-depth", async () => {

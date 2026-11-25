@@ -274,6 +274,7 @@ describe.runIf(gate("deploy-cloudflare", CF_URL !== undefined && SECRET !== unde
             });
           },
           options: {
+            expectedCollections: ["notes"],
             // The router has no HTTP If-Match support; keep the CAS default.
             // Real fetch on a real deploy carries AbortSignal cleanly;
             // keep the default `supportsAbort: true`.

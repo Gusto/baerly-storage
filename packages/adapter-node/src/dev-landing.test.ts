@@ -1,8 +1,6 @@
 /**
  * Tests for `devLandingMiddleware` — the Hono middleware mounted by
- * `createApp` when `opts.dev` is set. Mirrors the load-bearing cases
- * from `server-routes.test.ts`'s "createApp dev landing" block,
- * with focused per-middleware unit coverage.
+ * `createApp` when `opts.dev` is set.
  *
  * Covers:
  *   - off-by-default when `opts.dev` is unset
