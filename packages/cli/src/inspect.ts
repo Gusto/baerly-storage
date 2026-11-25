@@ -68,6 +68,7 @@ import {
 } from "@baerly/protocol";
 import { probeTailFrom } from "@baerly/server/_internal/kernel";
 import {
+  foldTriggerEntries,
   isFoldViable,
   type MaintenanceProfile,
   parseMaintenanceEnv,
@@ -148,11 +149,11 @@ const foldGateVerdict = (
     verdict,
     ceiling_bytes: ceilingBytes,
     ceiling_rows: ceilingRows,
-    // The shortest tail the write tick folds: its count arm, or the bytes
-    // arm's entry floor.
+    // The shortest tail the write tick folds: its count arm (capped at the
+    // per-pass cap, as the tick applies it), or the bytes arm's entry floor.
     retention_stalled:
       verdict !== "open" &&
-      liveLogTail >= Math.min(profile.foldAtTailEntries, WRITE_TICK_MIN_ENTRIES_TO_COMPACT),
+      liveLogTail >= Math.min(foldTriggerEntries(profile), WRITE_TICK_MIN_ENTRIES_TO_COMPACT),
   };
 };
 

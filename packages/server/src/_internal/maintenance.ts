@@ -30,6 +30,7 @@ export {
   dispatchInlineAwaited,
   dispatchWriteTick,
   estimateTailBytes,
+  foldTriggerEntries,
   isFoldViable,
   parseMaintenanceEnv,
   resolveFoldCeilings,
