@@ -56,65 +56,45 @@ const cur = (logSeqStart: number, logDeleteFloor?: number): CurrentJson =>
   });
 
 describe("computeRetirableRange", () => {
-  test("is empty when the floor has not cleared the window", () => {
-    expect(computeRetirableRange(cur(100), { window: 500, maxDeletes: 20 })).toEqual({
-      start: 0,
-      end: 0,
-    });
-  });
+  const budget = { window: 500, maxDeletes: 20 };
+  const DEFAULTS = undefined;
 
-  test("retires from the delete floor up to the per-pass budget", () => {
-    expect(computeRetirableRange(cur(1000, 400), { window: 500, maxDeletes: 20 })).toEqual({
-      start: 400,
-      end: 420,
-    });
-  });
-
-  test("clamps the end to the window boundary", () => {
-    expect(computeRetirableRange(cur(1000, 495), { window: 500, maxDeletes: 20 })).toEqual({
-      start: 495,
-      end: 500,
-    });
-  });
-
-  test("is empty when a raised window falls behind the delete floor", () => {
-    expect(computeRetirableRange(cur(1000, 900), { window: 500, maxDeletes: 20 })).toEqual({
-      start: 900,
-      end: 900,
-    });
-  });
-
-  test("clamps a malformed delete floor to the live floor", () => {
-    expect(computeRetirableRange(cur(10, 900), { window: 0, maxDeletes: 20 })).toEqual({
-      start: 10,
-      end: 10,
-    });
-  });
-
-  test("treats an absent delete floor as zero", () => {
-    expect(computeRetirableRange(cur(1000), { window: 500, maxDeletes: 20 })).toEqual({
-      start: 0,
-      end: 20,
-    });
-  });
-
-  test("never returns an end above log_seq_start", () => {
-    const range = computeRetirableRange(cur(10), { window: 0, maxDeletes: 1000 });
-    expect(range.end).toBeLessThanOrEqual(10);
-  });
-
-  test("uses the default window before the retention boundary", () => {
-    expect(computeRetirableRange(cur(LOG_RETENTION_SEQ_WINDOW - 1))).toEqual({
-      start: 0,
-      end: 0,
-    });
-  });
-
-  test("uses the default delete budget after the retention boundary", () => {
-    expect(computeRetirableRange(cur(LOG_RETENTION_SEQ_WINDOW + 100))).toEqual({
-      start: 0,
-      end: 20,
-    });
+  test.each([
+    ["is empty when the floor has not cleared the window", cur(100), budget, 0, 0],
+    ["retires from the delete floor up to the per-pass budget", cur(1000, 400), budget, 400, 420],
+    ["clamps the end to the window boundary", cur(1000, 495), budget, 495, 500],
+    [
+      "is empty when a raised window falls behind the delete floor",
+      cur(1000, 900),
+      budget,
+      900,
+      900,
+    ],
+    [
+      "clamps a malformed delete floor to the live floor",
+      cur(10, 900),
+      { window: 0, maxDeletes: 20 },
+      10,
+      10,
+    ],
+    ["treats an absent delete floor as zero", cur(1000), budget, 0, 20],
+    ["never returns an end above log_seq_start", cur(10), { window: 0, maxDeletes: 1000 }, 0, 10],
+    [
+      "uses the default window before the retention boundary",
+      cur(LOG_RETENTION_SEQ_WINDOW - 1),
+      DEFAULTS,
+      0,
+      0,
+    ],
+    [
+      "uses the default delete budget after the retention boundary",
+      cur(LOG_RETENTION_SEQ_WINDOW + 100),
+      DEFAULTS,
+      0,
+      20,
+    ],
+  ])("%s", (_name, current, opts, start, end) => {
+    expect(computeRetirableRange(current, opts)).toEqual({ start, end });
   });
 });
 

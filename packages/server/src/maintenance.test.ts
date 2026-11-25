@@ -1308,73 +1308,81 @@ describe("retireLogs error policy (via the runners)", () => {
     },
   });
 
-  test("WriteConflict from the floor CAS is swallowed — runMaintenancePass resolves, floor unpublished", async () => {
+  const retirement = { logRetention: { window: 5 } } as InternalMaintenanceOptions;
+
+  const readFloor = async (inner: Storage): Promise<number> =>
+    logDeleteFloorOf((await readCurrentJson(inner, KEY))!.json);
+
+  // `WriteConflict` is routine CAS contention (the next pass retries);
+  // runMaintenancePass swallows it and re-throws any other retirement error.
+  test.each([
+    {
+      name: "WriteConflict from the floor CAS is swallowed: runMaintenancePass resolves, floor unpublished",
+      inject: conflictOnCurrentJsonCas,
+      rejects: false,
+      // Non-vacuity: the swallowed WriteConflict came from retirement's own
+      // floor CAS (a hit on an earlier compact/GC CAS would have REJECTED the
+      // call), so resolving with floor 0 pins that only retirement ran.
+      floor: 0,
+    },
+    {
+      name: "a non-WriteConflict DELETE failure re-throws out of runMaintenancePass after the floor CAS landed",
+      inject: networkErrorOnLogDelete,
+      rejects: true,
+      // CAS-before-delete: the floor was published (the `{0, 20}` gate end)
+      // before the DELETE loop rejected. The slice below stays leaked on
+      // disk: leak, never corruption.
+      floor: 20,
+    },
+  ])("$name", async ({ inject, rejects, floor }) => {
     const inner = new MemoryStorage();
     await seedIdleFolded(inner);
-    // `WriteConflict` is routine CAS contention (the next pass retries), per
-    // the helper's documented error policy — must NOT reject.
-    await runMaintenancePass({ storage: conflictOnCurrentJsonCas(inner), currentJsonKey: KEY }, {
-      logRetention: { window: 5 },
-    } as InternalMaintenanceOptions);
-    // Non-vacuity: the swallowed WriteConflict came from retirement's own
-    // floor CAS, so the floor was never published. (A wrapper hit on an
-    // earlier compact/GC current.json CAS would have REJECTED the call —
-    // runMaintenancePass propagates those — so resolving here plus
-    // floor === 0 pins that retirement, and only retirement, ran.)
-    const after = await readCurrentJson(inner, KEY);
-    expect(logDeleteFloorOf(after!.json)).toBe(0);
+    const pass = runMaintenancePass({ storage: inject(inner), currentJsonKey: KEY }, retirement);
+    if (rejects) {
+      await expect(pass).rejects.toMatchObject({ code: "NetworkError" });
+    } else {
+      await pass;
+    }
+    await expect(readFloor(inner)).resolves.toBe(floor);
   });
 
-  test("a non-WriteConflict DELETE failure re-throws out of runMaintenancePass — after the floor CAS landed", async () => {
-    const inner = new MemoryStorage();
-    await seedIdleFolded(inner);
-    await expect(
-      runMaintenancePass({ storage: networkErrorOnLogDelete(inner), currentJsonKey: KEY }, {
-        logRetention: { window: 5 },
-      } as InternalMaintenanceOptions),
-    ).rejects.toMatchObject({ code: "NetworkError" });
-    // CAS-before-delete ordering: the floor was published (= 20, the
-    // `{0, 20}` gate end) before the DELETE loop rejected. The slice
-    // below it stays leaked on disk — leak, never corruption.
-    const after = await readCurrentJson(inner, KEY);
-    expect(logDeleteFloorOf(after!.json)).toBe(20);
-  });
-
-  test("the same failure through runBoundedMaintenance never rejects — unexpected_error_total + stack log", async () => {
+  // Runner contract: never throws on the write-tick path. A DELETE failure is
+  // counted and logged by the outer catch; a WriteConflict is swallowed by the
+  // helper and never reaches it. prevSeq == tail means no GC cadence boundary,
+  // and the empty live tail keeps gate1 cold, so retirement is the only phase
+  // with work this tick.
+  test.each([
+    {
+      name: "the same DELETE failure through runBoundedMaintenance never rejects: unexpected_error_total + stack log",
+      inject: networkErrorOnLogDelete,
+      unexpected: true,
+    },
+    {
+      name: "WriteConflict through runBoundedMaintenance stays expected: no unexpected_error_total bump",
+      inject: conflictOnCurrentJsonCas,
+      unexpected: false,
+    },
+  ])("$name", async ({ inject, unexpected }) => {
     const inner = new MemoryStorage();
     await seedIdleFolded(inner);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const recorder = await withRecorder(async () => {
-        // prevSeq == tail ⇒ no GC cadence boundary, and the empty live
-        // tail keeps gate1 cold, so retirement is the only phase with
-        // work this tick.
         await runBoundedMaintenance(
-          { storage: networkErrorOnLogDelete(inner), currentJsonKey: KEY, prevSeq: 50 },
+          { storage: inject(inner), currentJsonKey: KEY, prevSeq: 50 },
           { logRetention: { window: 5 } },
         );
       });
-      // Runner contract: never throws on the write-tick path — the
-      // outer catch counts it, logs the stack, and swallows.
-      expect(counterTotal(recorder, "db.maintenance.unexpected_error_total")).toBeGreaterThan(0);
-      expect(errorSpy).toHaveBeenCalled();
+      const total = counterTotal(recorder, "db.maintenance.unexpected_error_total");
+      if (unexpected) {
+        expect(total).toBeGreaterThan(0);
+        expect(errorSpy).toHaveBeenCalled();
+      } else {
+        expect(total).toBe(0);
+      }
     } finally {
       errorSpy.mockRestore();
     }
-  });
-
-  test("WriteConflict through runBoundedMaintenance stays expected — no unexpected_error_total bump", async () => {
-    const inner = new MemoryStorage();
-    await seedIdleFolded(inner);
-    const recorder = await withRecorder(async () => {
-      await runBoundedMaintenance(
-        { storage: conflictOnCurrentJsonCas(inner), currentJsonKey: KEY, prevSeq: 50 },
-        { logRetention: { window: 5 } },
-      );
-    });
-    // The helper swallows WriteConflict itself — it must never reach the
-    // outer catch, which is reserved for unexpected errors.
-    expect(counterTotal(recorder, "db.maintenance.unexpected_error_total")).toBe(0);
   });
 });
 
@@ -1385,98 +1393,84 @@ describe("parseMaintenanceEnv", () => {
     (k: string): string | undefined =>
       env[k];
 
-  test("unset env yields no maxFoldBytes and disabled=false", () => {
-    expect(parseMaintenanceEnv(reader({}))).toEqual({ disabled: false });
-  });
+  const MAX_FOLD = "BAERLY_MAINTENANCE_MAX_FOLD_BYTES";
+  const DISABLE = "BAERLY_MAINTENANCE_DISABLE";
 
-  test("empty-string BAERLY_MAINTENANCE_MAX_FOLD_BYTES is ignored (no maxFoldBytes)", () => {
-    expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: "" }))).toEqual({
-      disabled: false,
-    });
-  });
-
-  test("MAX_SAFE_INTEGER is the largest accepted BAERLY_MAINTENANCE_MAX_FOLD_BYTES", () => {
-    expect(
-      parseMaintenanceEnv(
-        reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: String(Number.MAX_SAFE_INTEGER) }),
-      ).maxFoldBytes,
-    ).toBe(Number.MAX_SAFE_INTEGER);
-  });
-
-  test("valid numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES parses to maxFoldBytes", () => {
-    expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: "1048576" }))).toEqual({
-      maxFoldBytes: 1_048_576,
-      disabled: false,
-    });
-  });
-
-  test("non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES throws InvalidConfig naming the variable and value", () => {
-    for (const v of [
-      "8mb",
-      "1O24",
-      "lots",
-      "Infinity",
-      "1e400",
-      // Strict: a plain positive decimal integer only, no trimming.
-      " 1024 ",
-      "1024\n",
-      "0x400",
-      "1e6",
-      "1.5",
-      "1e300",
-      "+1024",
-      "01024",
-      String(Number.MAX_SAFE_INTEGER + 1),
-    ]) {
-      let caughtError: unknown;
-      try {
-        parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: v }));
-      } catch (error) {
-        caughtError = error;
-      }
-      expect((caughtError as BaerlyError).code).toBe("InvalidConfig");
-      expect((caughtError as BaerlyError).message).toContain("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
-      expect((caughtError as BaerlyError).message).toContain(JSON.stringify(v));
+  const parseError = (env: Record<string, string>): BaerlyError => {
+    try {
+      parseMaintenanceEnv(reader(env));
+    } catch (error) {
+      return error as BaerlyError;
     }
+    throw new Error("expected parseMaintenanceEnv to throw");
+  };
+
+  test.each([
+    ["unset env yields no maxFoldBytes and disabled=false", {}, { disabled: false }],
+    ["an empty-string max fold bytes is ignored", { [MAX_FOLD]: "" }, { disabled: false }],
+    [
+      "a valid numeric max fold bytes parses to maxFoldBytes",
+      { [MAX_FOLD]: "1048576" },
+      { maxFoldBytes: 1_048_576, disabled: false },
+    ],
+    [
+      "MAX_SAFE_INTEGER is the largest accepted max fold bytes",
+      { [MAX_FOLD]: String(Number.MAX_SAFE_INTEGER) },
+      { maxFoldBytes: Number.MAX_SAFE_INTEGER, disabled: false },
+    ],
+  ])("%s", (_name, env, expected) => {
+    expect(parseMaintenanceEnv(reader(env))).toEqual(expected);
   });
 
-  test("non-positive BAERLY_MAINTENANCE_MAX_FOLD_BYTES throws InvalidConfig", () => {
-    for (const v of ["0", "-1", "-1048576"]) {
-      let caughtError: unknown;
-      try {
-        parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: v }));
-      } catch (error) {
-        caughtError = error;
-      }
-      expect((caughtError as BaerlyError).code).toBe("InvalidConfig");
-    }
+  test.each([
+    "8mb",
+    "1O24",
+    "lots",
+    "Infinity",
+    "1e400",
+    // Strict: a plain positive decimal integer only, no trimming.
+    " 1024 ",
+    "1024\n",
+    "0x400",
+    "1e6",
+    "1.5",
+    "1e300",
+    "+1024",
+    "01024",
+    String(Number.MAX_SAFE_INTEGER + 1),
+  ])("non-numeric max fold bytes %j throws InvalidConfig naming the variable and value", (v) => {
+    const error = parseError({ [MAX_FOLD]: v });
+    expect(error.code).toBe("InvalidConfig");
+    expect(error.message).toContain(MAX_FOLD);
+    expect(error.message).toContain(JSON.stringify(v));
   });
 
-  test("BAERLY_MAINTENANCE_DISABLE closed vocabulary matches the documented rules", () => {
-    // Falsy: unset / "" / "0" / "false" / "FALSE" (case-insensitive).
-    expect(parseMaintenanceEnv(reader({})).disabled).toBe(false);
-    for (const v of ["", "0", "false", "FALSE"]) {
-      expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_DISABLE: v })).disabled).toBe(false);
-    }
+  test.each(["0", "-1", "-1048576"])("non-positive max fold bytes %j throws InvalidConfig", (v) => {
+    expect(parseError({ [MAX_FOLD]: v }).code).toBe("InvalidConfig");
+  });
+
+  // Falsy: "" / "0" / "false" / "FALSE" (case-insensitive); unset is covered above.
+  test.each([
+    ["", false],
+    ["0", false],
+    ["false", false],
+    ["FALSE", false],
     // Truthy: "1" / "true" / "TRUE" (case-insensitive) — and ONLY these.
-    for (const v of ["1", "true", "TRUE"]) {
-      expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_DISABLE: v })).disabled).toBe(true);
-    }
+    ["1", true],
+    ["true", true],
+    ["TRUE", true],
+  ])("BAERLY_MAINTENANCE_DISABLE=%j parses to disabled=%s", (v, disabled) => {
+    expect(parseMaintenanceEnv(reader({ [DISABLE]: v })).disabled).toBe(disabled);
   });
 
-  test("BAERLY_MAINTENANCE_DISABLE outside the closed vocabulary throws InvalidConfig", () => {
-    // "yes"/"on" used to be silently truthy; "no"/"off" used to be silently
-    // truthy too (the original bug this vocabulary closes). All now throw.
-    for (const v of ["yes", "on", "no", "off", "2", "disable", " true", "1 "]) {
-      let caughtError: unknown;
-      try {
-        parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_DISABLE: v }));
-      } catch (error) {
-        caughtError = error;
-      }
-      expect((caughtError as BaerlyError).code).toBe("InvalidConfig");
-    }
-  });
+  // "yes"/"on" used to be silently truthy; "no"/"off" used to be silently
+  // truthy too (the original bug this vocabulary closes). All now throw.
+  test.each(["yes", "on", "no", "off", "2", "disable", " true", "1 "])(
+    "BAERLY_MAINTENANCE_DISABLE=%j is outside the closed vocabulary and throws InvalidConfig",
+    (v) => {
+      expect(parseError({ [DISABLE]: v }).code).toBe("InvalidConfig");
+    },
+  );
 });
 
 describe("dispatchInlineAwaited", () => {
