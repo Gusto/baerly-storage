@@ -79,18 +79,6 @@ const conformanceExclude = process.env["CONFORMANCE"] === "1" ? [] : ["**/confor
 // resolving at all on the default path.
 const exportSmokeExclude = process.env["EXPORT_SMOKE"] === "1" ? [] : ["**/export-smoke.test.ts"];
 
-// Day-one handshake gate (`tests/integration/day-one-handshake.test.ts`)
-// orchestrates `npm create baerly@latest` → `baerly deploy` → first-
-// record on a per-target basis driven by `DAY_ONE_TARGETS=node|
-// cloudflare,node`. Excluded from the default project's glob when the
-// env var is unset so `pnpm test` stays green on a fresh checkout;
-// opt in via `pnpm gate:day-one` after exporting `DAY_ONE_TARGETS`
-// (plus `CF_API_TOKEN` / `CF_ACCOUNT_ID` for the CF target) per
-// `docs/contributing/day-one-gate.md`. The file also uses
-// `describe.runIf(...)` — double-gating mirrors `exportSmokeExclude`.
-const dayOneExclude =
-  process.env["DAY_ONE_TARGETS"] !== undefined ? [] : ["**/day-one-handshake.test.ts"];
-
 // Vitest parses repeatable CLI `--exclude` flags, but inline projects
 // do not inherit them when `--project=default` is selected. Keep the flags on
 // `test:randomize` as the command contract and mirror them into this project's
@@ -225,7 +213,6 @@ export default defineConfig({
             ...configDefaults.exclude,
             ...conformanceExclude,
             ...exportSmokeExclude,
-            ...dayOneExclude,
             ...randomizeExclude,
             // CF adapter has its own project; don't double-run.
             r2BindingConformanceGlob,
