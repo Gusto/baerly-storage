@@ -250,4 +250,172 @@ describe("the count arm skips a fold that cannot land", () => {
       json: { log_seq_start: SEED_DOCS + 8 },
     });
   });
+
+  /** Each seed document's `g`: the batch tests select rows by it. */
+  const GROUP: Readonly<Record<number, string>> = { 1: "b", 2: "c", 3: "c", 4: "c", 9: "b" };
+
+  /**
+   * `storage` over `inner`, counting snapshot GETs and PUTs. `beforeLogPut`
+   * runs once, just before the next log-entry PUT after `skipLogPuts`
+   * others: the seam for a commit another writer lands between a verb's
+   * read and its commit.
+   */
+  const harness = (inner: MemoryStorage) => {
+    const traffic = { snapshotGets: 0, snapshotPuts: 0 };
+    let inject: { skip: number; run: () => Promise<void> } | undefined;
+    const storage: Storage = {
+      get: (key, opts) => {
+        if (key.includes("/snapshot/")) {
+          traffic.snapshotGets += 1;
+        }
+        return inner.get(key, opts);
+      },
+      put: async (key, body, opts) => {
+        if (key.includes("/snapshot/")) {
+          traffic.snapshotPuts += 1;
+        }
+        if (inject !== undefined && key.includes("/log/")) {
+          if (inject.skip > 0) {
+            inject.skip -= 1;
+          } else {
+            const { run } = inject;
+            inject = undefined;
+            await run();
+          }
+        }
+        return inner.put(key, body, opts);
+      },
+      delete: (key, opts) => inner.delete(key, opts),
+      list: (prefix, opts) => inner.list(prefix, opts),
+    };
+    return {
+      storage,
+      traffic,
+      beforeLogPut: (run: () => Promise<void>, skipLogPuts = 0): void => {
+        inject = { skip: skipLogPuts, run };
+      },
+    };
+  };
+
+  /**
+   * Seed `SEED_DOCS` documents folded into one snapshot under `SMALL`'s
+   * `C`, then grow `grown` unticked so the snapshot folded through it is
+   * past `C` (when `grown` is given), as a host move or a lowered `C`
+   * leaves it.
+   */
+  const seedOverC = async (inner: MemoryStorage, grown?: string): Promise<void> => {
+    const docs = Db.create({ storage: inner, app: APP, tenant: TENANT }).collection(COLL);
+    await runWithContext(UNTICKED, async () => {
+      for (let i = 0; i < SEED_DOCS; i++) {
+        await docs.insert({ _id: `d${i}`, n: i, g: GROUP[i] ?? "a", blob: SEED_BLOB });
+      }
+    });
+    await runMaintenancePass(
+      { storage: inner, currentJsonKey: CURRENT_JSON_KEY },
+      { compact: { minEntriesToCompact: 1 } },
+    );
+    if (grown !== undefined) {
+      await runWithContext(UNTICKED, () => docs.update(grown, { blob: "x".repeat(8000) }));
+    }
+  };
+
+  /** A writer on `inner` that never ticks: another host's commits. */
+  const foreign = (inner: MemoryStorage) => {
+    const docs = Db.create({ storage: inner, app: APP, tenant: TENANT }).collection(COLL);
+    return (run: (c: typeof docs) => Promise<unknown>) => async (): Promise<void> => {
+      await runWithContext(UNTICKED, async () => {
+        await run(docs);
+      });
+    };
+  };
+
+  /** Run `run` on `SMALL` with its ticks captured, then run them; returns their snapshot traffic. */
+  const writeThenTick = async (
+    traffic: { snapshotGets: number; snapshotPuts: number },
+    run: () => Promise<unknown>,
+  ): Promise<TickTraffic> => {
+    const ticks: Array<() => Promise<void>> = [];
+    const ctx = createObservabilityContext({
+      maintenance: {
+        options: { profile: SMALL, phasesPerTick: "both" },
+        dispatch: (task) => {
+          ticks.push(task);
+        },
+      },
+    });
+    await runWithContext(ctx, run);
+    const gets = traffic.snapshotGets;
+    const puts = traffic.snapshotPuts;
+    for (const tick of ticks) {
+      await tick();
+    }
+    return { snapshotGets: traffic.snapshotGets - gets, snapshotPuts: traffic.snapshotPuts - puts };
+  };
+
+  test("a commit that finds entries past C landed after its read keeps the count arm off its tick", async () => {
+    const inner = new MemoryStorage();
+    await seedOverC(inner);
+    const { storage, traffic, beforeLogPut } = harness(inner);
+    const docs = Db.create({ storage, app: APP, tenant: TENANT }).collection(COLL);
+    // The verb's read sees an empty tail, so its decision says a fold
+    // lands. Before its commit another writer lands three entries, the
+    // first past C. The commit's re-check over that window must say the
+    // fold cannot land, or the tick (tail 4, the count arm) rebuilds.
+    beforeLogPut(
+      foreign(inner)(async (other) => {
+        await other.update("d0", { blob: "x".repeat(8000) });
+        await other.update("d2", { n: 7 });
+        await other.update("d3", { n: 8 });
+      }),
+    );
+    const tick = await writeThenTick(traffic, () => docs.update("d1", { n: 5 }));
+    const cur = (await readCurrentJson(inner, CURRENT_JSON_KEY))!.json;
+    expect(cur.log_seq_start).toBe(SEED_DOCS);
+    // The verb's own commit landed behind the other writer's three.
+    await expect(
+      inner.get(`${CURRENT_JSON_KEY.replace("/current.json", "")}/log/${SEED_DOCS + 3}.json`),
+    ).resolves.not.toBeNull();
+    expect(tick).toEqual({ snapshotGets: 0, snapshotPuts: 0 });
+  });
+
+  test("in a batch, a row that brings the snapshot back within C folds on its own tick", async () => {
+    const inner = new MemoryStorage();
+    await seedOverC(inner, "d9");
+    await runWithContext(UNTICKED, async () => {
+      const docs = Db.create({ storage: inner, app: APP, tenant: TENANT }).collection(COLL);
+      await docs.update("d2", { n: 7 });
+      await docs.update("d3", { n: 8 });
+    });
+    const { storage, traffic } = harness(inner);
+    const docs = Db.create({ storage, app: APP, tenant: TENANT }).collection(COLL);
+    // Rows d1 then d9: d1 stays past C (tail 4, held off), d9 shrinks
+    // back within C (tail 5), so its tick folds the whole tail.
+    const tick = await writeThenTick(traffic, () =>
+      docs.where({ g: "b" }).update({ n: 7, blob: SEED_BLOB }),
+    );
+    expect(tick.snapshotPuts).toBe(1);
+    await expect(readCurrentJson(inner, CURRENT_JSON_KEY)).resolves.toMatchObject({
+      json: { log_seq_start: SEED_DOCS + 5 },
+    });
+  });
+
+  test("in a batch, a row after one re-decided over a window keeps that decision's fold verdict", async () => {
+    const inner = new MemoryStorage();
+    await seedOverC(inner, "d9");
+    const { storage, traffic, beforeLogPut } = harness(inner);
+    const docs = Db.create({ storage, app: APP, tenant: TENANT }).collection(COLL);
+    // Rows d2, d3, d4, all same-size, so every prefix stays past C. Another
+    // writer lands an entry before the second row's commit, which
+    // re-decides the remaining rows over that window; the third row (tail
+    // 5, past the count arm) must read its own verdict from that decision.
+    beforeLogPut(
+      foreign(inner)((other) => other.update("d5", { n: 8 })),
+      1,
+    );
+    const tick = await writeThenTick(traffic, () => docs.where({ g: "c" }).update({ n: 7 }));
+    await expect(readCurrentJson(inner, CURRENT_JSON_KEY)).resolves.toMatchObject({
+      json: { log_seq_start: SEED_DOCS },
+    });
+    expect(tick).toEqual({ snapshotGets: 0, snapshotPuts: 0 });
+  });
 });
