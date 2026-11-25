@@ -38,8 +38,6 @@ interface GateSpec {
   readonly optedIn?: (env: Env) => boolean;
 }
 
-const dayOneTargets = (env: Env): string[] => (env["DAY_ONE_TARGETS"] ?? "").split(",");
-
 export const GATES = {
   minio: {
     reason: "needs MINIO=1 and the `pnpm dev:storage` Minio + Toxiproxy stack",
@@ -67,14 +65,6 @@ export const GATES = {
   },
   sqlite: { reason: "needs the sqlite3 CLI on PATH" },
   git: { reason: "needs the git CLI on PATH" },
-  "day-one-node": {
-    reason: "needs DAY_ONE_TARGETS to include node",
-    optedIn: (env) => dayOneTargets(env).includes("node"),
-  },
-  "day-one-cloudflare": {
-    reason: "needs DAY_ONE_TARGETS to include cloudflare, plus CF_API_TOKEN and CF_ACCOUNT_ID",
-    optedIn: (env) => dayOneTargets(env).includes("cloudflare"),
-  },
   "deploy-node": {
     reason: "needs NODE_DEPLOY_URL and SHARED_SECRET (manual-e2e/README.md)",
     optedIn: (env) => env["NODE_DEPLOY_URL"] !== undefined,

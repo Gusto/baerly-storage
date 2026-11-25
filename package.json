@@ -191,7 +191,6 @@
     "test:mutate:dry-run": "stryker run --dryRunOnly",
     "mutate:survivors": "node scripts/mutation-survivors.mjs",
     "test:coverage:protocol": "vitest run --config stryker.vitest.config.ts --coverage --coverage.provider=v8 --coverage.include='packages/protocol/src/**/*.ts' --coverage.exclude='**/*.test.ts' --coverage.exclude='**/*.test-d.ts' --coverage.exclude='**/index.ts'",
-    "gate:day-one": "vitest run --project=default tests/integration/day-one-handshake.test.ts",
     "gen:spec": "node scripts/gen-spec.ts",
     "gen:version-matrix": "node scripts/check-version-matrix.ts --write",
     "bundle-sizes": "node scripts/bundle-sizes.ts",

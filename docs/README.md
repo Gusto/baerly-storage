@@ -67,7 +67,6 @@ For people changing the code in this repo.
 - [`contributing/features.md`](contributing/features.md) — feature → code map.
 - [`contributing/mutation-testing.md`](contributing/mutation-testing.md) — manual StrykerJS mutation testing scoped to the protocol kernel: `pnpm test:mutate`.
 - [`contributing/publishing.md`](contributing/publishing.md) — how to publish `@gusto/baerly-storage` + `@gusto/create-baerly-storage` publicly to npmjs.com.
-- [`contributing/day-one-gate.md`](contributing/day-one-gate.md) — pre-release manual gate.
 - [`contributing/conventions/`](contributing/conventions/) — path-scoped conventions auto-loaded by Claude via `.claude/rules/`:
   - [`contributing/conventions/tests.md`](contributing/conventions/tests.md)
   - [`contributing/conventions/docs.md`](contributing/conventions/docs.md)
