@@ -219,6 +219,10 @@ Seeded replay: the cascade logs an integer `seed` at start and dumps the observe
 
 `tests/integration/randomized.test.ts` additionally generates insert, replace, delete, and compaction histories against a row-map model over a generated legacy marker corpus, and checks complete reads and ordered, limited mutation selection. This exercises both the folded base and live log suffix. `tests/unit/declared-indexes-inert.test.ts` asserts that declaring indexes changes no storage call of any verb, tick or read.
 
+## Change feed seeded from a read
+
+A read's `_meta.since_cursor` names the state it returned (invariant 13 in `docs/spec/sync-protocol.md`). `packages/server/src/http/read-since-cursor-randomized.test.ts` drives the router under fast-check with random inserts, updates, folds, log retirements, uncertified reclaims, reads and polls, with writes and a fold landing between a read and its first poll, inside a read after it loaded `current.json`, and between a long-poll's cycles. A subscriber that renders a read and polls from its cursor must be handed every later change exactly once, in order, with its view matching the committed state after each one, or get `CursorExpired` only when an entry it still needs is gone. The same file pins that seeding from a separate `cursor=""` poll fails those checks. `packages/client/src/react/subscription-pool.test.ts` checks that the React pool polls only once a query's read has returned, sends that read's cursor, and reruns a query that read before the seed at a different state.
+
 ## Deterministic R2 create-outcome coverage
 
 `packages/adapter-cloudflare/src/r2-binding-storage.request-accounting.test.ts` drives the real R2 adapter, retry helper, and Writer with an injected binding:
