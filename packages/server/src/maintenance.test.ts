@@ -1838,6 +1838,115 @@ describe("runBoundedMaintenance — fold-wall deferral signal", () => {
     await expect(inner.get(`${COLLECTION_PREFIX}/gc/pending.json`)).resolves.not.toBeNull();
   });
 
+  test("a tick the writing verb held off signals a held-off deferral without a storage write", async () => {
+    // The count arm (9) is at the tail, the ratio is cold, and the verb
+    // found the fold cannot land, so the tick attempts no fold.
+    const inner = new MemoryStorage();
+    await seedLog(inner, KEY, COLL, 9);
+    await patchCurrent(inner, KEY, { mean_entry_bytes: 64, snapshot_bytes: 256 * 1024 });
+    const counted = countingStorage(inner);
+    const recorder = await withSignalSinks(() =>
+      runBoundedMaintenance(
+        {
+          storage: counted.storage,
+          currentJsonKey: KEY,
+          prevSeq: 9,
+          observedTail: 9,
+          foldWouldDefer: true,
+        },
+        { profile: { ...MAINTENANCE_PROFILE_CF_FREE, foldAtTailEntries: 9 } },
+      ),
+    );
+    expect(deferredCounterLabels(recorder)).toEqual([
+      { collection: COLL, dimension: "bytes", gate: "held-off" },
+    ]);
+    const recs = deferRecords();
+    expect(recs).toHaveLength(1);
+    expect(recs[0]!.properties).toMatchObject({
+      gate: "held-off",
+      snapshot_bytes: 256 * 1024,
+      ceiling_bytes: C_FREE,
+      live_log_tail: 9,
+      log_seq_start: 0,
+    });
+    // No warn stamp, no hint refresh: the signal writes nothing.
+    expect(counted.report()).toMatchObject({ put: 0, delete: 0, list: 0 });
+    await expect(readLastWarnedSeq(inner, KEY)).resolves.toBeUndefined();
+  });
+
+  test("a held-off tick whose bytes arm trips but which the hard-GC guard takes signals held-off", async () => {
+    // The ratio trips past a 1-entry floor, and 15 → 20 crosses the hard
+    // GC boundary (16), so this single-phase tick runs GC, not the fold.
+    const inner = new MemoryStorage();
+    await seedLog(inner, KEY, COLL, 20);
+    await patchCurrent(inner, KEY, {
+      mean_entry_bytes: RATIO_TRIPPING_MEAN,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
+    });
+    const recorder = await withSignalSinks(() =>
+      runBoundedMaintenance(
+        {
+          storage: inner,
+          currentJsonKey: KEY,
+          prevSeq: 15,
+          observedTail: 20,
+          foldWouldDefer: true,
+        },
+        { profile: MAINTENANCE_PROFILE_CF_FREE, minEntriesToCompact: 1 },
+      ),
+    );
+    await expect(readSeqStart(inner, KEY)).resolves.toBe(0);
+    await expect(inner.get(`${COLLECTION_PREFIX}/gc/pending.json`)).resolves.not.toBeNull();
+    expect(deferredCounterLabels(recorder)).toEqual([
+      { collection: COLL, dimension: "bytes", gate: "held-off" },
+    ]);
+  });
+
+  test("a held-off tick with no Gate-1 arm that the hard-GC guard takes signals once", async () => {
+    // Ratio cold, so the held-off signal fires before the guard's GC.
+    const inner = new MemoryStorage();
+    await seedLog(inner, KEY, COLL, 20);
+    await patchCurrent(inner, KEY, { mean_entry_bytes: 64, snapshot_bytes: 256 * 1024 });
+    const recorder = await withSignalSinks(() =>
+      runBoundedMaintenance(
+        {
+          storage: inner,
+          currentJsonKey: KEY,
+          prevSeq: 15,
+          observedTail: 20,
+          foldWouldDefer: true,
+        },
+        { profile: MAINTENANCE_PROFILE_CF_FREE },
+      ),
+    );
+    await expect(inner.get(`${COLLECTION_PREFIX}/gc/pending.json`)).resolves.not.toBeNull();
+    expect(deferredCounterLabels(recorder)).toEqual([
+      { collection: COLL, dimension: "bytes", gate: "held-off" },
+    ]);
+  });
+
+  test("a held-off tick whose bytes arm trips signals only its rebuild defer", async () => {
+    const inner = new MemoryStorage();
+    await seedRebuildWall(inner);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let recorder: RequestScopedMetricsRecorder;
+    try {
+      recorder = await withSignalSinks(() =>
+        runBoundedMaintenance(
+          { ...rebuildArgs(inner), foldWouldDefer: true },
+          { profile: MAINTENANCE_PROFILE_CF_FREE },
+        ),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+    expect(deferredCounterLabels(recorder)).toEqual([
+      { collection: COLL, dimension: "bytes", gate: "rebuild" },
+    ]);
+    expect(deferRecords().map((r) => r.properties["gate"])).toEqual(["rebuild"]);
+  });
+
   test("a throwing warn sink still stamps the warn and tail_hint, and falls back to console.warn", async () => {
     const inner = new MemoryStorage();
     await seedPreFoldWall(inner, { snapshot_bytes: C_FREE + 1, snapshot_rows: 0 });
@@ -1980,6 +2089,30 @@ describe("runBoundedMaintenance — sized from the request ledger's remainder", 
     expectNoErrors(recorder);
     // Nothing half-written: no snapshot PUT was issued.
     await expect(snapshotCount(inner)).resolves.toBe(0);
+  });
+
+  test("a held-off fold the bytes arm trips but the budget skips signals held-off", async () => {
+    const inner = new MemoryStorage();
+    await seedLog(inner, KEY, COLL, FOLD_TAIL);
+    await patchCurrent(inner, KEY, {
+      mean_entry_bytes: RATIO_TRIPPING_MEAN,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
+    });
+    const { recorder } = await tickWithBudget(
+      inner,
+      25,
+      { ...foldTick, foldWouldDefer: true },
+      { profile: MAINTENANCE_PROFILE_CF_FREE, minEntriesToCompact: 1 },
+    );
+    await expect(readSeqStart(inner, KEY)).resolves.toBe(0);
+    expect(skipped(recorder, "fold")).toBe(1);
+    expect(
+      recorder
+        .snapshot()
+        .counters.filter((c) => c.name === "db.compaction.deferred_total")
+        .map((c) => c.labels),
+    ).toEqual([{ collection: COLL, dimension: "bytes", gate: "held-off" }]);
   });
 
   test("a fold that exactly fits what is left lands", async () => {

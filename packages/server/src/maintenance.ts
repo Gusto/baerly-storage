@@ -586,14 +586,19 @@ export interface BoundedMaintenanceOptions {
   readonly signal?: AbortSignal;
 }
 
-/** Which fold gate closed: the runner's pre-fold projection, or compact()'s post-rebuild check. */
-type FoldGate = "pre-fold" | "rebuild";
+/**
+ * Which fold gate closed: the runner's pre-fold projection, compact()'s
+ * post-rebuild check, or the writing verb's capacity check (`held-off`),
+ * which found that no fold of the next pass lands within `C`, so the tick
+ * does not attempt one.
+ */
+type FoldGate = "pre-fold" | "rebuild" | "held-off";
 
 /**
  * Structured fields of one fold-wall deferral — the `fold_deferred`
  * LogTape record carries these plus `detail`, the
  * {@link foldDeferredWarning} rendering of them for humans. `snapshot_*` are the stored figures on a
- * `pre-fold` defer and the rebuilt (unwritten) figures on a `rebuild` one.
+ * `pre-fold` or `held-off` defer and the rebuilt (unwritten) figures on a `rebuild` one.
  */
 // A `type` (not `interface`) so it is assignable to the `warn` sink's
 // `Readonly<Record<string, unknown>>` parameter.
@@ -623,8 +628,11 @@ const foldDeferredWarning = (f: FoldDeferredFields): string => {
     f.gate === "rebuild"
       ? `the rows arm tripped (the next log entry adds a row past E, or the rebuilt snapshot is over E)`
       : `the rows arm tripped (snapshot_rows > E)`;
-  const tripped =
+  let tripped =
     f.dimension === "bytes" ? `the bytes arm tripped (snapshot_bytes > C)` : rowsTripped;
+  if (f.gate === "held-off") {
+    tripped = `the pending log entries leave it past C, so no fold can land until a write brings it back within C`;
+  }
   const remedy =
     f.dimension === "bytes"
       ? `On Workers Paid set BAERLY_MAINTENANCE_PROFILE=cf-paid (C=${MAINTENANCE_PROFILE_CF_PAID.maxFoldBytes}); ` +
@@ -642,6 +650,113 @@ const foldDeferredWarning = (f: FoldDeferredFields): string => {
     `folds again log_seq_start stays at ${f.log_seq_start}, log retention is paused, the live ` +
     `tail (${f.live_log_tail} entries) and the bucket grow without bound, and every read ` +
     `replays the tail. ${remedy} See docs/about/graduation.md.`
+  );
+};
+
+/**
+ * Record one fold-wall deferral: `db.compaction.deferred_total` (labels
+ * `collection`, `dimension`, `gate`) plus `db.compaction.deferred_{bytes,rows}_total`
+ * (distinct names, because the canonical line keys counters by name alone
+ * and drops labels), and, when `warn`, a `fold_deferred` structured warning
+ * through the adapter's {@link MaintenanceDispatch.warn} sink carrying the
+ * human text as `detail` — or, with no sink or one that throws, that text
+ * as a `console.warn` line. No storage call.
+ */
+const emitFoldDeferred = (f: FoldDeferredFields, warn: boolean): void => {
+  const metrics = ctxMetrics();
+  metrics.counter("db.compaction.deferred_total", 1, {
+    collection: f.collection,
+    dimension: f.dimension,
+    gate: f.gate,
+  });
+  metrics.counter(
+    f.dimension === "bytes"
+      ? "db.compaction.deferred_bytes_total"
+      : "db.compaction.deferred_rows_total",
+    1,
+    { collection: f.collection, gate: f.gate },
+  );
+  if (!warn) {
+    return;
+  }
+  const detail = foldDeferredWarning(f);
+  const sink = getCurrentContext()?.maintenance?.warn;
+  if (sink !== undefined) {
+    // A throwing custom sink must not skip the caller's stamp + hint
+    // refresh (or GC after it), so its failure is contained here.
+    try {
+      sink("fold_deferred", { ...f, detail });
+      return;
+    } catch {
+      // Fall through to the console line.
+    }
+  }
+  // The human line goes to the console only when no sink took the
+  // record — a bare `Db.create()` (no adapter, or `observability:
+  // false`) or a sink that threw — so an adapter logs one line per
+  // deferral, not two.
+  console.warn(detail);
+};
+
+/**
+ * Whether a deferral at `tail` warns: a collection that has never warned
+ * warns on its first deferral, so a young collection does not sit silent
+ * until seq 1000; after that, once per {@link MAINTENANCE_WARN_INTERVAL_WRITES}
+ * writes past the SHARED `current.json.last_warned_seq` (not per-isolate
+ * memory — a fresh isolate must honour it).
+ */
+const warnDue = (current: CurrentJson, tail: number): boolean =>
+  current.last_warned_seq === undefined ||
+  tail - current.last_warned_seq >= MAINTENANCE_WARN_INTERVAL_WRITES;
+
+/**
+ * The `held-off` deferral: the writing verb's capacity check found that
+ * no fold of the next pass lands within `C` (`foldWouldDefer`), and this
+ * write's tick attempts no fold. Without it the state would stay silent
+ * where the bytes arm's entry floor is above every such tail: on cf-free
+ * the tail is refused at one pass (20 entries), under that 50-entry
+ * floor. It issues no storage call, so unlike a fold-tick deferral it
+ * does not stamp `last_warned_seq`: while {@link warnDue} holds, each such
+ * write warns. Read-only `current` and `tail` give the figures.
+ */
+const signalFoldHeldOff = (
+  collection: string,
+  current: CurrentJson,
+  tail: number,
+  ceilings: FoldCeilings,
+): void =>
+  emitFoldDeferred(
+    {
+      collection,
+      dimension: "bytes",
+      gate: "held-off",
+      snapshot_bytes: current.snapshot_bytes,
+      snapshot_rows: current.snapshot_rows,
+      ceiling_bytes: ceilings.maxFoldBytes,
+      ceiling_rows: ceilings.maxFoldRows,
+      live_log_tail: tail - current.log_seq_start,
+      log_seq_start: current.log_seq_start,
+    },
+    warnDue(current, tail),
+  );
+
+/**
+ * The writer's `held-off` deferral for a commit whose tick it does not
+ * dispatch ({@link signalFoldHeldOff}); a dispatched tick signals from the
+ * runner instead, so each write counts at most once. `current` is the
+ * commit's pre-commit read, `observedTail` the writer's `seq + 1`.
+ */
+export const noteFoldHeldOff = (
+  current: CurrentJson,
+  currentJsonKey: string,
+  observedTail: number,
+): void => {
+  const maint = getCurrentContext()?.maintenance;
+  signalFoldHeldOff(
+    collectionFromCurrentJsonKey(currentJsonKey).name,
+    current,
+    Math.max(observedTail, current.log_seq_start),
+    resolveFoldCeilings(maint?.options?.profile, maint?.maxFoldBytes),
   );
 };
 
@@ -713,10 +828,12 @@ export const runBoundedMaintenance = async (
      * The writing verb's capacity check found that no seq in the next
      * fold pass leaves the snapshot within `C`, so a fold would rebuild
      * it and defer. Gate 1's count arm stays off for this tick, as the
-     * forced fold does in that state (`capacity.ts`'s `tailLands`); the
-     * bytes arm still applies, and its rebuild defer carries the
-     * `fold_deferred` signal. Absent ⇒ unknown: a direct `Writer` commit
-     * or a scheduled tick.
+     * forced fold does in that state (`capacity.ts`'s `tailLands`). The
+     * bytes arm still applies past its entry floor (on cf-paid and Node;
+     * on cf-free the verb refuses such a tail at one pass, below the
+     * floor), and its rebuild defer carries the `fold_deferred` signal.
+     * A tick that attempts no fold signals a `held-off` deferral instead.
+     * Absent ⇒ unknown: a direct `Writer` commit or a scheduled tick.
      */
     foldWouldDefer?: boolean;
   },
@@ -831,7 +948,8 @@ export const runBoundedMaintenance = async (
     // GET on every read and write, unless the verb found the fold would
     // defer. The bytes arm needs its entry floor (50 on the write tick),
     // so it trips first only where the count arm is higher (tails of
-    // 50-63 on cf-paid and Node) or held off by `foldWouldDefer`.
+    // 50-63 on cf-paid and Node) or, on those profiles, held off by
+    // `foldWouldDefer` (cf-free refuses such a tail at 20).
     const gate1 =
       forceFold ||
       (args.foldWouldDefer !== true && nextSeq - logSeqStart >= foldAtTailEntries) ||
@@ -901,21 +1019,15 @@ export const runBoundedMaintenance = async (
     };
 
     /**
-     * The one fold-wall deferral signal, shared by both gates so a
-     * deferral counts once and reads the same wherever it closed:
+     * The fold-wall deferral signal of a tick that attempted a fold,
+     * shared by both gates so a deferral counts once and reads the same
+     * wherever it closed:
      *
-     * - `db.compaction.deferred_total` (labels `collection`, `dimension`,
-     *   `gate`) plus `db.compaction.deferred_{bytes,rows}_total` — distinct
-     *   names, because the canonical line keys counters by name alone and
-     *   drops labels.
-     * - A `fold_deferred` structured warning through the adapter's
-     *   {@link MaintenanceDispatch.warn} sink, carrying the human text as
-     *   `detail` — or, with no sink or one that throws, that text as a
-     *   `console.warn` line. Rate-limited by the SHARED `current.json.last_warned_seq` (not a
-     *   per-isolate Set — a fresh isolate must honour it). A collection
-     *   that has never warned warns on its first deferral. On Cloudflare
-     *   the tick runs in `ctx.waitUntil` after the canonical line flushed,
-     *   so the log record is the only signal an operator sees.
+     * - {@link emitFoldDeferred}: the counters, and the `fold_deferred`
+     *   warning when {@link warnDue}. This tick stamps `last_warned_seq`
+     *   on the refresh below. On Cloudflare the tick runs in
+     *   `ctx.waitUntil` after the canonical line flushed, so the log
+     *   record is the only signal an operator sees.
      * - The bounded `tail_hint` refresh (HR-2): a deferring collection
      *   never reaches compact()'s Step-7 CAS, so without it every read
      *   would re-walk the whole growing tail. Write-tick only; reads stay
@@ -927,26 +1039,9 @@ export const runBoundedMaintenance = async (
       snapshotBytes: number;
       snapshotRows: number;
     }): Promise<void> => {
-      const metrics = ctxMetrics();
-      metrics.counter("db.compaction.deferred_total", 1, {
-        collection,
-        dimension: d.dimension,
-        gate: d.gate,
-      });
-      metrics.counter(
-        d.dimension === "bytes"
-          ? "db.compaction.deferred_bytes_total"
-          : "db.compaction.deferred_rows_total",
-        1,
-        { collection, gate: d.gate },
-      );
-      // A collection that has never warned warns on its FIRST deferral, so a
-      // young collection does not sit silent until seq 1000.
-      const warnDue =
-        current.last_warned_seq === undefined ||
-        nextSeq - current.last_warned_seq >= MAINTENANCE_WARN_INTERVAL_WRITES;
-      if (warnDue) {
-        const fields: FoldDeferredFields = {
+      const warn = warnDue(current, nextSeq);
+      emitFoldDeferred(
+        {
           collection,
           dimension: d.dimension,
           gate: d.gate,
@@ -956,29 +1051,10 @@ export const runBoundedMaintenance = async (
           ceiling_rows: E,
           live_log_tail: nextSeq - logSeqStart,
           log_seq_start: logSeqStart,
-        };
-        const detail = foldDeferredWarning(fields);
-        const sink = getCurrentContext()?.maintenance?.warn;
-        let delivered = false;
-        if (sink !== undefined) {
-          // A throwing custom sink must not skip the stamp + hint refresh
-          // below (or GC after it), so its failure is contained here.
-          try {
-            sink("fold_deferred", { ...fields, detail });
-            delivered = true;
-          } catch {
-            // Fall through to the console line.
-          }
-        }
-        // The human line goes to the console only when no sink took the
-        // record — a bare `Db.create()` (no adapter, or `observability:
-        // false`) or a sink that threw — so an adapter logs one line per
-        // deferral, not two.
-        if (!delivered) {
-          console.warn(detail);
-        }
-      }
-      await refreshTailHintIfNeeded(warnDue);
+        },
+        warn,
+      );
+      await refreshTailHintIfNeeded(warn);
     };
 
     const runGcAndRefreshTailHint = async (): Promise<void> => {
@@ -1013,12 +1089,29 @@ export const runBoundedMaintenance = async (
         return;
       }
 
+      // The verb found the fold cannot land. Every exit that attempts no
+      // fold signals it as held off: here when no Gate-1 arm trips, and at
+      // the hard-GC and budget exits below when the bytes arm does. A fold
+      // the bytes arm attempts signals its own defer, so each held-off
+      // write counts once.
+      const signalHeldOff = (): void => {
+        if (args.foldWouldDefer === true) {
+          signalFoldHeldOff(collection, current, nextSeq, ceilings);
+        }
+      };
+      if (!gate1) {
+        signalHeldOff();
+      }
+
       // ── Step 2. Hard-GC starvation guard ("single" only). ────────────
       // A long fold-heavy drain would otherwise starve GC on every
       // fold-tripping tick. A COARSE cadence the fold may NOT preempt
       // guarantees ~1 GC tick per GC_STARVATION_GUARD intervals.
       const hardGc = crossesGcBoundary(prevSeq, nextSeq, gcInterval * GC_STARVATION_GUARD);
       if (phasesPerTick === "single" && hardGc) {
+        if (gate1) {
+          signalHeldOff();
+        }
         await runGcAndRefreshTailHint();
         // Retire stale logs after GC even on the early-return path.
         // Non-WriteConflict errors re-throw into the outer catch below
@@ -1039,6 +1132,7 @@ export const runBoundedMaintenance = async (
           Math.min(maxFoldEntriesPerPass, Math.max(0, nextSeq - logSeqStart));
       if (gate1 && foldViable && !foldFits) {
         skipForBudget("fold");
+        signalHeldOff();
       } else if (gate1) {
         if (foldViable) {
           // Thread the same `C` / `E` ceilings the pre-fold projection

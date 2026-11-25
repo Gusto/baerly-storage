@@ -624,10 +624,14 @@ export const GC_PENDING_CAS_MAX_ATTEMPTS: number = 3;
  * {@link MAINTENANCE_FOLD_AT_TAIL_ENTRIES}) bounds the request count. This arm
  * still needs its entry floor, so it trips first only where the count arm sits
  * above that floor: on `cf-paid` and `node` (64), a tail of 50-63 entries whose
- * estimated bytes reach the snapshot's. On `cf-free` (20, or 7 over `fetch`) the
- * count arm always trips first, unless the writing verb holds it off because the
- * fold would defer; this arm still applies then, and its rebuild defer carries
- * the `fold_deferred` signal. See docs/spec/scale-ceilings.md for the derivation.
+ * estimated bytes reach the snapshot's, or, on those profiles, a tail the writing
+ * verb holds the count arm off for because the fold would defer, again only when
+ * the tail's estimated bytes reach the snapshot's. On `cf-free` (20, or 7 over
+ * `fetch`) this arm never trips first: the count arm does, and the verb refuses
+ * a tail that cannot fold once it holds a pass (20 entries), under this arm's
+ * floor. Every held-off write whose tick attempts no fold signals a `held-off`
+ * `fold_deferred` instead, so on every profile that is the state's only signal
+ * unless this arm trips. See docs/spec/scale-ceilings.md for the derivation.
  *
  * @see docs/spec/scale-ceilings.md
  * @see packages/server/src/maintenance.ts

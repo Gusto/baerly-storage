@@ -94,7 +94,7 @@ import { assertKeyWithinLimit } from "./key-limit.ts";
 import { walkLogRange } from "./log-walk.ts";
 import { findLogTail, probeTailFrom } from "./log-tail.ts";
 import { tryAdoptOwnSessionLogEntry } from "./log-conflict-adoption.ts";
-import { dispatchWriteTick, shouldFireMaintenance } from "./maintenance.ts";
+import { dispatchWriteTick, noteFoldHeldOff, shouldFireMaintenance } from "./maintenance.ts";
 import { getCurrentContext, runWithContext } from "./observability/context.ts";
 import { assertPostImageIdentity } from "./post-image-identity.ts";
 import { isOwnCollection } from "./collection-alias.ts";
@@ -899,6 +899,9 @@ export class Writer {
         ...(forceFold && { forceFold: true }),
         ...(foldWouldDefer && { foldWouldDefer: true }),
       });
+    } else if (foldWouldDefer && maint?.disabled !== true) {
+      // No tick to signal that the fold cannot land; signal it here.
+      noteFoldHeldOff(current, this.#currentJsonKey, observedTail);
     }
 
     // Class-A op count for this commit: the committing log create alone.

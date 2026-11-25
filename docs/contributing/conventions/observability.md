@@ -122,7 +122,7 @@ The load-bearing kernel metrics today (canonical list in [`packages/protocol/src
 - `db.r2.put.429_total` — R2 prefix-partition rate-limit counter.
 - `db.manifest.lag_window_depth` — compactor gauge (alert at >100).
 - `db.compact.entries_folded` — compactor histogram (entries folded per run).
-- `db.compaction.deferred_total` — write-tick runner counter, labelled by `collection`, `dimension` (`bytes` / `rows`) and `gate` (`pre-fold` / `rebuild`). The fold hit the snapshot ceiling and did not run, so `log_seq_start` and log retention are frozen. Counted once per deferral by the runner; `compact()` itself never emits it.
+- `db.compaction.deferred_total` — write-tick counter, labelled by `collection`, `dimension` (`bytes` / `rows`) and `gate` (`pre-fold` / `rebuild` / `held-off`). The fold hit the snapshot ceiling and did not run, so `log_seq_start` and log retention are frozen. `held-off` is a write whose capacity check found the next fold cannot land within `C`, on a tick that attempts no fold. Counted once per deferral, by the runner, or by the writer for a `held-off` write whose tick it does not dispatch; `compact()` itself never emits it.
 - `db.compaction.deferred_bytes_total` / `db.compaction.deferred_rows_total` — the same event under a per-dimension name (labels `collection`, `gate`), because the canonical line keys counters by name and drops labels.
 - `db.gc.entries_swept_per_second` — GC gauge (livelock indicator when below writes/s).
 - `db.gc.swept_total` — GC counter, labelled by reason.
