@@ -128,7 +128,32 @@ pnpm build        # exercise the build path (rolldown bundle)
 - changed timing constants in `packages/protocol/src/constants.ts` (`LAG_WINDOW_MILLIS`, etc.);
 - have a flaky failure with a fast-check seed and want more coverage before trusting a fix.
 
-Use `pnpm test:fuzz-maintenance` instead when changing `packages/server/src/compactor.ts`, `packages/server/src/gc.ts`, or `packages/server/src/writer.ts`; that script runs the crash-injection fuzzer. Neither command is a load test or a latency benchmark.
+Use `pnpm test:fuzz-maintenance` instead when changing `packages/server/src/compactor.ts`, `packages/server/src/gc.ts`, or `packages/server/src/writer.ts`; that script runs the crash-injection fuzzer locally. The merge evidence for those changes is a CI run, described next. Neither command is a load test or a latency benchmark.
+
+### Crash fuzzer in CI
+
+The `crash-fuzzer` workflow (`.github/workflows/crash-fuzzer.yml`) runs `tests/integration/maintenance-crash-fuzz.test.ts` at `FC_NUM_RUNS=10000`, one job per test. It runs on demand only (`workflow_dispatch`). The job list comes from collecting the file's tests on each run, so a new test gets its own job without a list to update. A job fails unless exactly one test ran in it.
+
+**Merge evidence.** A change to the commit path, compaction, GC or log retention merges only with a green `crash-fuzzer` run on the PR's head SHA. Link that run in the PR. A local `pnpm test:fuzz-maintenance` run that was killed, stalled, or ran on a loaded machine is no result, not a pass: it proves nothing about the cases it did not finish, and it often leaves no seed behind.
+
+**Dispatch.** Run the workflow definition from `main` against the PR's head SHA, so a later push can't change what was tested:
+
+```sh
+gh workflow run crash-fuzzer.yml --ref main -f ref=<head-sha>
+gh run watch "$(gh run list --workflow=crash-fuzzer.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+Pass `--ref <pr-branch>` instead only when the PR changes the workflow itself. `ref` defaults to the branch the workflow runs from. `seed` fixes the fast-check seed for every job; left empty, each run draws a fresh one and records it. `num-runs` defaults to 10000. A property that has not finished at fast-check's deadline (`PROP_INTERRUPT_MS` in the test file, 9.5 minutes) fails as interrupted, so raising `num-runs` far above the default trades coverage for that failure.
+
+**Evidence artifact.** Each job uploads `crash-fuzz-<n>` (kept 30 days) holding `evidence.json`, `report.json` (vitest JSON) and `vitest.log` (full output). `evidence.json` records the commit SHA, test name, the `-t` pattern that selects it, status, `FC_NUM_RUNS`, the seed, the counterexample `path` on a failure, the Node version, the run URL, the failure message, and `replay`: the local command that reruns it. The job summary shows the same command.
+
+**Replay a failure locally.** From a checkout of the job's `commit`, run `pnpm build:agent` (`test:agent` does not build `dist/`), then the failing job's `replay` command. It has this shape:
+
+```sh
+FC_SEED=<seed> FC_PATH='<path>' FC_NUM_RUNS=10000 pnpm test:agent tests/integration/maintenance-crash-fuzz.test.ts -t '<pattern>'
+```
+
+Pass the recorded `pattern`, not the bare test name: `-t` is a regular expression, and names such as `compact() with a mid-op fault` contain metacharacters. With `FC_PATH` fast-check replays the shrunk counterexample as the first case, so a long run is not needed. When `path` is `null` the property was interrupted rather than failing on a case (the failure reads `Property interrupted after N tests`). Replay with `FC_SEED` and the job's `FC_NUM_RUNS`: the case that hung is case N+1. A single case that hangs past `CASE_TIMEOUT_MS` (60 s) is reported as a failing case with a `path`, like any other failure.
 
 ## Troubleshooting
 
