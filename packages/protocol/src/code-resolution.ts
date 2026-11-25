@@ -13,7 +13,7 @@ export const CODE_RESOLUTIONS: Partial<Record<BaerlyErrorCode, string>> = {
   MaintenancePending:
     "Retry after the delay in retryAfter (Retry-After header, seconds): maintenance is catching up on this collection and this write was not committed.",
   CursorExpired:
-    'Do not retry this cursor. The changes after it are no longer retained: re-read the rows you need, then resume /v1/since with cursor: "".',
+    'Do not retry this cursor. The changes after it are no longer retained: re-read the rows you need, then resume /v1/since from that read\'s _meta.since_cursor. cursor: "" also resumes, but can miss a change that commits between the read and the poll.',
   PayloadTooLarge: "Reduce the request body below the server's body-size cap (1 MiB default).",
   UnsupportedMediaType:
     "Send the request body as JSON with a Content-Type: application/json header.",

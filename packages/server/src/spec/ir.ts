@@ -81,7 +81,7 @@ const ERROR_SUMMARY: Record<BaerlyErrorCode, string> = {
   MaintenancePending:
     "Maintenance is behind on this collection; the write was refused and not committed. Retry after the Retry-After delay.",
   CursorExpired:
-    'A /v1/since cursor can no longer resume (its changes are no longer retained, or its generation was truncated); re-read, then restart with cursor "". Never retriable.',
+    'A /v1/since cursor can no longer resume (its changes are no longer retained, or its generation was truncated); re-read, then resume from the re-read\'s _meta.since_cursor (cursor "" also resumes, but can miss a change committed between the read and the poll). Never retriable.',
   Unauthorized: "Verifier returned no identity.",
   NotFound: "Addressed resource does not exist.",
   PayloadTooLarge: "Request body exceeded MAX_BODY_BYTES.",
