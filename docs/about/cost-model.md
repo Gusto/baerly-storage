@@ -13,7 +13,7 @@ The cost meter to watch is **billable Class A object-storage operations**: PUTs 
 
 The smallest successful write is an insert on the first try: one create-if-absent PUT for `log/<seq>`, whose inline post-image carries the document body. That one-op **commit floor** matters because the log create is the commit. There is no new content side-object or `current.json` write on the commit path.
 
-The billable steady-state number is higher than the floor because successful writes may also run bounded maintenance. Measured effective Class A write-amplification is ~2× on Cloudflare and ~2.5× on serverful Node. Retries and first-collection provisioning add bounded ops; declared indexes add none. The read tail forward-probe is Class B GET work, so it does not touch the Class A meter.
+The billable steady-state number is higher than the floor because successful writes may also run bounded maintenance. Measured effective Class A write-amplification is ~2× on Cloudflare and ~2.5× on serverful Node. Retries and first-collection provisioning add bounded ops; declared indexes add none. The read tail forward-probe is Class B GET work, so it does not touch the Class A meter. It is not small, though: every read and every write GETs each live-tail entry, so Class B volume scales with tail length (see [Class B reads](#class-b-reads-scale-with-the-live-tail)).
 
 All prices below were re-checked **2026-06-22** against the official [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/), [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/), and [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) pages. Re-check before quoting any figure externally; price and cap changes land in [pricing-log.md](pricing-log.md), the one-line-per-change history, on the day they ship.
 
@@ -115,7 +115,7 @@ These are the formulas the `baerly cost` CLI projection is built on; the CLI rep
 Class A ops/mo         = W × A
 R2 object-storage $/mo = max(0, W×A − 1,000,000) × $4.50 / 1,000,000
                        + max(0, storedGB − 10) × $0.015
-                       + Class B reads (typically minor at M-size)
+                       + Class B: see "Class B reads" below (not minor)
 ```
 
 This is the **object-storage ops** projection behind `baerly cost`'s band. The CLI supplies zero stored bytes and zero other account usage. R2 ops are billed above 1M Class A/mo; storage is billed above 10 GB/mo. The $5/mo **Workers Paid** plan is a separate Cloudflare _platform_ floor, not an R2 charge. It is absent on self-hosted Node, R2-over-the-S3-API, and the Workers free tier, so `baerly cost` does not include it. Add ~$5/mo for the all-in Workers Paid figure. Under 1M Class A/mo (roughly ≤ 11 writes/min sustained) and under 10 GB, R2 object-storage cost is $0.
@@ -126,10 +126,24 @@ This is the **object-storage ops** projection behind `baerly cost`'s band. The C
 Class A ops/mo = W × A
 S3 $/mo = W×A × $5.00 / 1,000,000
         + storedGB × $0.023
-        + Class B reads (typically minor at M-size)
+        + Class B: see "Class B reads" below (not minor)
 ```
 
 S3 has no flat floor and no free tier in this model: every write costs linearly from zero. Under the CLI's conservative rounded inputs, Node+S3 is roughly **67% costlier than Worker+R2** per write before R2's free tier: $15 vs $9 per million logical writes (3 × $5.00/1M vs. 2 × $4.50/1M). The gap comes from both the higher rounded Node projection input and the higher S3 per-op rate. If you run Node against R2, use R2's rates with `A ≈ 3` to reproduce the CLI projection, or the measured Node ~2.5× profile for a manual host-profile projection; validate against `db.write.class_a_ops_per_logical_write`. The 12-month new-account free tier was retired in 2025; these figures apply to paid accounts.
+
+### Class B reads scale with the live tail
+
+`baerly cost` projects Class A ops only; it does not price Class B. Class B is a separate, usually larger line item for any read-heavy app, because a read replays the live log tail: 3 GETs (`current.json`, snapshot, and the terminating missing-log probe) plus one GET per tail entry once a snapshot exists. The measured counts are in [`request-counts.json`](../../request-counts.json) (policy: [request-counts](../contributing/conventions/request-counts.md)): with a non-empty snapshot, a read is 3 GETs at tail 0 and 53 at tail 50; a successful write is 6 + tail GETs. Before the first snapshot, each uses one fewer GET.
+
+When write-driven folds land promptly and remain within the host’s byte/row ceilings, the tail cycles around the fold trigger: 64 entries on Workers Paid and Node (`MAINTENANCE_FOLD_AT_TAIL_ENTRIES`), 20 on `cf-free`. This healthy steady-state model assumes a mean tail of about half the trigger. The trigger is not a hard bound: GC cadence, deferred or disabled maintenance, request budgets, failed folds, and concurrent writes can leave longer tails.
+
+```text
+GETs per read   ≈ 3 + meanTail            (Workers Paid / Node: meanTail ≈ 32 → ≈ 35)
+GETs per write  ≈ 6 + meanTail + ~2       (the ~2 is amortized fold + GC tick GETs)
+Class B $/mo    = max(0, reads×(3+meanTail) + writes×(8+meanTail) − 10,000,000) × $0.36 / 1,000,000   (R2)
+```
+
+Per million reads that is ≈ $13 at the Workers Paid mean tail (≈ $1.08 at an empty tail, ≈ $24 at the 64-entry trigger), before the free tier. `meanTail` is an assumption, not a measurement: the mean depends on the read/write interleaving and on whether a read lands just before or just after a fold. Treat the empty-tail row as a floor, not an estimate.
 
 ### Google Cloud Storage (GCS)
 
@@ -150,7 +164,7 @@ For native `gcs://` buckets, `baerly cost` detects GCS and prices against Standa
 
 ### Cost-vs-scale table
 
-Representative write rates and their projected monthly costs. Figures are **object-storage ops only** (storage and Class B reads are minor until L-size read fan-out and are excluded from these rows), and exclude the $5/mo Workers Paid platform floor — add it for the all-in cost on Cloudflare Workers Paid. These figures reproduce the arithmetic behind `baerly cost`'s [bands](#cli-cost-bands) at its rounded profile values: R2 on `cf-free` `A ≈ 2`, Node/S3/GCS on `node` `A ≈ 3`. The Node columns are therefore a conservative CLI projection above the measured 2.404-2.529 (~2.5×) host profile; their 390-writes/min row is the CLI projection's 50M crossing, while the measured Node crossing is ≈460 writes/min. Storage: assume ~100 MB for S-size, scaling proportionally.
+Representative write rates and their projected monthly costs. Figures are **object-storage ops only** (storage and Class B reads are excluded from these rows; Class B is not minor for read-heavy apps, see [Class B reads](#class-b-reads-scale-with-the-live-tail)), and exclude the $5/mo Workers Paid platform floor — add it for the all-in cost on Cloudflare Workers Paid. These figures reproduce the arithmetic behind `baerly cost`'s [bands](#cli-cost-bands) at its rounded profile values: R2 on `cf-free` `A ≈ 2`, Node/S3/GCS on `node` `A ≈ 3`. The Node columns are therefore a conservative CLI projection above the measured 2.404-2.529 (~2.5×) host profile; their 390-writes/min row is the CLI projection's 50M crossing, while the measured Node crossing is ≈460 writes/min. Storage: assume ~100 MB for S-size, scaling proportionally.
 
 | Writes/min (sustained, account-wide) | Class A/mo (Worker+R2, CLI A≈2) | R2 $/mo (object-storage ops) | Class A/mo (Node+S3, CLI A≈3) | S3 $/mo (object-storage ops) | GCS $/mo (Node+GCS, CLI A≈3) | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -257,23 +271,23 @@ M-size, in this comparison, means:
 - ~480 000 reads/day; and
 - 100 MB stored.
 
-This is a bursty audience profile, not the same lens as the sustained ~30 writes/min [cost-vs-scale table](#cost-vs-scale-table). The profile has 720 000 writes/mo (~1.44M R2 Class A), below the sustained curve's 1.296M writes/mo (~2.59M Class A). Both are above the 1M Class A free tier. Its R2 Class A component is 720,000 × 2 = 1,440,000 ops, or ~$1.98 after the free tier; all other request, Class B, and storage components are unchanged. baerly-storage's modelled cost here is ~$16 all-in, dominated by the $5 Workers Paid floor plus R2 Class A/B ops; `baerly cost` reports only the object-storage-ops portion.
+This is a bursty audience profile, not the same lens as the sustained ~30 writes/min [cost-vs-scale table](#cost-vs-scale-table). The profile has 720 000 writes/mo (~1.44M R2 Class A), below the sustained curve's 1.296M writes/mo (~2.59M Class A). Both are above the 1M Class A free tier. Its R2 Class A component is 720,000 × 2 = 1,440,000 ops, or ~$1.98 after the free tier. Class B uses the [tail-aware counts](#class-b-reads-scale-with-the-live-tail) on Workers Paid (fold trigger 64, assumed mean tail 32): 14.4M reads × 35 + 720,000 writes × 40 ≈ 533M GETs, or ~$188 after the 10M free tier. Modelled cost is therefore ~$195 all-in ($5 Workers Paid floor + ~$2 Class A + ~$188 Class B), dominated by Class B. Illustrative tail scenarios give ~$21 (empty tail, 3 GETs per read) and ~$369 (tail at the 64-entry trigger); the latter is not a maximum. These scenarios assume the data is split into collections that remain within the host’s fold ceilings. `baerly cost` reports only the Class A object-storage-ops portion and does not price Class B.
 
 | Service | Plan | $/mo | Notes |
 | --- | --- | --- | --- |
-| **baerly-storage (this design)** | Workers Paid | **~$16** | R2 Class A/B dominate. |
+| **baerly-storage (this design)** | Workers Paid | **~$195** | R2 Class B (tail GETs) dominates; ~$21 at an always-empty tail; ~$369 at the 64-entry trigger is an illustrative scenario. |
 | Cloudflare D1 | Workers Paid | ~$5 | M is way under D1's 25B reads / 50M writes free tier; just the plan floor. SQL trade-off is on you. |
 | Supabase Free | Free | $0 | Fits storage, but the free plan is not a production fleet posture. |
-| Supabase Pro | $25 base | ~$25 | Always-on Postgres + Auth + Storage. Roughly parity with baerly-storage + opt-in realtime. |
+| Supabase Pro | $25 base | ~$25 | Always-on Postgres + Auth + Storage. Flat price regardless of read volume. |
 | Neon Launch | usage-based | ~$15 typical intermittent small app | Scale-to-zero helps for bursty traffic; CU-hours add up if continuous. |
-| Firebase Blaze | PAYG | ~$5 _(approx.)_ | 14.4M reads × $0.03/100k ≈ $4.30 + 720k writes × $0.09/100k ≈ $0.65 ≈ ~$5. Roughly baerly-storage ÷ 3 — cheaper per-op at M. Rates: Firestore Standard, us-central1; re-check before quoting. |
+| Firebase Blaze | PAYG | ~$5 _(approx.)_ | 14.4M reads × $0.03/100k ≈ $4.30 + 720k writes × $0.09/100k ≈ $0.65 ≈ ~$5. Far cheaper per-op than baerly-storage at M. Rates: Firestore Standard, us-central1; re-check before quoting. |
 | Firebase Spark | Free | $0 if under 50k reads/day; M's 480k/day blows the no-cost read quota. |
 
 Read this as positioning, not a provider quote:
 
 - **XS / S:** baerly-storage is cheaper than always-on managed DBs, especially across a portfolio; see the [idle × portfolio table](#at-the-audience-operating-point-idle--n-portfolio). The differentiators are schemaless docs, multi-instance causal consistency, bytes-in-your-bucket, and price.
-- **M:** baerly-storage (~$16) is ~3× more expensive than D1 (~$5) where D1 is available. D1 is Workers-runtime-only; `wrangler d1 export` gives a SQL dump, but leaving is dump-and-reload rather than a bucket-native data layer or live CDC handoff. Off Workers, managed Postgres at $25+/mo behind a vendor catalog is the relevant comparison. If Cloudflare lock-in and SQL are acceptable, switch to D1; [that move is the success path, not churn](thesis.md#what-apps-within-the-envelope-need). Firebase Blaze also undercuts baerly-storage on raw per-op at M (~$5 vs. ~$16), again by roughly 3×. That is expected: M is past the design center.
-- **L:** baerly-storage's R2 Class B alone (~$1 500) costs more than a Postgres Pro plan. Read-heavy traffic on a per-doc fan-out protocol is disproportionately expensive compared with a B-tree lookup.
+- **M:** baerly-storage (~$195 at an assumed mean tail of 32; Class B dominates) is ~39× more expensive than D1 (~$5) where D1 is available, and read-heavy M workloads are the first to feel it. D1 is Workers-runtime-only; `wrangler d1 export` gives a SQL dump, but leaving is dump-and-reload rather than a bucket-native data layer or live CDC handoff. Off Workers, managed Postgres at $25+/mo behind a vendor catalog is the relevant comparison. If Cloudflare lock-in and SQL are acceptable, switch to D1; [that move is the success path, not churn](thesis.md#what-apps-within-the-envelope-need). Firebase Blaze also undercuts baerly-storage on raw per-op at M (~$5 vs. ~$195), by a wide margin. That is expected: a read-heavy M is past the design center.
+- **Read-heavy traffic:** at ≈ $13 per million reads before the free tier (mean tail 32), baerly-storage's R2 Class B alone passes a Postgres Pro plan at roughly 2.3M reads/mo after the free tier. Read-heavy traffic on a per-entry tail-replay protocol is disproportionately expensive compared with a B-tree lookup.
 - **Portability / switching cost:** baerly-storage keeps this advantage across workload sizes. AWS S3, Cloudflare R2, and GCS (through the native `gcsStorage` adapter — see the [GCS section](#google-cloud-storage-gcs)) are the production-supported stores; MinIO is the local conformance target; other S3-compatible endpoints require `baerly doctor --bucket` plus owner validation (see [storage-compatibility.md](../spec/storage-compatibility.md) and [ADR-002](../adr/002-ephemeral-coordination.md)). GCS's S3-interop endpoint exposes conditional writes as read-only and stays unsupported (use the native adapter); Azure Blob is not an S3 dialect and needs a dedicated adapter that does not exist yet. D1, Supabase, Neon, and Firebase are proprietary runtimes; choosing one is a switching-cost decision.
 
 The axes are per-write price, idle × portfolio cost, and portability / switching cost. baerly-storage loses per-write price at M-size and above; `baerly export --target=postgres --collection=<name>` is the per-collection graduation path.
