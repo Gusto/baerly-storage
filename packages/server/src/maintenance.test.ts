@@ -99,38 +99,11 @@ describe("runMaintenancePass", () => {
     );
     expect(r.compact.written).toBe(true);
     expect(r.compact.entriesFolded).toBe(150);
-    // After compact, [0, 150) are folded into the snapshot. GC runs
-    // but has nothing to mark (no orphan snapshots). The stale log
-    // entries will be deleted by retireLogRange on a future maintenance
-    // pass.
-  });
-
-  test("runGc alone runs without compact", async () => {
-    // Single-phase ticks (e.g. the CF free-tier even/odd-minute cron
-    // pattern) invoke the primitive directly instead of
-    // `runMaintenancePass`.
-    const s = new MemoryStorage();
-    await bootstrap(s, KEY);
-    const r = await runGc({ storage: s, currentJsonKey: KEY });
-    expect(r).not.toBeNull();
-  });
-
-  test("compact alone runs without gc", async () => {
-    // Single-phase ticks invoke the primitive directly instead of
-    // `runMaintenancePass`.
-    const s = new MemoryStorage();
-    await bootstrap(s, KEY);
-    const writer = new UntickedWriter({ storage: s, currentJsonKey: KEY });
-    for (let i = 0; i < 150; i++) {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
-    }
-    const r = await compact({ storage: s, currentJsonKey: KEY });
-    expect(r.written).toBe(true);
+    // GC ran: it has nothing to mark (no orphan snapshots) but it
+    // bootstraps gc/pending.json, which nothing else in the pass writes.
+    expect(r.gc.marked).toEqual({ orphan_snapshot: 0 });
+    const pending = await s.get(`${COLLECTION_PREFIX}/gc/pending.json`);
+    expect(pending).not.toBeNull();
   });
 
   test("a low-write collection folds under the scheduled default (no options)", async () => {
