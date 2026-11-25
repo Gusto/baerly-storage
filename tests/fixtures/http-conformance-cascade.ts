@@ -1421,6 +1421,87 @@ export const runHttpConformanceCascade = (opts: {
         expect(r2._meta.manifest_pointer).not.toBe(r1._meta.manifest_pointer);
         expect(r2._meta.fresh).toBe(true);
       });
+
+      type SinceMetaBody = { readonly _meta: { readonly since_cursor: string } };
+      type SinceBody = {
+        readonly events: ReadonlyArray<{
+          readonly op: string;
+          readonly doc_id: string;
+          readonly after?: { readonly v?: number };
+        }>;
+        readonly next_cursor: string;
+      };
+      const sinceCursorOf = async (path: string): Promise<string> => {
+        const res = await doFetch(authedRequest("GET", path));
+        const body = (await res.json()) as SinceMetaBody;
+        expect(typeof body._meta.since_cursor).toBe("string");
+        expect(body._meta.since_cursor.length).toBeGreaterThan(0);
+        return body._meta.since_cursor;
+      };
+      const pollFrom = async (table: string, cursor: string): Promise<SinceBody> => {
+        const res = await doFetch(
+          authedRequest(
+            "GET",
+            `/v1/since?collection=${table}&cursor=${encodeURIComponent(cursor)}`,
+          ),
+        );
+        expect(res.status).toBe(200);
+        return (await res.json()) as SinceBody;
+      };
+
+      test("(d) every read route names the state it read with the same since_cursor", async () => {
+        const table = await mintTable("meta-since-routes");
+        const ins = await postDoc(table, { v: 1 });
+        const list = await sinceCursorOf(`/v1/c/${table}`);
+        await expect(sinceCursorOf(`/v1/c/${table}/${ins.id!}`)).resolves.toBe(list);
+        await expect(sinceCursorOf(`/v1/count?collection=${table}`)).resolves.toBe(list);
+        await postDoc(table, { v: 2 });
+        await expect(sinceCursorOf(`/v1/c/${table}`)).resolves.not.toBe(list);
+      });
+
+      test("(e) a since_cursor from a missing row's 404 names the read too", async () => {
+        const table = await mintTable("meta-since-miss");
+        await postDoc(table, { v: 1 });
+        const list = await sinceCursorOf(`/v1/c/${table}`);
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}/${uuidv7()}`));
+        expect(res.status).toBe(404);
+        const body = (await res.json()) as SinceMetaBody & { readonly error: { code: string } };
+        expect(body.error.code).toBe("NotFound");
+        expect(body._meta.since_cursor).toBe(list);
+      });
+
+      describe.skipIf(!supportsLongPoll)("resuming /v1/since from since_cursor", () => {
+        test("(f) a poll from a list read's since_cursor delivers exactly the later writes", async () => {
+          const table = await mintTable("meta-since-list");
+          await postDoc(table, { v: 1 });
+          const cursor = await sinceCursorOf(`/v1/c/${table}`);
+          await postDoc(table, { v: 2 });
+          await postDoc(table, { v: 3 });
+          const body = await pollFrom(table, cursor);
+          expect(body.events.map((e) => e.after?.v)).toEqual([2, 3]);
+        });
+
+        test("(g) a read of a not-yet-provisioned collection seeds a poll that sees its first write", async () => {
+          const table = freshTable("meta-since-empty");
+          const cursor = await sinceCursorOf(`/v1/c/${table}`);
+          await provisionTable(table);
+          await postDoc(table, { v: 1 });
+          const body = await pollFrom(table, cursor);
+          expect(body.events.map((e) => e.after?.v)).toEqual([1]);
+        });
+
+        test("(h) a poll from a 404's since_cursor delivers the insert that creates the row", async () => {
+          const table = await mintTable("meta-since-miss-insert");
+          const id = uuidv7();
+          const res = await doFetch(authedRequest("GET", `/v1/c/${table}/${id}`));
+          expect(res.status).toBe(404);
+          const { _meta } = (await res.json()) as SinceMetaBody;
+          const ins = await postDoc(table, { _id: id, v: 1 });
+          expect(ins.status).toBe(201);
+          const body = await pollFrom(table, _meta.since_cursor);
+          expect(body.events.map((e) => [e.op, e.doc_id])).toEqual([["I", id]]);
+        });
+      });
     });
 
     // ── Block 11b: request Content-Type on body routes ──────────────

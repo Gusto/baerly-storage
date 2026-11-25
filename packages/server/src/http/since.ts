@@ -175,7 +175,7 @@ const IDLE_POLL_CALLS = 2;
 
 /**
  * Mint the LSN half of a cursor that names `seq` without the entry in
- * hand: an empty poll from `""` positions its holder below the floor.
+ * hand (see {@link sinceCursorAt}).
  * Only the seq segment is ever read back (`lsnParts(lsn).seq`), so the
  * time and session segments are fixed placeholders that pass
  * `LSN_RE`. A build that predates position cursors decodes it the same
@@ -191,11 +191,31 @@ const positionLsn = (seq: number): string => `0_0_${countKey(seq)}`;
  * without one, `SINCE_ANY_GENERATION` when there is no manifest; the
  * seq segment is a placeholder.
  */
-const originCursor = (manifest: { generation?: string } | null): string =>
+const originCursor = (manifest: { readonly generation?: string } | null): string =>
   formatCursor(
     SINCE_ORIGIN_GENERATION,
     `0_${manifest === null ? SINCE_ANY_GENERATION : (manifest.generation ?? SINCE_NO_GENERATION)}_${countKey(0)}`,
   );
+
+/**
+ * The cursor for a reader that has seen every change below log seq
+ * `tail` of the collection `manifest` describes: a `/v1/since` poll
+ * from it resumes at `tail`. Above 0 it is the position `tail - 1` in
+ * the manifest's generation; at 0, or with no `current.json`
+ * (`manifest === null`, `tail === 0`), the position before seq 0.
+ *
+ * Two callers. An empty poll from `""` positions its holder at the
+ * floor (`tail = log_seq_start`). A collection read mints
+ * `_meta.since_cursor` from the manifest and tail it folded, so a
+ * subscriber that seeds its poll from the read resumes exactly after
+ * the state it rendered, with no separate request that could see a
+ * different one.
+ */
+export const sinceCursorAt = (
+  manifest: { readonly generation?: string } | null,
+  tail: number,
+): string =>
+  tail > 0 ? formatCursor(manifest?.generation, positionLsn(tail - 1)) : originCursor(manifest);
 
 export interface LongPollSinceOptions {
   readonly db: Db<BaerlyConfig>;
@@ -474,7 +494,7 @@ async function pollOnce(
       // gets the position before seq 0, in whichever generation the
       // writer that provisions the collection mints.
       if (decoded === undefined) {
-        emptyCursor = originCursor(null);
+        emptyCursor = sinceCursorAt(null, 0);
       }
       return done();
     }
@@ -491,10 +511,7 @@ async function pollOnce(
     let startSeq: number;
     if (decoded === undefined) {
       startSeq = logSeqStart;
-      emptyCursor =
-        logSeqStart > 0
-          ? formatCursor(generation, positionLsn(logSeqStart - 1))
-          : originCursor(read.json);
+      emptyCursor = sinceCursorAt(read.json, logSeqStart);
     } else {
       const origin = decoded.generation === SINCE_ORIGIN_GENERATION;
       const { lsn } = decoded;
