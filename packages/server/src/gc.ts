@@ -10,9 +10,9 @@
  *      are safe to classify.
  *   4. CAS-writes the updated `gc/pending.json`.
  *
- * Two-phase by design: each mark sits in `gc/pending.json` for a grace
- * period (default 7 days, see {@link GC_GRACE_PERIOD_MILLIS}) before
- * sweep may delete it. The grace bounds the worst plausible writer-retry
+ * Two-phase by design: a mark waits a grace period in `gc/pending.json`
+ * (default 7 days, see {@link GC_GRACE_PERIOD_MILLIS}), unless an aged
+ * snapshot floor already supplies that grace. The grace bounds the worst plausible writer-retry
  * window — a paused-process writer that resumes hours later still finds
  * its idempotency anchor on the bucket. Sweep can also resolve a
  * candidate OUT of the ledger without deleting it, when a generation or
@@ -70,12 +70,14 @@
  * if one exists in the window. Opaque L9 keys (non-canonical names) are
  * skipped but still occupy window slots; no current writer emits one.
  *
- * Ceiling: `GC_MAX_PENDING_CANDIDATES` (1000) bounds the in-flight
- * cohort, so a collection reclaims at most ~1000 replaced snapshots per
- * 7-day grace — about 143 folds/day. At the cap the window holds only
- * pending keys and `mergeGcPending` drops appends past the cap, so
- * marking stops until the oldest cohort comes due and is swept; a
- * collection folding faster than that accumulates the excess.
+ * A constant-size `snapshot_gc` checkpoint also ages the observed fold
+ * floor for one full grace. A canonical snapshot strictly below that
+ * floor was already obsolete when it was observed, so it needs no later
+ * per-key grace. This lets the bounded LIST/sweep drain even when the
+ * 1000-candidate ledger fills during the grace. One eligible floor and
+ * one pending floor bound the evidence independently of fold frequency;
+ * a newly obsolete key reaches floor eligibility within two graces plus
+ * GC pass delay. Fresh pointer, generation, and floor checks still apply.
  *
  * **`content/` is deliberately NOT a category.** Legacy
  * `<collectionPrefix>/content/<sha>.json` side objects — written by
@@ -329,6 +331,14 @@ export const runGc = async (
   const markGeneration: { generation?: string } =
     current.generation !== undefined ? { generation: current.generation } : {};
 
+  // A persisted pending floor has already waited its grace before it can
+  // authorize this pass. Starting the next grace is persisted only by the
+  // closing CAS; a failed CAS therefore delays reclamation, never advances it.
+  const observedSnapshotGc = pending.json.snapshot_gc;
+  const snapshotGc =
+    grace > 0 ? advanceSnapshotGc(observedSnapshotGc, current, now(), grace) : undefined;
+  const rangeReady = new Set<string>();
+
   // ── Step 3. Mark orphan snapshots. ──────────────────────────────
   const newCandidates: GcCandidate[] = [];
   let markedOrphanSnapshot = 0;
@@ -359,15 +369,23 @@ export const runGc = async (
     // Only the exact key shape emitted by `snapshotKey` can ever carry
     // deletion authority. Leave opaque objects on the bucket without
     // spending bounded-ledger capacity on an entry that sweep cannot classify.
-    if (parseMaxSeqFromCanonicalSnapshotKey(entry.key, collectionPrefix) === null) {
+    const maxSeq = parseMaxSeqFromCanonicalSnapshotKey(entry.key, collectionPrefix);
+    if (maxSeq === null) {
       continue;
+    }
+    // The aged floor proves this key was already obsolete for a full
+    // grace, even if a full ledger could not record an individual mark.
+    // Include known candidates: their newer per-key due_at is redundant.
+    const ready = snapshotGc !== undefined && maxSeq < snapshotGc.eligible_floor;
+    if (ready) {
+      rangeReady.add(entry.key);
     }
     if (known.has(entry.key)) {
       continue;
     }
     newCandidates.push({
       key: entry.key,
-      due_at: computeDueAt(now, grace),
+      due_at: ready ? now().toISOString() : computeDueAt(now, grace),
       reason: "orphan-snapshot",
       ...markGeneration,
     });
@@ -381,7 +399,15 @@ export const runGc = async (
   // grace-bypassing maintenance jobs. Order: pre-existing first
   // (they've been waiting longer), then new marks.
   const nowMs = now().getTime();
-  const sweepCandidates: GcCandidate[] = [...pending.json.candidates, ...newCandidates];
+  const readyDueAt = new Date(nowMs).toISOString();
+  const sweepCandidates: GcCandidate[] = [...pending.json.candidates, ...newCandidates].map(
+    (candidate) =>
+      candidate.reason === "orphan-snapshot" &&
+      rangeReady.has(candidate.key) &&
+      (candidate.generation ?? NO_GENERATION) === (current.generation ?? NO_GENERATION)
+        ? Object.assign({}, candidate, { due_at: readyDueAt })
+        : candidate,
+  );
   // Snapshot classification used the initial manifest so stale work remains
   // monotone and deterministic. Re-read only when a due snapshot could be
   // deleted, as late as possible before DELETE. The fresh pointer rescues a
@@ -571,18 +597,40 @@ export const runGc = async (
   const markedSummary = {
     orphan_snapshot: markedOrphanSnapshot,
   };
+  const checkpointNow = now();
   let pendingDepth: number;
   try {
     const updated = await casUpdateGcPending(
       storage,
       pendingKey,
-      (latest) =>
-        mergeGcPending(latest, {
+      (latest) => {
+        const merged = mergeGcPending(latest, {
           sweptKeys,
           newCandidates,
           lastSweptAt,
           maxCandidates: GC_MAX_PENDING_CANDIDATES,
-        }),
+        });
+        if (grace > 0) {
+          // An overlapping pass may have installed another generation's
+          // evidence since our read. Preserve it rather than overwrite it
+          // with this stale pass's observation; the next pass re-reads both.
+          const latestCheckpoint = latest.snapshot_gc;
+          const changedGeneration =
+            latestCheckpoint !== undefined &&
+            (latestCheckpoint.generation ?? NO_GENERATION) !==
+              (fenceCurrent.generation ?? NO_GENERATION) &&
+            JSON.stringify(latestCheckpoint) !== JSON.stringify(observedSnapshotGc);
+          if (!changedGeneration) {
+            merged.snapshot_gc = advanceSnapshotGc(
+              latestCheckpoint,
+              fenceCurrent,
+              checkpointNow,
+              grace,
+            );
+          }
+        }
+        return merged;
+      },
       signalOpts,
     );
     pendingDepth = updated.json.candidates.length;
@@ -662,6 +710,37 @@ export const runGc = async (
 // ---------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------
+
+/** Preserve whole floor/time pairs: a newer floor must earn its own grace. */
+const advanceSnapshotGc = (
+  previous: GcPending["snapshot_gc"],
+  current: { readonly log_seq_start: number; readonly generation?: string },
+  now: Date,
+  grace: number,
+): NonNullable<GcPending["snapshot_gc"]> => {
+  const generation = current.generation !== undefined ? { generation: current.generation } : {};
+  if (
+    previous === undefined ||
+    (previous.generation ?? NO_GENERATION) !== (current.generation ?? NO_GENERATION) ||
+    previous.pending_floor > current.log_seq_start
+  ) {
+    return {
+      eligible_floor: 0,
+      pending_floor: current.log_seq_start,
+      due_at: new Date(now.getTime() + grace).toISOString(),
+      ...generation,
+    };
+  }
+  if (Date.parse(previous.due_at) > now.getTime()) {
+    return previous;
+  }
+  return {
+    eligible_floor: previous.pending_floor,
+    pending_floor: current.log_seq_start,
+    due_at: new Date(now.getTime() + grace).toISOString(),
+    ...generation,
+  };
+};
 
 /**
  * `Storage.list` options for one bounded rotation window: at most

@@ -574,10 +574,9 @@ export const GC_PASS_GRACE_FRACTION: number = 1 / 10;
 
 /**
  * Cap on candidates kept in `gc/pending.json` to bound the size of
- * the file. The compactor marks at most this many candidates per
- * pass; subsequent passes pick up the rest. Larger collections will
- * lag GC by one pass per `GC_MAX_PENDING_CANDIDATES` orphans, which
- * is acceptable.
+ * the file. The snapshot floor checkpoint carries grace evidence for
+ * keys the full ledger could not individually mark, so this cap bounds
+ * metadata rather than the number of snapshots reclaimable per grace.
  *
  * @see packages/server/src/gc.ts
  */
