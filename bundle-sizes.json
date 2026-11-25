@@ -32,9 +32,9 @@
     },
     "client.js": {
       "tier": "shipped",
-      "raw": 41271,
-      "gz": 14504,
-      "minGz": 5233,
+      "raw": 42123,
+      "gz": 14737,
+      "minGz": 5311,
       "ratchet": {
         "raw": 43776,
         "gz": 15616,
@@ -44,9 +44,9 @@
     },
     "client-react.js": {
       "tier": "shipped",
-      "raw": 47701,
-      "gz": 15816,
-      "minGz": 5314,
+      "raw": 50688,
+      "gz": 16685,
+      "minGz": 5732,
       "ratchet": {
         "raw": 52480,
         "gz": 17408,

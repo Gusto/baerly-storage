@@ -47,6 +47,27 @@ describe("useQuery — basic reads", () => {
     expect(result.current.error).toBeUndefined();
   });
 
+  test("a live query's /v1/since poll starts from its read's _meta.since_cursor", async () => {
+    const cursors: string[] = [];
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", (req) => {
+      cursors.push(new URL(req.url).searchParams.get("cursor") ?? "");
+      return new Promise<Response>(() => sinceForever());
+    });
+    mock.on("GET", "/v1/c/notes", () =>
+      jsonResponse({
+        data: [{ _id: "a" }],
+        _meta: { manifest_pointer: "m", fresh: true, since_cursor: "gen.0_0_00000000002" },
+      }),
+    );
+    const client = makeClient(mock);
+    const { result } = renderHook(() => useQuery((c) => c.collection("notes").all(), []), {
+      wrapper: wrap(client),
+    });
+    await waitFor(() => expect(result.current.status).toBe("ok"));
+    await waitFor(() => expect(cursors).toEqual(["gen.0_0_00000000002"]));
+  });
+
   test("transitions to { status: 'ok', data } when fetch resolves", async () => {
     const mock = new MockFetch();
     installSinceLongPoll(mock);
