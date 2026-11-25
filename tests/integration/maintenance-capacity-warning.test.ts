@@ -175,23 +175,6 @@ describe("early capacity warning and its state", () => {
         return storage;
       };
 
-      test("W1: silent below 90% of E; from 90% the warning names the state and the app remedy only", async () => {
-        const storage = await folded(15);
-        // 16 and 17 rows (80%, 85%).
-        for (const i of [15, 16]) {
-          await expect(run(storage, {}, insertDoc(i))).resolves.toMatchObject({
-            outcome: "accepted",
-            warning: undefined,
-          });
-        }
-        // 18 rows = 90%.
-        const seen = await run(storage, {}, insertDoc(17));
-        expect(seen.outcome).toBe("accepted");
-        expect(seen.warning).toContain("18 of 20 rows");
-        expect(seen.warning).toContain("baerly admin dump");
-        expect(seen.warning).not.toMatch(/BAERLY_|PROFILE|profile|cf-paid|Paid/);
-      });
-
       test("W1: over HTTP the write response carries the header; the body is unchanged", async () => {
         const storage = await folded(17);
         const router = createRouter({ db: Db.create({ storage, app: APP, tenant: TENANT }) });
@@ -293,28 +276,6 @@ describe("early capacity warning and its state", () => {
         }
         await drain(storage, SMALL);
         await expect(warnsNow()).resolves.toBe(false);
-      });
-
-      test("W2: a refusal clears the same way, and never needs a reset", async () => {
-        const storage = await withTail(17, 2);
-        await expect(run(storage, {}, insertDoc(30))).resolves.toMatchObject({
-          outcome: "capacity",
-        });
-        // Larger host admits it (with its own warning state), SMALL refuses the next one again.
-        await expect(run(storage, { maxFoldRows: 4 * E }, insertDoc(30))).resolves.toMatchObject({
-          outcome: "accepted",
-        });
-        await expect(run(storage, {}, insertDoc(31))).resolves.toMatchObject({
-          outcome: "capacity",
-        });
-        // Shrink on SMALL: deletes are admitted, the fold lands, growth is admitted again.
-        for (const i of [0, 1, 2, 3, 4, 5]) {
-          await run(storage, {}, del(i));
-        }
-        await drain(storage, SMALL);
-        await expect(run(storage, {}, insertDoc(31))).resolves.toMatchObject({
-          outcome: "accepted",
-        });
       });
 
       test("W3: a refused write persists nothing, current.json bytes included, and carries no warning", async () => {

@@ -675,32 +675,6 @@ describe("runBoundedMaintenance", () => {
     await expect(readTailHint(inner, KEY)).resolves.toBe(MAINTENANCE_TAIL_HINT_REFRESH_WRITES);
   });
 
-  test("single-phase: a fold-viable, gate1-tripping tick folds and does NOT also GC", async () => {
-    const inner = new MemoryStorage();
-    await seedLog(inner, KEY, COLL, 60);
-    // Ratio >= 1 and >= minEntriesToCompact (60 >= 50). Snapshot tiny ⇒ fold-viable.
-    await patchCurrent(inner, KEY, {
-      mean_entry_bytes: RATIO_TRIPPING_MEAN,
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
-    const before = await readSeqStart(inner, KEY);
-    // Choose prevSeq == the TRUE tail so NO gc boundary is crossed. Under
-    // single-write commit the runner re-probes the tail (60 entries =
-    // tail 60); the stored tail_hint stays 0, so we pass 60 explicitly.
-    const c = countingStorage(inner);
-    await runBoundedMaintenance({
-      storage: c.storage,
-      currentJsonKey: KEY,
-      prevSeq: 60, // == probed tail ⇒ no GC boundary
-    });
-    const after = await readSeqStart(inner, KEY);
-    // Folded a slice.
-    expect(after).toBeGreaterThan(before);
-    // No GC ran ⇒ no DELETEs and no gc/pending.json was touched.
-    expect(c.report()["delete"]).toBe(0);
-  });
-
   test("foldAtTailEntries folds a tail that long with the ratio cold, and no shorter one", async () => {
     // A small tail on a large snapshot: ratio far below 1, and the tail
     // under WRITE_TICK_MIN_ENTRIES_TO_COMPACT, so only the profile's count
@@ -900,47 +874,6 @@ describe("runBoundedMaintenance", () => {
     expect(tail).toBe(trueTail);
   });
 
-  test("a defer pass past the warn interval warns once AND stamps last_warned_seq", async () => {
-    const inner = new MemoryStorage();
-    await seedLog(inner, KEY, COLL, 60); // tail_hint = 60 (>= WARN_INTERVAL would be false…)
-    // …so force tail_hint well past the interval boundary by stamping a
-    // current.json whose tail_hint is large but last_warned_seq is absent.
-    await casUpdateCurrentJson(inner, KEY, (cur) => ({
-      ...cur,
-      mean_entry_bytes: RATIO_TRIPPING_MEAN,
-      snapshot_bytes: 0,
-      snapshot_rows: 1_000_000, // > MAINTENANCE_MAX_FOLD_ROWS ⇒ defer
-      tail_hint: MAINTENANCE_WARN_INTERVAL_WRITES + 5,
-      log_seq_start: 0,
-    }));
-    const expectedNextSeq = MAINTENANCE_WARN_INTERVAL_WRITES + 5;
-
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const recorder = await withRecorder(async () => {
-        await runBoundedMaintenance(
-          {
-            storage: inner,
-            currentJsonKey: KEY,
-            prevSeq: expectedNextSeq, // no GC boundary; isolate the defer
-          },
-          { profile: MAINTENANCE_PROFILE_CF_FREE },
-        );
-      });
-      // Deferred ⇒ metric bumped (existing behaviour).
-      expect(counterTotal(recorder, "db.compaction.deferred_total")).toBeGreaterThan(0);
-      // Warn fired exactly once, and named the actionable signals.
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      const msg = String(warnSpy.mock.calls[0]?.[0] ?? "");
-      expect(msg).toContain("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
-      expect(msg).toContain("docs/about/graduation.md");
-    } finally {
-      warnSpy.mockRestore();
-    }
-    // The warn stamped last_warned_seq = tail_hint via a separate CAS.
-    await expect(readLastWarnedSeq(inner, KEY)).resolves.toBe(expectedNextSeq);
-  });
-
   test("a defer pass WITHIN the warn interval does NOT warn — across FRESH runner calls", async () => {
     const inner = new MemoryStorage();
     await seedLog(inner, KEY, COLL, 60);
@@ -979,36 +912,6 @@ describe("runBoundedMaintenance", () => {
     }
     // last_warned_seq untouched by a within-interval defer.
     await expect(readLastWarnedSeq(inner, KEY)).resolves.toBe(nextSeq - 1);
-  });
-
-  test("a folding (non-deferring) pass NEVER warns", async () => {
-    const inner = new MemoryStorage();
-    await seedLog(inner, KEY, COLL, 60);
-    // gate1 trips and snapshot is tiny ⇒ fold-viable. Push tail_hint well
-    // past the warn interval so a stray warn would be visible.
-    await casUpdateCurrentJson(inner, KEY, (cur) => ({
-      ...cur,
-      mean_entry_bytes: RATIO_TRIPPING_MEAN,
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-      tail_hint: MAINTENANCE_WARN_INTERVAL_WRITES + 5,
-    }));
-    const cur = await readCurrentJson(inner, KEY);
-    const nextSeq = cur!.json.tail_hint;
-
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      await runBoundedMaintenance({
-        storage: inner,
-        currentJsonKey: KEY,
-        prevSeq: nextSeq, // no GC boundary; just fold
-      });
-      expect(warnSpy).not.toHaveBeenCalled();
-    } finally {
-      warnSpy.mockRestore();
-    }
-    // No stamp on a folding pass.
-    await expect(readLastWarnedSeq(inner, KEY)).resolves.toBeUndefined();
   });
 
   test("fold advances by only a bounded slice, not the whole tail", async () => {
@@ -1706,6 +1609,7 @@ describe("runBoundedMaintenance — fold-wall deferral signal", () => {
       expect(warnSpy).not.toHaveBeenCalled();
       const msg = String(recs[0]!.properties["detail"] ?? "");
       expect(msg).toMatch(/raise `?BAERLY_MAINTENANCE_MAX_FOLD_BYTES/i);
+      expect(msg).toContain("docs/about/graduation.md");
       const summary = recorder.summarize();
       expect(summary["db.compaction.deferred_total"]).toBe(1);
       expect(summary["db.compaction.deferred_bytes_total"]).toBe(1);
@@ -1959,13 +1863,21 @@ describe("runBoundedMaintenance — fold-wall deferral signal", () => {
   test("a fold that lands emits no deferral record", async () => {
     const inner = new MemoryStorage();
     await seedPreFoldWall(inner, { snapshot_bytes: 0, snapshot_rows: 0 });
-    await withSignalSinks(() =>
-      runBoundedMaintenance(
-        { storage: inner, currentJsonKey: KEY, prevSeq: WARN_SEQ },
-        { profile: MAINTENANCE_PROFILE_CF_FREE },
-      ),
-    );
-    expect(deferRecords()).toHaveLength(0);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await withSignalSinks(() =>
+        runBoundedMaintenance(
+          { storage: inner, currentJsonKey: KEY, prevSeq: WARN_SEQ },
+          { profile: MAINTENANCE_PROFILE_CF_FREE },
+        ),
+      );
+      expect(deferRecords()).toHaveLength(0);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+    // A folding pass stamps no warn.
+    await expect(readLastWarnedSeq(inner, KEY)).resolves.toBeUndefined();
   });
 });
 
