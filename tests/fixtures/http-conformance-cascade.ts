@@ -38,7 +38,11 @@ import {
   WHERE_ORDER_JSON_RESOLUTION,
   WRITE_BODY_SHAPE_RESOLUTION,
 } from "@baerly/protocol";
-import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "./test-verifier.ts";
+import {
+  CONFORMANCE_BEARER,
+  CONFORMANCE_COLLECTIONS,
+  CONFORMANCE_TENANT,
+} from "./test-verifier.ts";
 
 /**
  * Capability flags + arbitrary overrides for the HTTP conformance
@@ -1038,6 +1042,7 @@ export const runHttpConformanceCascade = (opts: {
         expect(res.status).toBe(401);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("Unauthorized");
+        expect(env.error?.message).toBe("Missing or invalid Authorization header");
       });
 
       test("request with an invalid bearer token returns 401 Unauthorized", async () => {
@@ -1050,6 +1055,14 @@ export const runHttpConformanceCascade = (opts: {
         expect(res.status).toBe(401);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("Unauthorized");
+      });
+    });
+
+    describe("GET /v1/healthz", () => {
+      test("answers 200 { ok: true } without an Authorization header", async () => {
+        const res = await doFetch(new Request(`${BASE}/v1/healthz`, { method: "GET" }));
+        expect(res.status).toBe(200);
+        await expect(res.json()).resolves.toEqual({ ok: true });
       });
     });
 
@@ -1136,7 +1149,7 @@ export const runHttpConformanceCascade = (opts: {
         expect(res.status).toBe(200);
         expect(res.headers.get("content-type")).toContain("application/json");
         const body = (await res.json()) as SpecBody;
-        expect(typeof body.specVersion).toBe("string");
+        expect(body.specVersion).toBe("1");
         expect(Array.isArray(body.errorCodes)).toBe(true);
         expect(Array.isArray(body.httpRoutes)).toBe(true);
         // Collections are gated behind a valid identity — an anonymous probe
@@ -1148,7 +1161,10 @@ export const runHttpConformanceCascade = (opts: {
         const res = await doFetch(authedRequest("GET", `/v1/spec`));
         expect(res.status).toBe(200);
         const body = (await res.json()) as SpecBody;
-        expect(Array.isArray(body.collections)).toBe(true);
+        const names = (body.collections as ReadonlyArray<{ readonly name: string }>).map(
+          (c) => c.name,
+        );
+        expect(names.toSorted()).toEqual([...CONFORMANCE_COLLECTIONS].toSorted());
       });
 
       test("served errorCode→httpStatus/retriable map matches the wire behavior tested above", async () => {

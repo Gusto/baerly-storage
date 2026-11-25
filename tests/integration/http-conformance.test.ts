@@ -49,7 +49,11 @@ import { createRouter } from "@baerly/server/http";
 import { withHttpObservability } from "@baerly/server/observability";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade.ts";
-import { CONFORMANCE_TENANT, testVerifier } from "../fixtures/test-verifier.ts";
+import {
+  CONFORMANCE_COLLECTIONS,
+  CONFORMANCE_TENANT,
+  testVerifier,
+} from "../fixtures/test-verifier.ts";
 import { gate } from "../setup/gates.ts";
 import { MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY } from "../setup/ports.ts";
 import { provisionCollection } from "../fixtures/log-state.ts";
@@ -243,7 +247,7 @@ for (const variant of variants) {
         tenant: CONFORMANCE_TENANT,
         target: "node",
         auth: "none",
-        collections: {},
+        collections: Object.fromEntries(CONFORMANCE_COLLECTIONS.map((name) => [name, {}])),
       };
       const requestHandler = baerlyNode({
         config,

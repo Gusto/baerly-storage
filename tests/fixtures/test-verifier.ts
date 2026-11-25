@@ -25,6 +25,12 @@ export const CONFORMANCE_TENANT = "conformance-tenant";
 export const CONFORMANCE_BEARER = "test-token";
 
 /**
+ * Collection names the HTTP conformance harnesses declare in their
+ * `config.collections`; the cascade asserts `/v1/spec` lists exactly these.
+ */
+export const CONFORMANCE_COLLECTIONS = ["notes", "tasks"] as const;
+
+/**
  * Build a fresh {@link Verifier} suitable for handing to the HTTP
  * adapters (`baerlyNode({ verifier })` / `baerlyWorker(() => ({
  * verifier }))`). The verifier inspects the `Authorization` header and

@@ -22,7 +22,11 @@
 import type { BaerlyAppConfig, Verifier } from "@baerly/protocol";
 import { baerlyWorker, type BaerlyEnv } from "@baerly/adapter-cloudflare";
 
-import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "../fixtures/test-verifier.ts";
+import {
+  CONFORMANCE_BEARER,
+  CONFORMANCE_COLLECTIONS,
+  CONFORMANCE_TENANT,
+} from "../fixtures/test-verifier.ts";
 
 // Reproduce `testVerifier()` inline so the worker module has no
 // dependency on a fixture file living above the package root.
@@ -42,7 +46,7 @@ const config: BaerlyAppConfig = {
   tenant: CONFORMANCE_TENANT,
   target: "cloudflare",
   auth: "none",
-  collections: {},
+  collections: Object.fromEntries(CONFORMANCE_COLLECTIONS.map((name) => [name, {}])),
 };
 
 const handler = baerlyWorker(() => ({
