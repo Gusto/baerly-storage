@@ -518,7 +518,8 @@ const tailRatio = (current: CurrentJson, observedTail: number): number =>
  * The cheap DISPATCH gate the writer calls after a commit — zero
  * storage ops; it reads the post-commit {@link CurrentJson} already in
  * scope. GC boundary, OR the live tail at the profile's
- * `foldAtTailEntries`, OR the bytes ratio — the ratio WITHOUT the entry
+ * `foldAtTailEntries` (off when `foldWouldDefer`, see
+ * {@link runBoundedMaintenance}), OR the bytes ratio — the ratio WITHOUT the entry
  * floor (the floor is part of the fold-trigger Gate 1 checked inside
  * {@link runBoundedMaintenance}). Returning `false` lets the writer skip
  * the dispatch entirely. Ratio numerator is the DERIVED
@@ -532,9 +533,11 @@ export const shouldFireMaintenance = (
   prevSeq: number,
   profile: Pick<MaintenanceProfile, "gcInterval" | "foldAtTailEntries">,
   observedTail: number,
+  opts?: { readonly foldWouldDefer?: boolean },
 ): boolean =>
   crossesGcBoundary(prevSeq, observedTail, profile.gcInterval) ||
-  observedTail - current.log_seq_start >= profile.foldAtTailEntries ||
+  (opts?.foldWouldDefer !== true &&
+    observedTail - current.log_seq_start >= profile.foldAtTailEntries) ||
   tailRatio(current, observedTail) >= MAINTENANCE_TARGET_RATIO;
 
 /** Per-tier caps for {@link runBoundedMaintenance}, threaded by the adapter. */
@@ -655,7 +658,7 @@ const foldDeferredWarning = (f: FoldDeferredFields): string => {
  *      tail_hint refresh that bounds read/write forward-probes.
  *   1. Read `current.json` once.
  *   2. Hard-GC starvation boundary (`"single"` only) → GC slice, skip fold.
- *   3. Gate 1 (live tail ≥ the profile's `foldAtTailEntries`, ratio AND
+ *   3. Gate 1 (live tail ≥ the profile's count trigger, ratio AND
  *      entry floor, or a forced tick) trips → fold if the pre-fold
  *      projection is viable, else defer and signal. On `"single"` a fold
  *      attempt is this tick's one phase — including one that compact()
@@ -695,6 +698,16 @@ export const runBoundedMaintenance = async (
      * per-pass budget (`maxFoldEntriesPerPass`).
      */
     forceFold?: boolean;
+    /**
+     * The writing verb's capacity check found that no seq in the next
+     * fold pass leaves the snapshot within `C`, so a fold would rebuild
+     * it and defer. Gate 1's count arm stays off for this tick, as the
+     * forced fold does in that state (`capacity.ts`'s `tailLands`); the
+     * bytes arm still applies, and its rebuild defer carries the
+     * `fold_deferred` signal. Absent ⇒ unknown: a direct `Writer` commit
+     * or a scheduled tick.
+     */
+    foldWouldDefer?: boolean;
   },
   options?: BoundedMaintenanceOptions,
 ): Promise<void> => {
@@ -803,11 +816,13 @@ export const runBoundedMaintenance = async (
     // Ratio TRIGGER numerator = DERIVED estimate (formerly exact stored field).
     const ratio = tailRatio(current, nextSeq);
     // Hybrid trigger. The count arm bounds the tail in entries, each one a
-    // GET on every read and write; the bytes arm still folds a tail of
-    // entries large enough to outgrow the snapshot sooner.
+    // GET on every read and write, unless the verb found the fold would
+    // defer. The bytes arm needs its entry floor (50 on the write tick),
+    // so it trips first only where the count arm is higher (tails of
+    // 50-63 on cf-paid and Node) or held off by `foldWouldDefer`.
     const gate1 =
       forceFold ||
-      nextSeq - logSeqStart >= foldAtTailEntries ||
+      (args.foldWouldDefer !== true && nextSeq - logSeqStart >= foldAtTailEntries) ||
       (ratio >= MAINTENANCE_TARGET_RATIO && nextSeq - logSeqStart >= minEntriesToCompact);
     // SAFETY ceiling (conservative CF CPU/memory budget) — EXACT snapshot_bytes/rows, NEVER the estimate.
     // The pass is not projected: compact() stops at the first entry that
@@ -1144,6 +1159,7 @@ export const dispatchWriteTick = async (args: {
   prevSeq: number;
   observedTail: number;
   forceFold?: boolean;
+  foldWouldDefer?: boolean;
 }): Promise<void> => {
   const maint = getCurrentContext()?.maintenance;
   const dispatch = maint?.dispatch ?? dispatchInlineAwaited;
@@ -1172,6 +1188,7 @@ export const dispatchWriteTick = async (args: {
           ...(maint?.disabled === true && { disabled: true }),
           ...(maint?.maxFoldBytes !== undefined && { maxFoldBytes: maint.maxFoldBytes }),
           ...(args.forceFold === true && { forceFold: true }),
+          ...(args.foldWouldDefer === true && { foldWouldDefer: true }),
         },
         maint?.options,
       ).then(

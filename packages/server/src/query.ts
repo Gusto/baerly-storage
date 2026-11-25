@@ -554,6 +554,9 @@ const admitWrites = async (
   const writes = verbWrites.map((w) => w.planned);
   let forceMaintenance = false;
   let warning: CapacityWarning | undefined;
+  // The latest decision's `foldLands`, and the planned write it starts at.
+  let lands: readonly boolean[] = [];
+  let landsFrom = 0;
   if (folded !== undefined) {
     const decision = capacityDecision({
       collection: ctx.collectionName,
@@ -568,6 +571,7 @@ const admitWrites = async (
     }
     forceMaintenance = decision.pressure;
     warning = decision.warning;
+    lands = decision.foldLands;
   }
   const head = folded?.head ?? EMPTY_HEAD;
   const base = folded?.base ?? new Map<string, DocumentData>();
@@ -629,8 +633,11 @@ const admitWrites = async (
     // It rides the batch's last commit only, as the pre-commit flag does.
     warning = decision.warning;
     pressure = decision.pressure;
+    lands = decision.foldLands;
+    landsFrom = pending;
     return {
       forceMaintenance: decision.pressure && pending === writes.length - 1,
+      foldWouldDefer: lands[0] === false,
       ...(rebased !== undefined && { body: rebased }),
     };
   };
@@ -638,7 +645,9 @@ const admitWrites = async (
     forceMaintenance,
     next: () => {
       lastWindow = [];
-      return { fromSeq, check };
+      // No decision (an unprovisioned collection) leaves the count arm on.
+      const foldWouldDefer = lands[pending - landsFrom] === false;
+      return { fromSeq, check, ...(foldWouldDefer && { foldWouldDefer }) };
     },
     committed: (entry) => {
       sinceRead.push(...lastWindow, entry);

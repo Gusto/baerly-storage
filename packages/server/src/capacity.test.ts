@@ -279,6 +279,7 @@ describe("capacityDecision near the ceiling", () => {
     expect(decision(stored(7), [], [insert], pass1)).toEqual({
       refusal: undefined,
       pressure: false,
+      foldLands: [true],
     });
     // A delete at E - 1 makes room for one insert, so no pressure.
     expect(decision(stored(9), [], [{ op: "D", docId: "d0" }], pass1)).toMatchObject({
@@ -433,6 +434,20 @@ describe("capacityDecision near the ceiling", () => {
       expect(stranded).toMatchObject({ foldFreesRoom: false });
       expect(decision(s, tail, [same("d0"), { op: "D", docId: "big" }], pass5)).toMatchObject({
         refusal: undefined,
+      });
+    });
+
+    test("foldLands: per write, whether the next fold's pass reaches a seq within C", () => {
+      const pass5 = { ...limits, maxFoldEntriesPerPass: 5 };
+      // The pass starts in a run past C: the same-size update leaves it there,
+      // and the delete of the big row ends it inside the pass.
+      const tail = [entry(2, "I", "big", big)];
+      expect(
+        decision(s, tail, [same("d0"), { op: "D", docId: "big" }, same("d1")], pass5),
+      ).toMatchObject({ refusal: undefined, foldLands: [false, true, true] });
+      // A tail within C lands whatever the write does to the bytes.
+      expect(decision(s, [entry(2, "U", "d0")], [same("d1")], pass5)).toMatchObject({
+        foldLands: [true],
       });
     });
 
@@ -728,7 +743,7 @@ describe("capacityDecision agrees with what compact() folds on the host", () => 
       ],
     },
   )(
-    "MaintenancePending: folds alone admit the write; CapacityExceeded growth: they never do; pressure: the forced pass lands",
+    "MaintenancePending: folds alone admit the write; CapacityExceeded growth: they never do; pressure: the forced pass lands; foldLands: the next fold lands",
     async ({ seed, pending, write, extraRows, extraBytes, pass }) => {
       // Build the state on an unbounded host, as a collection written
       // under a larger ceiling would be.
@@ -833,12 +848,15 @@ describe("capacityDecision agrees with what compact() folds on the host", () => 
       const passes = start.tail.length;
 
       if (first.refusal === undefined) {
-        if (!first.pressure) {
-          return;
-        }
-        // The forced tick's pass must land, or it rebuilds for nothing.
         await commitOp(planned.op, planned.docId, write.pad);
-        await expect(forcedTick()).resolves.toBe(true);
+        const lands = await forcedTick();
+        // `foldLands` predicts the next fold exactly: the count arm of the
+        // write tick trigger is held off exactly where it would defer.
+        expect(lands).toBe(first.foldLands[0]);
+        // The forced tick's pass must land, or it rebuilds for nothing.
+        if (first.pressure) {
+          expect(lands).toBe(true);
+        }
         return;
       }
 
