@@ -747,6 +747,19 @@ describe("runBoundedMaintenance", () => {
     }
   });
 
+  test("foldWouldDefer keeps the count arm off: the same tail folds without it", async () => {
+    for (const foldWouldDefer of [false, true]) {
+      const inner = new MemoryStorage();
+      await seedLog(inner, KEY, COLL, 9);
+      await patchCurrent(inner, KEY, { mean_entry_bytes: 64, snapshot_bytes: 256 * 1024 });
+      await runBoundedMaintenance(
+        { storage: inner, currentJsonKey: KEY, prevSeq: 9, observedTail: 9, foldWouldDefer },
+        { profile: { ...MAINTENANCE_PROFILE_CF_FREE, foldAtTailEntries: 9 } },
+      );
+      await expect(readSeqStart(inner, KEY)).resolves.toBe(foldWouldDefer ? 0 : 9);
+    }
+  });
+
   test("a count arm above the per-pass cap folds at the cap, which is where it can still bound the tail", async () => {
     const profile = {
       ...MAINTENANCE_PROFILE_CF_FREE,
