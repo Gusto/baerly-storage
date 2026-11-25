@@ -95,6 +95,8 @@ export interface HttpConformanceOptions {
   readonly tenantPrefix?: string;
   /** Bearer token the test Verifier accepts. Default: `test-token`. */
   readonly bearerToken?: string;
+  /** Declared collection names expected from `/v1/spec`. Default: `notes`, `tasks`. */
+  readonly expectedCollections?: readonly string[];
   /** Override the doc-body arbitrary. Default: small JSON object. */
   readonly bodyArb?: fc.Arbitrary<DocumentData>;
   /**
@@ -253,6 +255,7 @@ export const runHttpConformanceCascade = (opts: {
   const streamsRequestBody = o.streamsRequestBody ?? false;
   const tenantPrefix = o.tenantPrefix ?? CONFORMANCE_TENANT;
   const bearerToken = o.bearerToken ?? CONFORMANCE_BEARER;
+  const expectedCollections = o.expectedCollections ?? CONFORMANCE_COLLECTIONS;
   const bodyArb = o.bodyArb ?? DEFAULT_BODY_ARB;
   const provisionTableAtSeq = o.provisionTableAtSeq;
   // `caseSensitiveKeys` reserved for future per-variant overrides;
@@ -1164,7 +1167,7 @@ export const runHttpConformanceCascade = (opts: {
         const names = (body.collections as ReadonlyArray<{ readonly name: string }>).map(
           (c) => c.name,
         );
-        expect(names.toSorted()).toEqual([...CONFORMANCE_COLLECTIONS].toSorted());
+        expect(names.toSorted()).toEqual([...expectedCollections].toSorted());
       });
 
       test("served errorCode→httpStatus/retriable map matches the wire behavior tested above", async () => {

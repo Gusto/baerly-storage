@@ -256,6 +256,7 @@ describe.runIf(gate("deploy-node", NODE_URL !== undefined && SECRET !== undefine
             });
           },
           options: {
+            expectedCollections: ["notes"],
             bearerToken: SECRET!,
             tenantPrefix: TENANT,
           },
