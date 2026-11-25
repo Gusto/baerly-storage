@@ -418,4 +418,56 @@ describe("the count arm skips a fold that cannot land", () => {
     });
     expect(tick).toEqual({ snapshotGets: 0, snapshotPuts: 0 });
   });
+
+  test("on cf-free, each write whose fold cannot land signals a held-off deferral, once", async () => {
+    const inner = new MemoryStorage();
+    await seedOverC(inner, "d0");
+    const docs = Db.create({ storage: inner, app: APP, tenant: TENANT }).collection(COLL);
+    const warnings: Array<Readonly<Record<string, unknown>>> = [];
+    // cf-free's own pass (20) and count arm (20), with C lowered to SMALL's:
+    // the verb refuses this tail at 20 entries, under the bytes arm's
+    // 50-entry floor, so no fold tick would ever signal it.
+    const ctx = createObservabilityContext({
+      maintenance: {
+        maxFoldBytes: SMALL_C,
+        options: { profile: MAINTENANCE_PROFILE_CF_FREE },
+        warn: (event, properties) => {
+          if (event === "fold_deferred") {
+            warnings.push(properties);
+          }
+        },
+      },
+    });
+    // Four writes cross a cf-free GC boundary (every 4), so one tick is
+    // dispatched and the rest are not: both signal sites run.
+    const WRITES_HELD = 4;
+    for (let i = 0; i < WRITES_HELD; i++) {
+      await runWithContext(ctx, () => docs.update("d1", { n: 2 + i }));
+    }
+    const held = ctx.recorder
+      .snapshot()
+      .counters.filter((c) => c.name === "db.compaction.deferred_total");
+    expect(held.map((c) => c.labels)).toEqual(
+      Array.from({ length: WRITES_HELD }, () => ({
+        collection: COLL,
+        dimension: "bytes",
+        gate: "held-off",
+      })),
+    );
+    expect(ctx.recorder.summarize()["db.compaction.deferred_total"]).toBe(WRITES_HELD);
+    expect(ctx.recorder.summarize()["db.compaction.deferred_bytes_total"]).toBe(WRITES_HELD);
+    // No storage call stamps `last_warned_seq`, so each held-off write warns.
+    expect(warnings).toHaveLength(WRITES_HELD);
+    expect(warnings[0]).toMatchObject({
+      collection: COLL,
+      dimension: "bytes",
+      gate: "held-off",
+      ceiling_bytes: SMALL_C,
+      log_seq_start: SEED_DOCS,
+      live_log_tail: 2,
+    });
+    const cur = (await readCurrentJson(inner, CURRENT_JSON_KEY))!.json;
+    expect(cur.log_seq_start).toBe(SEED_DOCS);
+    expect(cur.last_warned_seq).toBeUndefined();
+  });
 });
