@@ -301,7 +301,10 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
     ({
       [CLIENT_CONTEXT]: scope,
       // A view whose every request is also cancelled by `signal`; see `withSignal`.
-      [CLIENT_SCOPE]: (signal: AbortSignal) => build({ ...scope, signal }),
+      [CLIENT_SCOPE]: (
+        signal: AbortSignal,
+        onReadCursor?: (collection: string, cursor: string) => void,
+      ) => build({ ...scope, signal, ...(onReadCursor !== undefined && { onReadCursor }) }),
       collection<T extends DocumentData = DocumentData>(name: string): ClientCollection<T> {
         return makeClientCollection<T>(scope, name);
       },
@@ -380,6 +383,7 @@ const makeClientCollection = <T extends DocumentData>(
           method: "GET",
           path: idPath(id),
           signal: opts?.signal,
+          readOf: name,
         });
       } catch (error) {
         // 404 on GET → unknown id. Mirrors `Db.collection().get(id)` which
@@ -518,6 +522,7 @@ const makeClientQuery = <T extends DocumentData>(
         method: "GET",
         path: listPath({ limit: 1 }),
         signal: opts?.signal,
+        readOf: collectionName,
       });
       return data[0];
     },
@@ -526,6 +531,7 @@ const makeClientQuery = <T extends DocumentData>(
         method: "GET",
         path: listPath(),
         signal: opts?.signal,
+        readOf: collectionName,
       });
       return [...data];
     },
@@ -542,6 +548,7 @@ const makeClientQuery = <T extends DocumentData>(
         method: "GET",
         path: `/v1/count?${params.toString()}`,
         signal: opts?.signal,
+        readOf: collectionName,
       });
       return count;
     },

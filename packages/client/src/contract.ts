@@ -18,10 +18,27 @@ import type { BaerlyErrorCode, LogEntry } from "@baerly/protocol";
  * - `fresh` — `true` iff this read advanced the locally-cached
  *   pointer on the server (cold path); `false` iff it served from the
  *   cached view.
+ * - `since_cursor` — the `/v1/since` cursor for the state this read
+ *   returned.
  */
 interface HttpOkMeta {
   readonly manifest_pointer: string;
   readonly fresh: boolean;
+  /**
+   * A `/v1/since` cursor positioned exactly after the changes this read
+   * folded. Mirrors `HttpOkMeta.since_cursor` in
+   * `packages/server/src/contract.ts`. The React subscription pool seeds
+   * its poll with it, so a change that commits and folds between the
+   * read and the first poll is neither missed nor delivered twice.
+   * Opaque: echo it, never parse it. A server that predates it omits it.
+   *
+   * @example
+   * ```ts
+   * const env = (await res.json()) as HttpOkEnvelope<Row[]>;
+   * const cursor = env._meta.since_cursor ?? ""; // "" against an older server
+   * ```
+   */
+  readonly since_cursor?: string;
 }
 
 /** Successful single-doc / single-result wrapper. */
@@ -93,7 +110,8 @@ export interface HttpErrorEnvelope {
  * a change after it is no longer retained (the client fell further
  * behind than the log keeps), or its generation was truncated by
  * `baerly admin restore --force`. Neither clears on
- * retry: re-read, then restart with `cursor: ""`. Retrying the rejected
+ * retry: re-read, then resume from the re-read's `_meta.since_cursor`
+ * (`cursor: ""` against a server that omits it). Retrying the rejected
  * cursor loops forever. Back off before re-bootstrapping so a cursor
  * rejected on every lap cannot become a hot loop. A malformed cursor is
  * `400 SchemaError`.

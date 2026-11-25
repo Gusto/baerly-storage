@@ -42,6 +42,19 @@ export const CLIENT_SCOPE: unique symbol = Symbol("baerly.client.scope");
  * The React subscription pool runs a query's callback against this view
  * so superseding or unmounting the query aborts its in-flight GET and
  * any retry wait, without the callback threading a signal itself.
+ * `onReadCursor`, when given, receives each read's `_meta.since_cursor`
+ * under the collection it read (see `RequestContext.onReadCursor`).
  */
-export const withSignal = <C extends BaerlyClient<never>>(client: C, signal: AbortSignal): C =>
-  (client as unknown as { [CLIENT_SCOPE]: (signal: AbortSignal) => C })[CLIENT_SCOPE](signal);
+export const withSignal = <C extends BaerlyClient<never>>(
+  client: C,
+  signal: AbortSignal,
+  onReadCursor?: (collection: string, cursor: string) => void,
+): C =>
+  (
+    client as unknown as {
+      [CLIENT_SCOPE]: (
+        signal: AbortSignal,
+        onReadCursor?: (collection: string, cursor: string) => void,
+      ) => C;
+    }
+  )[CLIENT_SCOPE](signal, onReadCursor);

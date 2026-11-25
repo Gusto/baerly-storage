@@ -51,6 +51,11 @@ export interface RequestOptions {
    * first attempt had committed, the server replays its `201 { _id }`.
    */
   readonly mintedInsert?: true;
+  /**
+   * The collection a read route reads. A response carrying
+   * `_meta.since_cursor` is reported to `ctx.onReadCursor` under it.
+   */
+  readonly readOf?: string;
 }
 
 /**
@@ -72,7 +77,27 @@ export interface RequestContext {
   readonly signal?: AbortSignal;
   /** `BaerlyClientOptions.onWarning`, called once per warned response. */
   readonly onWarning?: (warning: BaerlyWarning) => void;
+  /**
+   * Called with the `_meta.since_cursor` of every read through this
+   * context, under the collection it read. Set only on the scoped client
+   * a `useQuery` fetch runs against, so the subscription pool can seed
+   * its `/v1/since` poll from the state the query rendered.
+   */
+  readonly onReadCursor?: (collection: string, cursor: string) => void;
 }
+
+/**
+ * Hand a read response's `_meta.since_cursor` to `ctx.onReadCursor`. A
+ * body without one (a server that predates it) reports nothing.
+ */
+const reportReadCursor = (ctx: RequestContext, opts: RequestOptions, body: unknown): void => {
+  // Optional chaining is safe on any parsed JSON value: a primitive has
+  // no `_meta`, and `null` short-circuits.
+  const cursor = (body as { _meta?: { since_cursor?: unknown } } | null)?.["_meta"]?.since_cursor;
+  if (opts.readOf !== undefined && typeof cursor === "string") {
+    ctx.onReadCursor?.(opts.readOf, cursor);
+  }
+};
 
 /**
  * Hand a successful response's capacity warning to `ctx.onWarning`. The
@@ -146,7 +171,11 @@ const isAbortError = (error: unknown): boolean =>
 const decodeFailure = async (
   res: Response,
   hintMillis: number | undefined,
-): Promise<{ readonly error: BaerlyError; readonly enveloped: boolean }> => {
+): Promise<{
+  readonly error: BaerlyError;
+  readonly enveloped: boolean;
+  readonly body: unknown;
+}> => {
   let envelope: HttpErrorEnvelope | undefined;
   try {
     envelope = (await res.json()) as HttpErrorEnvelope;
@@ -165,6 +194,7 @@ const decodeFailure = async (
     ];
     return {
       enveloped: true,
+      body: envelope,
       error: new BaerlyError(wireCode, wire.message ?? `HTTP ${res.status}`, {
         issues: wire.issues,
         status: res.status,
@@ -177,6 +207,7 @@ const decodeFailure = async (
   }
   const transient = res.status >= 500 || res.status === 408 || res.status === 429;
   return {
+    body: envelope,
     enveloped:
       typeof wire === "object" &&
       wire !== null &&
@@ -296,7 +327,12 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     // 4xx / 5xx — `HttpErrorEnvelope`. Parse + throw, or retry.
     if (!res.ok) {
       const hintMillis = parseRetryAfterMillis(res.headers.get("retry-after"));
-      const { error, enveloped } = await decodeFailure(res, hintMillis);
+      const { error, enveloped, body: failure } = await decodeFailure(res, hintMillis);
+      // A by-id read's 404 carries the read's `_meta`: the miss is a state
+      // a subscription seeds from like any other read.
+      if (enveloped && error.code === "NotFound") {
+        reportReadCursor(ctx, opts, failure);
+      }
       const pending = enveloped && error.code === "MaintenancePending";
       const retriable = pending
         ? attempt < pendingAttempts
@@ -334,6 +370,7 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
         { status: res.status },
       );
     }
+    reportReadCursor(ctx, opts, parsed);
     return (parsed as HttpOkEnvelope<T>).data;
   }
 };

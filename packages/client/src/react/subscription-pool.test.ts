@@ -1,7 +1,9 @@
 import { BaerlyError } from "@baerly/protocol";
 import { describe, expect, test, vi } from "vitest";
 import { createBaerlyClient } from "../client.ts";
+import { withSignal } from "../internal/context.ts";
 import { MockFetch } from "../testing/index.ts";
+import { jsonResponse } from "../../../../tests/fixtures/json-response.ts";
 import { LOADING_SNAPSHOT, poolFor } from "./subscription-pool.ts";
 
 const sinceForever = (): Promise<Response> => new Promise<Response>(() => {});
@@ -1088,5 +1090,424 @@ describe("subscription-pool", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("subscription-pool — the poll starts from the query's read", () => {
+  /** A read envelope whose `_meta` names `sinceCursor` (omitted when undefined). */
+  const readEnvelope = (data: unknown, sinceCursor?: string): Response =>
+    jsonResponse({
+      data,
+      _meta: {
+        manifest_pointer: "m",
+        fresh: true,
+        ...(sinceCursor !== undefined && { since_cursor: sinceCursor }),
+      },
+    });
+
+  /** Records every `/v1/since` cursor; `respond` picks each reply (default: hang). */
+  const recordSince = (
+    mock: MockFetch,
+    respond: (cursor: string) => Promise<Response> = sinceForever,
+  ): string[] => {
+    const cursors: string[] = [];
+    mock.on("GET", "/v1/since", (req) => {
+      const cursor = new URL(req.url).searchParams.get("cursor") ?? "";
+      cursors.push(cursor);
+      return respond(cursor);
+    });
+    return cursors;
+  };
+
+  /** A fetcher that reads `notes` through the pool's scoped client. */
+  const readNotes =
+    (client: ReturnType<typeof makeClient>) =>
+    (signal: AbortSignal, onReadCursor: (collection: string, cursor: string) => void) =>
+      withSignal(client, signal, onReadCursor).collection("notes").all();
+
+  test("the first poll waits for the query and sends its _meta.since_cursor", async () => {
+    let releaseRead: ((response: Response) => void) | undefined;
+    const mock = new MockFetch();
+    mock.on(
+      "GET",
+      "/v1/c/notes",
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseRead = resolve;
+        }),
+    );
+    const cursors = recordSince(mock);
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const unsubscribe = pool.attach(
+      "seeded",
+      ["notes"],
+      new Set(["notes"]),
+      readNotes(client),
+      vi.fn<() => void>(),
+    );
+    await waitMicrotasks(12);
+    // A poll issued now would read the log at a different moment than
+    // the query: a change committing and folding in between is lost.
+    expect(cursors).toEqual([]);
+    releaseRead?.(readEnvelope([{ _id: "a" }], "gen.0_0_00000000003"));
+    await waitMicrotasks(12);
+    expect(pool.getSnapshot("seeded")).toMatchObject({ status: "ok", data: [{ _id: "a" }] });
+    expect(cursors).toEqual(["gen.0_0_00000000003"]);
+    unsubscribe();
+  });
+
+  test("a by-id miss seeds the poll from the 404's _meta", async () => {
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/c/notes/:id", () =>
+      jsonResponse(
+        {
+          error: { code: "NotFound", message: "No such row: x", retriable: false },
+          _meta: { manifest_pointer: "m", fresh: true, since_cursor: "gen.0_0_00000000001" },
+        },
+        404,
+      ),
+    );
+    const cursors = recordSince(mock);
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const unsubscribe = pool.attach(
+      "miss",
+      ["notes"],
+      new Set(["notes"]),
+      (signal, onReadCursor) =>
+        withSignal(client, signal, onReadCursor).collection("notes").get("x"),
+      vi.fn<() => void>(),
+    );
+    await waitMicrotasks(16);
+    expect(pool.getSnapshot("miss")).toMatchObject({ status: "ok", data: undefined });
+    expect(cursors).toEqual(["gen.0_0_00000000001"]);
+    unsubscribe();
+  });
+
+  test('a read without since_cursor (an older server) starts the poll from cursor=""', async () => {
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/c/notes", () => readEnvelope([]));
+    const cursors = recordSince(mock);
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const unsubscribe = pool.attach(
+      "older",
+      ["notes"],
+      new Set(["notes"]),
+      readNotes(client),
+      vi.fn<() => void>(),
+    );
+    await waitMicrotasks(12);
+    expect(cursors).toEqual([""]);
+    unsubscribe();
+  });
+
+  test('CursorExpired resumes from the refetch\'s since_cursor, not cursor=""', async () => {
+    let reads = 0;
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/c/notes", () => {
+      reads += 1;
+      return readEnvelope([], `gen.0_0_0000000000${reads}`);
+    });
+    const cursors = recordSince(mock, (cursor) =>
+      cursor === "gen.0_0_00000000001"
+        ? Promise.resolve(sinceError("CursorExpired", 410, false))
+        : sinceForever(),
+    );
+    vi.useFakeTimers();
+    try {
+      const client = makeClient(mock);
+      const pool = poolFor(client);
+      const unsubscribe = pool.attach(
+        "expired",
+        ["notes"],
+        new Set(["notes"]),
+        readNotes(client),
+        vi.fn<() => void>(),
+      );
+      await waitMicrotasks(16);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(reads).toBe(2);
+      expect(cursors).toEqual(["gen.0_0_00000000001", "gen.0_0_00000000002"]);
+      unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a query that read before the seed and saw another state runs again", async () => {
+    // Two queries on one collection, both reading while the poll waits:
+    // the first to finish seeds it. The other read a different state,
+    // possibly an earlier one, so it runs again after the seed; one that
+    // read the seed's state does not.
+    const release = new Map<string, (response: Response) => void>();
+    const reads: string[] = [];
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/c/notes", (req) => {
+      const tag = new URL(req.url).searchParams.get("limit") ?? "all";
+      reads.push(tag);
+      if (reads.filter((r) => r === tag).length > 1) {
+        return readEnvelope([tag], "gen.0_0_00000000009");
+      }
+      return new Promise<Response>((resolve) => {
+        release.set(tag, resolve);
+      });
+    });
+    const cursors = recordSince(mock);
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const scoped = (signal: AbortSignal, onReadCursor: (c: string, cursor: string) => void) =>
+      withSignal(client, signal, onReadCursor).collection("notes");
+    const unsubscribers = [
+      pool.attach("all", ["notes"], new Set(["notes"]), readNotes(client), vi.fn<() => void>()),
+      pool.attach(
+        "one",
+        ["notes"],
+        new Set(["notes"]),
+        (signal, onReadCursor) => scoped(signal, onReadCursor).limit(1).all(),
+        vi.fn<() => void>(),
+      ),
+      pool.attach(
+        "two",
+        ["notes"],
+        new Set(["notes"]),
+        (signal, onReadCursor) => scoped(signal, onReadCursor).limit(2).all(),
+        vi.fn<() => void>(),
+      ),
+    ];
+    await waitMicrotasks(8);
+    expect(reads).toEqual(["all", "1", "2"]);
+    release.get("all")?.(readEnvelope(["all"], "gen.0_0_00000000004"));
+    await waitMicrotasks(12);
+    expect(cursors).toEqual(["gen.0_0_00000000004"]);
+    release.get("1")?.(readEnvelope(["1"], "gen.0_0_00000000004"));
+    release.get("2")?.(readEnvelope(["2"], "gen.0_0_00000000003"));
+    await waitMicrotasks(16);
+    expect(reads).toEqual(["all", "1", "2", "2"]);
+    expect(pool.getSnapshot("two")).toMatchObject({ status: "ok", data: ["2"] });
+    expect(cursors).toEqual(["gen.0_0_00000000004"]);
+    for (const unsubscribe of unsubscribers) {
+      unsubscribe();
+    }
+  });
+
+  /** A `/v1/c/notes` handler whose n-th read waits for `release(n, response)`. */
+  const heldReads = (mock: MockFetch) => {
+    const pending: Array<(response: Response) => void> = [];
+    mock.on(
+      "GET",
+      "/v1/c/notes",
+      () =>
+        new Promise<Response>((resolve) => {
+          pending.push(resolve);
+        }),
+    );
+    return {
+      count: () => pending.length,
+      release: (n: number, response: Response) => pending[n]?.(response),
+    };
+  };
+
+  test("a failed fetch does not seed while another fetch on the table may still", async () => {
+    // B fails first. Seeding `""` then would wave A through unchecked: A
+    // read earlier, so a change landing between A's read and the `""`
+    // poll would never reach A.
+    const mock = new MockFetch();
+    const reads = heldReads(mock);
+    const cursors = recordSince(mock);
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const unsubscribers = [
+      pool.attach("a", ["notes"], new Set(["notes"]), readNotes(client), vi.fn<() => void>()),
+      pool.attach(
+        "b",
+        ["notes"],
+        new Set(["notes"]),
+        () => Promise.reject(new BaerlyError("NetworkError", "b failed")),
+        vi.fn<() => void>(),
+      ),
+    ];
+    await waitMicrotasks(12);
+    expect(pool.getSnapshot("b")).toMatchObject({ status: "error" });
+    expect(cursors).toEqual([]);
+    reads.release(0, readEnvelope([], "gen.0_0_00000000005"));
+    await waitMicrotasks(12);
+    expect(cursors).toEqual(["gen.0_0_00000000005"]);
+    for (const unsubscribe of unsubscribers) {
+      unsubscribe();
+    }
+  });
+
+  test('a lone failed fetch still starts the poll from cursor=""', async () => {
+    const mock = new MockFetch();
+    const cursors = recordSince(mock);
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const unsubscribe = pool.attach(
+      "lone",
+      ["notes"],
+      new Set(["notes"]),
+      () => Promise.reject(new BaerlyError("NetworkError", "failed")),
+      vi.fn<() => void>(),
+    );
+    await waitMicrotasks(12);
+    expect(cursors).toEqual([""]);
+    unsubscribe();
+  });
+
+  test("unmounting while the poll waits for a seed, then remounting, seeds from the new read", async () => {
+    const mock = new MockFetch();
+    const reads = heldReads(mock);
+    const cursors = recordSince(mock);
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const first = pool.attach(
+      "remount",
+      ["notes"],
+      new Set(["notes"]),
+      readNotes(client),
+      vi.fn<() => void>(),
+    );
+    await waitMicrotasks(8);
+    first();
+    await waitMicrotasks(8);
+    expect(cursors).toEqual([]);
+    const second = pool.attach(
+      "remount",
+      ["notes"],
+      new Set(["notes"]),
+      readNotes(client),
+      vi.fn<() => void>(),
+    );
+    await waitMicrotasks(8);
+    expect(reads.count()).toBe(2);
+    // The unmounted fetch's late answer seeds nothing.
+    reads.release(0, readEnvelope([], "gen.0_0_00000000001"));
+    await waitMicrotasks(12);
+    expect(cursors).toEqual([]);
+    reads.release(1, readEnvelope([], "gen.0_0_00000000002"));
+    await waitMicrotasks(12);
+    expect(cursors).toEqual(["gen.0_0_00000000002"]);
+    second();
+  });
+
+  test("refetch after a terminal poll error reseeds the revived poll from the refetch", async () => {
+    let reads = 0;
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/c/notes", () => {
+      reads += 1;
+      return readEnvelope([], `gen.0_0_0000000000${reads}`);
+    });
+    const cursors = recordSince(mock, (cursor) =>
+      cursor === "gen.0_0_00000000001"
+        ? Promise.resolve(sinceError("Unauthorized", 401, false))
+        : sinceForever(),
+    );
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const unsubscribe = pool.attach(
+      "revive",
+      ["notes"],
+      new Set(["notes"]),
+      readNotes(client),
+      vi.fn<() => void>(),
+    );
+    await waitMicrotasks(16);
+    expect(pool.getSnapshot("revive")).toMatchObject({ status: "error" });
+    pool.refetch("revive");
+    await waitMicrotasks(16);
+    expect(reads).toBe(2);
+    expect(cursors).toEqual(["gen.0_0_00000000001", "gen.0_0_00000000002"]);
+    unsubscribe();
+  });
+
+  test("a fetch from before CursorExpired does not seed the poll that follows", async () => {
+    // "slow" is still reading when "fast" seeds the poll, and still when
+    // that cursor expires. The recovery refetches both; the stale read's
+    // late answer must not seed the new wait.
+    const mock = new MockFetch();
+    let slowReads = 0;
+    let fastReads = 0;
+    const releaseSlow: Array<(response: Response) => void> = [];
+    mock.on("GET", "/v1/c/notes", (req) => {
+      if (new URL(req.url).searchParams.get("limit") === "1") {
+        slowReads += 1;
+        return new Promise<Response>((resolve) => {
+          releaseSlow.push(resolve);
+        });
+      }
+      fastReads += 1;
+      return readEnvelope([], `gen.0_0_0000000000${fastReads}`);
+    });
+    const cursors = recordSince(mock, (cursor) =>
+      cursor === "gen.0_0_00000000001"
+        ? Promise.resolve(sinceError("CursorExpired", 410, false))
+        : sinceForever(),
+    );
+    vi.useFakeTimers();
+    try {
+      const client = makeClient(mock);
+      const pool = poolFor(client);
+      const unsubscribers = [
+        pool.attach("fast", ["notes"], new Set(["notes"]), readNotes(client), vi.fn<() => void>()),
+        pool.attach(
+          "slow",
+          ["notes"],
+          new Set(["notes"]),
+          (signal, onReadCursor) =>
+            withSignal(client, signal, onReadCursor).collection("notes").limit(1).all(),
+          vi.fn<() => void>(),
+        ),
+      ];
+      await waitMicrotasks(16);
+      expect(slowReads).toBe(2);
+      expect(fastReads).toBe(2);
+      releaseSlow[0]?.(readEnvelope([], "gen.0_0_00000000009"));
+      await waitMicrotasks(16);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(cursors).toEqual(["gen.0_0_00000000001", "gen.0_0_00000000002"]);
+      for (const unsubscribe of unsubscribers) {
+        unsubscribe();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a fetch's cursor sink stops collecting once the fetch settles", async () => {
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/c/notes", () => readEnvelope([], "gen.0_0_00000000001"));
+    recordSince(mock);
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    let sink: ((collection: string, cursor: string) => void) | undefined;
+    const unsubscribe = pool.attach(
+      "sink",
+      ["notes"],
+      new Set(["notes"]),
+      (signal, onReadCursor) => {
+        sink = onReadCursor;
+        return withSignal(client, signal, onReadCursor).collection("notes").all();
+      },
+      vi.fn<() => void>(),
+    );
+    await waitMicrotasks(12);
+    expect(pool.getSnapshot("sink")).toMatchObject({ status: "ok" });
+    // A scoped client the app kept goes on reporting reads; none of them
+    // may be stored.
+    const push = vi.spyOn(Array.prototype, "push");
+    const set = vi.spyOn(Map.prototype, "set");
+    try {
+      for (let i = 0; i < 100; i += 1) {
+        sink?.("notes", `gen.0_0_${String(i).padStart(11, "0")}`);
+      }
+      expect(push).not.toHaveBeenCalled();
+      expect(set).not.toHaveBeenCalled();
+    } finally {
+      push.mockRestore();
+      set.mockRestore();
+    }
+    unsubscribe();
   });
 });
