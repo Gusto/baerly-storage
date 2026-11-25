@@ -44,13 +44,14 @@ import {
   errorEnvelope,
   type HttpErrorEnvelope,
   type HttpOkEnvelope,
+  type HttpReadMissEnvelope,
   type HttpStatus,
   type SinceResponse,
 } from "../contract.ts";
 import { serializeError } from "../observability/canonical.ts";
 import { CATEGORY, getCurrentContext, getLogger } from "../observability/index.ts";
-import { runAllWithMeta, runByIdWithMeta, runInsert } from "../query.ts";
-import { longPollSince } from "./since.ts";
+import { type ReadResult, runAllWithMeta, runByIdWithMeta, runInsert } from "../query.ts";
+import { longPollSince, sinceCursorAt } from "./since.ts";
 
 /**
  * Options for {@link createRouter}.
@@ -132,18 +133,21 @@ export function createRouter(options: CreateRouterOptions): Hono {
   // Read one — GET /v1/c/:collection/:id
   app.get("/v1/c/:collection/:id", async (c) => {
     const { collection, id } = c.req.param();
-    const { rows, manifestPointer, fresh } = await runByIdWithMeta(
-      collectionReadContext(db, collection),
-      id,
-    );
-    const row = rows[0];
+    const read = await runByIdWithMeta(collectionReadContext(db, collection), id);
+    const row = read.rows[0];
     if (row === undefined) {
-      throw new BaerlyError("NotFound", `No such row: ${id}`);
+      // The miss is a read like any other: it carries the `_meta` a
+      // subscription seeds its poll from.
+      const { status, envelope } = mapError(new BaerlyError("NotFound", `No such row: ${id}`));
+      return c.json(
+        { ...envelope, _meta: readMeta(read) } satisfies HttpReadMissEnvelope,
+        status as ContentfulStatusCode,
+      );
     }
     return c.json(
       {
         data: row,
-        _meta: { manifest_pointer: manifestPointer, fresh },
+        _meta: readMeta(read),
       } satisfies HttpOkEnvelope<DocumentData>,
       200,
     );
@@ -155,18 +159,15 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const wire = parseWhereParam(c);
     const order = parseOrder(c.req.query("order"));
     const limit = parseLimit(c.req.query("limit"));
-    const { rows, manifestPointer, fresh } = await runAllWithMeta(
-      collectionReadContext(db, collection),
-      {
-        wire,
-        order,
-        limit,
-      },
-    );
+    const read = await runAllWithMeta(collectionReadContext(db, collection), {
+      wire,
+      order,
+      limit,
+    });
     return c.json(
       {
-        data: rows,
-        _meta: { manifest_pointer: manifestPointer, fresh },
+        data: read.rows,
+        _meta: readMeta(read),
       } satisfies HttpOkEnvelope<ReadonlyArray<DocumentData>>,
       200,
     );
@@ -244,7 +245,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     }
     const wire = parseWhereParam(c);
     const limit = parseLimit(c.req.query("limit"));
-    const { count, manifestPointer, fresh } = await runAllWithMeta(
+    const read = await runAllWithMeta(
       collectionReadContext(db, collection),
       {
         wire,
@@ -255,8 +256,8 @@ export function createRouter(options: CreateRouterOptions): Hono {
     );
     return c.json(
       {
-        data: { count },
-        _meta: { manifest_pointer: manifestPointer, fresh },
+        data: { count: read.count },
+        _meta: readMeta(read),
       } satisfies HttpOkEnvelope<{ count: number }>,
       200,
     );
@@ -671,6 +672,17 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
   getLogger(CATEGORY.http).error("unhandled_error", { error: serializeError(err) });
   return { status: 500, envelope: errorEnvelope("Internal", "internal error") };
 }
+
+/**
+ * The `_meta` of a read response: the manifest pointer, freshness, and
+ * the `/v1/since` cursor for exactly the state the read folded, minted
+ * from the `current.json` and tail it already holds (no storage call).
+ */
+const readMeta = (read: ReadResult<DocumentData>): HttpOkEnvelope<unknown>["_meta"] => ({
+  manifest_pointer: read.manifestPointer,
+  fresh: read.fresh,
+  since_cursor: sinceCursorAt(read.head, read.tail),
+});
 
 // Early capacity warning: a write the capacity check admitted
 // near the host's refusal point stamped its text on the request's

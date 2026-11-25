@@ -98,15 +98,66 @@ export const errorEnvelope = (
  * - `fresh` is `true` iff this read advanced the locally-cached
  *   pointer (cold path); `false` iff it served from the cached view
  *   (cached pointer was unchanged).
+ * - `since_cursor` is the `/v1/since` cursor for the state this read
+ *   returned.
  */
 interface HttpOkMeta {
   readonly manifest_pointer: string;
   readonly fresh: boolean;
+  /**
+   * A `/v1/since` cursor positioned exactly after the changes this read
+   * folded: polling from it delivers every change that commits after
+   * the returned state, each once and in order, and none the read
+   * already reflects. Seed a subscription with it rather than with a
+   * separate `cursor=""` poll, whose position is taken at a different
+   * moment, so a change that commits and folds between the two requests
+   * is neither missed nor delivered twice.
+   *
+   * Opaque, like {@link SinceResponse.next_cursor}: echo it, never parse
+   * it. It obeys the same rules, including `410 CursorExpired` once a
+   * change after it is no longer retained. Present on every read route
+   * (`GET /v1/c/:collection`, `GET /v1/c/:collection/:id`,
+   * `GET /v1/count`); a server that predates it omits it.
+   *
+   * @example
+   * ```ts
+   * const list = await (await fetch(`${base}/v1/c/tickets`)).json();
+   * render(list.data);
+   * let cursor = list._meta.since_cursor ?? "";
+   * for (;;) {
+   *   const params = new URLSearchParams({ collection: "tickets", cursor });
+   *   const res = await (await fetch(`${base}/v1/since?${params}`)).json();
+   *   apply(res.events);
+   *   cursor = res.next_cursor;
+   * }
+   * ```
+   */
+  readonly since_cursor: string;
 }
 
 /** Successful single-doc / single-result wrapper. */
 export interface HttpOkEnvelope<T> {
   readonly data: T;
+  readonly _meta: HttpOkMeta;
+}
+
+/**
+ * The `404 NotFound` body of `GET /v1/c/:collection/:id`: the error
+ * envelope plus the `_meta` of the read that found no row. A
+ * subscription to a row that does not exist yet seeds its poll from
+ * `_meta.since_cursor` like any other read, so the insert that creates
+ * the row is delivered even if it commits and folds before the first
+ * poll.
+ *
+ * @example
+ * ```ts
+ * const res = await fetch(`${base}/v1/c/tickets/${id}`);
+ * const body = await res.json();
+ * const row = res.status === 404 ? undefined : body.data;
+ * const cursor = body._meta?.since_cursor ?? "";
+ * ```
+ */
+export interface HttpReadMissEnvelope extends HttpErrorEnvelope {
   readonly _meta: HttpOkMeta;
 }
 
@@ -130,8 +181,9 @@ export interface HttpOkEnvelope<T> {
  *
  * A `410 CursorExpired` on resume means the cursor is permanently dead:
  * a change after it is no longer retained (the client fell further
- * behind than the log keeps), or its generation was truncated. Neither clears on retry: re-read, then restart with
- * `cursor: ""`. Retrying the rejected cursor loops forever. A malformed
+ * behind than the log keeps), or its generation was truncated. Neither
+ * clears on retry: re-read, then resume from the re-read's
+ * `_meta.since_cursor`. Retrying the rejected cursor loops forever. A malformed
  * cursor is `400 SchemaError`. See invariant 13 in
  * `docs/spec/sync-protocol.md`.
  */
@@ -153,7 +205,7 @@ export interface SinceResponse {
  * | 400    | Caller request failed → `SchemaError` / `InvalidConfig` / `UnsatisfiablePredicate`. Predicate `InvalidConfig` guidance is public; server/storage config detail is scrubbed. |
  * | 401    | `Verifier` returned null → `code:"Unauthorized"`, `message: "Missing or invalid Authorization header"`. |
  * | 403    | Auth ok but tenant prefix denied → `code:"AccessDenied"`.        |
- * | 404    | Doc not found → `code:"NotFound"`. NOT used for "tenant unknown" (→ 401). |
+ * | 404    | Doc not found → `code:"NotFound"`; from `GET /v1/c/:collection/:id` the body is a `HttpReadMissEnvelope`, carrying the read's `_meta`. NOT used for "tenant unknown" (→ 401). |
  * | 409    | Lost race → `code:"WriteConflict"` (retriable, generic message). Create target exists → `code:"AlreadyExists"` (not retriable, message kept). Unresolved commit → `code:"AmbiguousCommit"` (not retriable, carries `_id`). |
  * | 409    | The request needs more work than this host does in one request → `code:"CapacityExceeded"` (not retriable, message kept; a read returns no rows, a write commits nothing). |
  * | 410    | `/v1/since` cursor can no longer resume → `code:"CursorExpired"` (not retriable, message kept; restart with `cursor: ""`). |

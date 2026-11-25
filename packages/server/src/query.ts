@@ -147,6 +147,18 @@ export interface ReadResult<T extends DocumentData> {
   readonly count: number;
   readonly manifestPointer: string;
   readonly fresh: boolean;
+  /**
+   * The `current.json` this read folded over, or `null` when the
+   * collection is not provisioned.
+   */
+  readonly head: CurrentJson | null;
+  /**
+   * The log tail this read folded through: the rows are the collection's
+   * state after every entry below it. With {@link ReadResult.head} it
+   * names the read's position in the change feed, which the router hands
+   * out as `_meta.since_cursor`.
+   */
+  readonly tail: number;
 }
 
 /**
@@ -1295,11 +1307,23 @@ const runRead = async <T extends DocumentData>(
   // The host's read envelope admits the read (see `read-admission.ts`).
   const budget = new ReadBudget(ctx.collectionName);
   const countOnly = opts?.countOnly === true;
-  const { rows, count, manifestPointer, fresh } = await runReadRows(ctx, state, budget, countOnly);
+  const { rows, count, manifestPointer, fresh, tail, folded } = await runReadRows(
+    ctx,
+    state,
+    budget,
+    countOnly,
+  );
   if (!countOnly) {
     budget.admitOutput(rows.length);
   }
-  return { rows: rows.map((row) => row.doc), count, manifestPointer, fresh };
+  return {
+    rows: rows.map((row) => row.doc),
+    count,
+    manifestPointer,
+    fresh,
+    head: folded?.head ?? null,
+    tail,
+  };
 };
 
 /** A folded row of `T` paired with its storage key (see {@link StoredDoc}). */
