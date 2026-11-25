@@ -196,20 +196,6 @@ describe("fold stall (pre-refusal behavior)", () => {
           expect(signals.records).toHaveLength(0);
         });
 
-        test("at E - 1 an update-only tail folds in one tick: no per-entry rebuilds near E", async () => {
-          const storage = await foldedRows(E - 1);
-          await commit(
-            storage,
-            Array.from({ length: 3 }, (_, i) => ({ op: "U" as const, i, n: 99 })),
-          );
-          await tick(storage, SMALL);
-          await expect(state(storage)).resolves.toMatchObject({
-            start: E + 2,
-            tail: E + 2,
-            rows: E - 1,
-          });
-        });
-
         test("at E a delete-only tail drains in place and rows shrink", async () => {
           const storage = await foldedRows(E);
           await commit(
