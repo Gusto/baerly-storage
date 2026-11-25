@@ -2,7 +2,7 @@
 title: Extending baerly-storage
 audience: coder
 summary: Worked patterns for adding methods to Db, Query verbs, and Collection verbs.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-11-25
 tags: [extending, api-design, patterns]
 related: ["../architecture.md", "conventions/change-discipline.md", "conventions/tests.md"]
 ---
@@ -24,7 +24,7 @@ Before adding a feature, read [architecture.md](../architecture.md) so you know 
 
 ## 1. Add a new public method on `Db`
 
-Example: `collections()` lists collection names that have a manifest under the tenant prefix.
+Illustrative example (no such method ships; `physicalPrefixFor` stands in for the tenant-prefix helper): `collections()` lists collection names that have a manifest under the tenant prefix.
 
 ### Where to add the method
 
@@ -173,7 +173,7 @@ For `update`, validate the merged result. A partial patch such as `{ status: "cl
 
 `_id` is part of the validated shape and is required. The post-image always carries `_id` (the server mints a UUIDv7 for inserts that omit it), so the schema must assert it — author `_id: z.string()`, not `.optional()`.
 
-For any field that may be **absent**, reach for `.optional()`, not `.nullable()`. `DocumentValue` has no `null` member — RFC 7396 merge-patch (which `applyMergePatch()` in `packages/protocol/src/json.ts` implements) treats `null` in an update patch as a deletion sentinel, not a stored value. A schema declaring `assignee: z.string().nullable()` type-checks but diverges from runtime: the type says `string | null`, but a `find()` call returns the field as `undefined` (absent), never `null`. If you need to teach the merge-patch semantics, frame it as "passing `tags: null` in an update deletes the field," not "the field can hold null."
+For any field that may be **absent**, reach for `.optional()`, not `.nullable()`. `DocumentValue` has no `null` member — RFC 7396 merge-patch (which `applyMergePatch()` in `packages/protocol/src/json.ts` implements) treats `null` in an update patch as a deletion sentinel, not a stored value. A schema declaring `assignee: z.string().nullable()` type-checks but diverges from runtime: the type says `string | null`, but a `get()` call returns the field as `undefined` (absent), never `null`. If you need to teach the merge-patch semantics, frame it as "passing `tags: null` in an update deletes the field," not "the field can hold null."
 
 A multi-row `update()` is **not** transactional across rows. Validation runs per row on the merged post-image, and each row commits independently: if row N fails, rows 0..N-1 are already committed and stay committed, and the call throws `BaerlyError{code:"SchemaError"}` on row N. The schema boundary inherits the per-row atomicity contract; it does not add all-or-nothing semantics on top of it.
 
@@ -207,7 +207,7 @@ Collection schemas are application validation. Protocol artifact schemas are com
 - **`CurrentJson`** carries the protocol artifact schema version. Its `schema_version` field (currently `3`, constant `CURRENT_JSON_SCHEMA_VERSION` in `packages/protocol/src/constants.ts`) is bumped monotonically on any breaking change to `CurrentJson` field semantics; readers must reject unknown major versions with `BaerlyError{code:"InvalidResponse"}`. Adding a new optional field to `CurrentJson` is non-breaking.
 - **`LogEntry`** is versionless/additive-only and has a separate forward/backward-compatibility policy documented in [`docs/spec/log-entry-shape.md`](../../docs/spec/log-entry-shape.md). New optional fields are additive; renaming, removing, repurposing, or narrowing a field is a breaking wire change. Since 0.3.0, `LogEntry` is a public early-access baseline; it is still pre-1.0 and soaking, but those changes require an explicit compatibility decision, changelog/migration notes, and a versioned release.
 
-`LogEntry` does not carry its own `schema_version` field, and there is no out-of-band announcement opcode today — `op` is the closed union `"I" | "U" | "D"`. If a schema-change announcement channel is ever needed, it would arrive as a deliberate major-version migration (a new `op` value or a top-level `_v` field — see [`docs/spec/log-entry-shape.md` §Stability](../../docs/spec/log-entry-shape.md)), not via an existing opcode. Document-level rewrite tooling is application-layer work; the protocol does not supply rewrite logic.
+`LogEntry` does not carry its own `schema_version` field, and there is no out-of-band announcement opcode today — `op` is the closed union `"I" | "U" | "D"`. If a schema-change announcement channel is ever needed, it would arrive as a deliberate major-version migration (a new `op` value with a wire-version bump — see [`docs/spec/log-entry-shape.md` §Stability](../../docs/spec/log-entry-shape.md)), not via an existing opcode. Document-level rewrite tooling is application-layer work; the protocol does not supply rewrite logic.
 
 ---
 

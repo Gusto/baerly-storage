@@ -2,7 +2,7 @@
 title: docs/ — topic map
 audience: meta
 summary: Index of everything under docs/, organized by reader job (understand, evaluate, build, operate, change code) and single-sourced by ownership.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-11-25
 tags: [index, navigation]
 related: ["../CLAUDE.md", "spec/README.md", "adr/README.md"]
 ---

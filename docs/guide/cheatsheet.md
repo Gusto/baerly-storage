@@ -2,7 +2,7 @@
 title: Cheat sheet
 audience: integrator
 summary: One-screen quick reference — verbs, modifiers, errors, and the HTTP wire. The thing to show someone in 30 seconds.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-11-25
 tags: [quickref, integrator]
 related: ["add-to-existing-cf-worker.md", "auth.md"]
 ---
@@ -76,6 +76,8 @@ One class, `BaerlyError`. Discriminate by `.code` (survives realm boundaries), n
 | `WriteConflict` | 409 | Lost a write race; re-read, then retry (`retriable`) |
 | `AlreadyExists` | 409 | `insert` `_id` collision (duplicate `_id`); never retry |
 | `AmbiguousCommit` | 409 | A committing create may be durable, but its outcome could not be resolved |
+| `CapacityExceeded` | 409 | Collection or request is past what this host can hold or read; not retriable unchanged — narrow the query or delete rows |
+| `MaintenancePending` | 503 | Write refused while maintenance catches up; wait `retryAfter` seconds (`Retry-After` header), then repeat |
 | `Unauthorized` | 401 | Verifier returned no identity |
 | `AccessDenied` | 403 | S3 403 or bucket policy denied |
 | `NotFound` | 404 | Row by id not found |

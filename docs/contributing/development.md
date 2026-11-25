@@ -2,7 +2,7 @@
 title: Developer setup
 audience: coder
 summary: "Local dev: pnpm, MinIO + Toxiproxy + Postgres stack, test commands, and troubleshooting."
-last-reviewed: 2026-06-28
+last-reviewed: 2026-11-25
 tags: [development, setup, tests, troubleshooting]
 related: ["../../CLAUDE.md"]
 ---
@@ -28,8 +28,8 @@ The full suite is run with vitest:
 
 ```sh
 pnpm test                                   # build + default Vitest project
-pnpm exec vitest run packages/protocol/src/json.test.ts   # one file
-pnpm exec vitest run -t "subscribe"               # tests whose name matches
+pnpm test packages/protocol/src/json.test.ts   # one file
+pnpm test -t "subscribe"                       # tests whose name matches
 pnpm test:randomize                         # one higher-run randomized pass
 ```
 
@@ -79,7 +79,7 @@ docker compose -p baerly-storage-alt up -d --wait
 ## Type checking, formatting, linting
 
 ```sh
-pnpm typecheck        # tsc --noEmit (TypeScript 7 in strict mode)
+pnpm typecheck        # tsc --noEmit, then the Workers program (tsconfig.cloudflare.json); TypeScript 7, strict
 pnpm format           # oxfmt (writes in place)
 pnpm format:check     # oxfmt --check (no writes; CI mode)
 pnpm lint             # oxlint

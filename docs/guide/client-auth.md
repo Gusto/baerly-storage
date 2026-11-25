@@ -2,7 +2,7 @@
 title: Browser → server auth
 audience: integrator
 summary: Browser-to-server auth recipes for dev/prod Cloudflare and Node postures.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-11-25
 tags: [client, auth, integration]
 related: ["./auth.md"]
 ---
