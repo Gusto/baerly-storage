@@ -678,9 +678,10 @@ export const runTreeGcTick = async (input: TreeGcInput): Promise<TreeGcTickResul
     }
     break;
   }
-  // Records of an untrusted identity are retired leak-only, named or not.
+  // Closed records of an untrusted identity are retired leak-only. Open
+  // records still protect nodes an in-flight publication may have adopted.
   for (const record of records) {
-    if (untrusted.has(record.attempt)) {
+    if (untrusted.has(record.attempt) && steps.isClosed(record.floor, h)) {
       await retireRecord(record.key);
     }
   }
