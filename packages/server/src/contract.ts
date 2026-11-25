@@ -208,7 +208,7 @@ export interface SinceResponse {
  * | 404    | Doc not found → `code:"NotFound"`; from `GET /v1/c/:collection/:id` the body is a `HttpReadMissEnvelope`, carrying the read's `_meta`. NOT used for "tenant unknown" (→ 401). |
  * | 409    | Lost race → `code:"WriteConflict"` (retriable, generic message). Create target exists → `code:"AlreadyExists"` (not retriable, message kept). Unresolved commit → `code:"AmbiguousCommit"` (not retriable, carries `_id`). |
  * | 409    | The request needs more work than this host does in one request → `code:"CapacityExceeded"` (not retriable, message kept; a read returns no rows, a write commits nothing). |
- * | 410    | `/v1/since` cursor can no longer resume → `code:"CursorExpired"` (not retriable, message kept; restart with `cursor: ""`). |
+ * | 410    | `/v1/since` cursor can no longer resume → `code:"CursorExpired"` (not retriable, message kept; re-read, then resume from the re-read's `_meta.since_cursor`; `cursor: ""` also resumes but can miss a change committed in between). |
  * | 413    | Request body exceeded `MAX_BODY_BYTES` → `code:"PayloadTooLarge"`. |
  * | 415    | `POST` / `PATCH` / `PUT` body not typed `application/json` (or `+json`) → `code:"UnsupportedMediaType"`, refused before the body is read. |
  * | 503    | Maintenance is behind → `code:"MaintenancePending"` (retriable, message kept, `Retry-After` header and `retryAfter` seconds). |

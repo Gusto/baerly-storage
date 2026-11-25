@@ -29,8 +29,10 @@ describe("CODE_RESOLUTIONS", () => {
     expect(text).not.toMatch(/BAERLY_|PROFILE|env|cf-paid|wrangler/i);
   });
 
-  test("CursorExpired says to restart the cursor, never to fix the input or retry it", () => {
+  test("CursorExpired says to resume from a re-read, never to fix the input or retry it", () => {
     const text = CODE_RESOLUTIONS.CursorExpired!;
+    expect(text).toMatch(/re-read/);
+    expect(text).toContain("_meta.since_cursor");
     expect(text).toContain('cursor: ""');
     expect(text).toMatch(/do not retry/i);
     expect(text).not.toMatch(/BAERLY_|PROFILE|env|cf-paid|wrangler/i);

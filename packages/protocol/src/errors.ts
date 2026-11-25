@@ -123,9 +123,12 @@ export type BaerlyErrorCode =
    * succeeds again. Either the changes after it are no longer retained
    * (maintenance retired them), or it was minted in a generation that
    * `baerly admin restore --force` has since truncated. Re-read the rows
-   * the subscriber shows, then resume with `cursor: ""`: the changes
-   * between the dead cursor and the restart are not replayed. A
-   * malformed cursor is `SchemaError` instead. HTTP maps this code to 410
+   * the subscriber shows, then resume from that read's
+   * `_meta.since_cursor`: the changes between the dead cursor and the
+   * re-read are not replayed, and the re-read already shows them.
+   * `cursor: ""` also resumes, but can miss a change that commits
+   * between the read and the poll. A malformed cursor is `SchemaError`
+   * instead. HTTP maps this code to 410
    * and keeps the message.
    */
   | "CursorExpired"

@@ -1248,7 +1248,7 @@ export const runHttpConformanceCascade = (opts: {
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("CursorExpired");
         expect(env.error?.retriable).toBe(false);
-        expect(env.error?.resolution).toContain('cursor: ""');
+        expect(env.error?.resolution).toContain("_meta.since_cursor");
       });
 
       // Idle-poll wire shape: with no writes between two back-to-back

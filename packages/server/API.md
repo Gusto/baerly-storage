@@ -298,7 +298,7 @@ try {
 | `AmbiguousCommit`        | 409  | Commit may be durable; outcome unresolved        |
 | `CapacityExceeded`       | 409  | Too much work for one request on this host       |
 | `MaintenancePending`     | 503  | Maintenance behind; wait `retryAfter` seconds    |
-| `CursorExpired`          | 410  | `/v1/since` cursor dead; restart with `cursor=`  |
+| `CursorExpired`          | 410  | Dead cursor; re-read, use `_meta.since_cursor`   |
 | `Unauthorized`           | 401  | Verifier returned no identity                    |
 | `NotFound`               | 404  | Row by id not found                              |
 | `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                 |

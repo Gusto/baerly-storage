@@ -82,7 +82,7 @@ One class, `BaerlyError`. Discriminate by `.code` (survives realm boundaries), n
 | `PayloadTooLarge` | 413 | Body > 1 MiB |
 | `UnsupportedMediaType` | 415 | `POST` / `PATCH` / `PUT` body not sent as `application/json` |
 | `UnsatisfiablePredicate` | 400 | Well-formed predicate that contradicts itself |
-| `CursorExpired` | 410 | `/v1/since` cursor can no longer resume; restart with `cursor=` |
+| `CursorExpired` | 410 | `/v1/since` cursor can no longer resume; re-read, then resume from the re-read's `_meta.since_cursor` (`cursor=` can miss a change committed in between) |
 | `NetworkError` | 502 | Transport (S3 5xx, retries exhausted) |
 | `InvalidResponse` | 502 | Server returned unparseable body |
 | `Internal` | 500 | Invariant violation — file a bug |

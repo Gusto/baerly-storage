@@ -120,7 +120,7 @@
       "httpStatus": 410,
       "retriable": false,
       "messagePolicy": "public",
-      "summary": "A /v1/since cursor can no longer resume (its changes are no longer retained, or its generation was truncated); re-read, then restart with cursor \"\". Never retriable."
+      "summary": "A /v1/since cursor can no longer resume (its changes are no longer retained, or its generation was truncated); re-read, then resume from the re-read's _meta.since_cursor (cursor \"\" also resumes, but can miss a change committed between the read and the poll). Never retriable."
     },
     {
       "code": "UseQueryAwaitedRecorder",
