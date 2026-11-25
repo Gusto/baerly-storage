@@ -2,7 +2,7 @@
 title: Features → code map
 audience: coder
 summary: Feature-by-feature pointers into source, tests, and docs.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-11-25
 tags: [index, features, code-map]
 related: ["../architecture.md", "../spec/README.md", "../adr/README.md"]
 ---
@@ -147,7 +147,7 @@ Apps may attach a StandardSchemaV1-compatible validator (Zod 3.24+, Valibot 0.36
 
 - Implementation: [`packages/server/src/schema.ts`](../../packages/server/src/schema.ts) (`SchemaValidator`, `SchemaIssue`, `validateOrThrow`), [`packages/server/src/config.ts`](../../packages/server/src/config.ts) (`CollectionDefinition.schema`), [`packages/server/src/query.ts`](../../packages/server/src/query.ts) (validation hooks in `runInsert` / `runUpdate` / `runReplaceById`)
 - Tests: [`packages/server/src/schema.test.ts`](../../packages/server/src/schema.test.ts), [`tests/integration/collection-api.test.ts`](../../tests/integration/collection-api.test.ts) (schema-validation block in the cascade)
-- Docs: [`docs/extending.md`](./extending.md) §"Declare a schema for a collection"
+- Docs: [`docs/contributing/extending.md`](./extending.md) §"Declare a schema for a collection"
 
 ## Operator CLI — `baerly inspect`
 

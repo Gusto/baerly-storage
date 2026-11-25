@@ -3,7 +3,7 @@ title: Single-write commit — the numbered log append is the commit
 audience: adr
 doc_type: adr
 summary: ADR 004 — a commit is one linearizable `If-None-Match:"*"` create on `log/<seq>`; `current.json` is not commit authority. The full algorithm lives in sync-protocol.md; this record keeps the commit-authority guardrail and the rejected two-write / reverse-LIST paths.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-11-25
 tags: [decision, adr, sync-protocol, runtime-model]
 related:
   [

@@ -2,7 +2,7 @@
 title: Mutation testing
 audience: maintainer
 summary: "Manual StrykerJS mutation testing scoped to the protocol kernel: pnpm test:mutate."
-last-reviewed: 2026-06-23
+last-reviewed: 2026-11-25
 tags: [testing, mutation, stryker, protocol]
 related: ["./conventions/tests.md", "../../CLAUDE.md"]
 ---
@@ -25,7 +25,7 @@ The server, adapters, and Workerd/Minio-gated suites are deliberately out of sco
 pnpm test:mutate
 ```
 
-This is a **manual, on-demand reporting tool**. It is intentionally NOT part of `pnpm verify`, `pnpm test`, or CI: a full run mutates well over a thousand mutants and takes several minutes. Because `thresholds.break: null`, the command exits 0 regardless of score.
+This is a **manual, on-demand reporting tool**. It is intentionally NOT part of `pnpm verify`, `pnpm test`, or CI: a full run mutates well over a thousand mutants and takes several minutes. Because no `thresholds.break` is configured (Stryker's default is `null`), the command exits 0 regardless of score.
 
 What CI does run is the setup half:
 

@@ -2,7 +2,7 @@
 title: Backups via baerly admin dump
 audience: operator
 summary: Safe NDJSON backup, retention, restore, and restore-drill defaults.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-11-25
 tags: [operations, backups, restore]
 related: ["../about/cost-model.md", "operations.md"]
 ---
@@ -124,7 +124,7 @@ Restore validates each line before committing it, in stream order. It refuses (`
 
 Restore is row-committing, not file-atomic: validation is per row. Rows before the failing line are committed; the failing line and later lines are not, and the error message reports how many rows were committed. The same holds for malformed NDJSON (exit 2) or a mid-stream storage failure. Recover by restoring again into a fresh target, or with `--force`. There is no whole-stream pre-validation pass, because stdin is a stream.
 
-On R2's Class A billing meter, before any in-band maintenance from a long import, restore's base billable shapes are: fresh non-empty `N + 2` for N rows (initial `current.json` seed, one committing `log/<seq>` create per row, final metadata/tail write); force non-empty `N + 2 + P`; fresh empty `1`; and force empty `1 + P`. `P` is the number of provider LIST pages consumed by the one `Storage.list()` iterator in `tailFromListedLogKeys`; one iterator invocation can issue multiple billable LIST requests. Maintenance adds the same measured profile overhead as the main cost model.
+On R2's Class A billing meter, before any in-band maintenance from a long import, restore's base billable shapes are: fresh non-empty `N + 2` for N rows (initial `current.json` seed, one committing `log/<seq>` create per row, final metadata/tail write); force non-empty `N + 2 + P`; fresh empty `1`; and force empty `1 + P`. `P` is the number of provider LIST pages consumed by the one `Storage.list()` iterator in `oldGenerationTail`; one iterator invocation can issue multiple billable LIST requests. Maintenance adds the same measured profile overhead as the main cost model.
 
 For production recovery, treat restore as a cutover to a proven copy, not as an overwrite of the live prefix. Do not restore over the live prefix while writers are still active.
 

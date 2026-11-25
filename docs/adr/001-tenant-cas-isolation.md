@@ -3,7 +3,7 @@ title: Tenant CAS isolation
 audience: adr
 doc_type: adr
 summary: ADR 001 — tenant isolation is by key prefix, and commit/control scope is per collection. The live per-collection contract lives in sync-protocol.md; this record keeps the decision and the rejected per-tenant-CAS and lease paths.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-11-25
 tags: [decision, adr]
 related:
   [

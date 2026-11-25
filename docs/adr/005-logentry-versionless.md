@@ -3,7 +3,7 @@ title: LogEntry is versionless and additive-only
 audience: adr
 doc_type: adr
 summary: ADR 005 — LogEntry carries no schema_version; the live wire contract is versionless/additive-only and is owned by spec/log-entry-shape.md.
-last-reviewed: 2026-06-29
+last-reviewed: 2026-11-25
 tags: [decision, adr, log, contract]
 related:
   [
