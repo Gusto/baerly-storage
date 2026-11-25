@@ -206,6 +206,13 @@ export interface CommitAdmission {
   /** The log tail the caller's decision folded through. */
   readonly fromSeq: number;
   /**
+   * The caller's decision found that a fold after this commit would
+   * rebuild the snapshot past `C` and defer, so the post-commit tick
+   * leaves the count arm of the fold trigger (`foldAtTailEntries`) off.
+   * A {@link CommitVerdict} replaces it.
+   */
+  readonly foldWouldDefer?: boolean;
+  /**
    * Re-decide over `window`, every entry in `[fromSeq, tail)` in seq
    * order, where `tail` is the slot the next create targets. Throw to
    * refuse the commit. The verdict of the last call before the winning
@@ -228,6 +235,8 @@ export interface CommitVerdict {
    * {@link CommitInput.forceMaintenance} does.
    */
   readonly forceMaintenance?: boolean;
+  /** Replaces {@link CommitAdmission.foldWouldDefer} for this commit. */
+  readonly foldWouldDefer?: boolean;
   /**
    * The post-image to commit instead of {@link CommitInput.body}; valid
    * only on a `U`, and identity-checked like the input body.
@@ -586,6 +595,9 @@ export class Writer {
     let commitWindow: LogEntry[] | undefined;
     // Whether the latest `admission.check` asked to force the write tick.
     let admissionForces = false;
+    // Whether the latest decision found that a fold after this commit
+    // would defer: the admission's, until a verdict replaces it.
+    let foldWouldDefer = admission?.foldWouldDefer === true;
     // The post-image this attempt commits: the input's, or the latest
     // `admission.check` verdict's.
     let body = input.body;
@@ -595,6 +607,7 @@ export class Writer {
       }
       const verdict = await admission.check(window, tail);
       admissionForces = verdict?.forceMaintenance === true;
+      foldWouldDefer = verdict?.foldWouldDefer ?? admission.foldWouldDefer === true;
       if (verdict?.body !== undefined) {
         if (input.op !== "U") {
           throw new BaerlyError(
@@ -874,7 +887,8 @@ export class Writer {
     const maintenanceDue =
       maint?.disabled === true
         ? observedTail - current.tail_hint >= MAINTENANCE_TAIL_HINT_REFRESH_WRITES
-        : forceFold || shouldFireMaintenance(current, prevSeq, profile, observedTail);
+        : forceFold ||
+          shouldFireMaintenance(current, prevSeq, profile, observedTail, { foldWouldDefer });
     if (maintenanceDue) {
       await dispatchWriteTick({
         storage: this.#storage,
@@ -883,6 +897,7 @@ export class Writer {
         prevSeq,
         observedTail,
         ...(forceFold && { forceFold: true }),
+        ...(foldWouldDefer && { foldWouldDefer: true }),
       });
     }
 

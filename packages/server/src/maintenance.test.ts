@@ -540,6 +540,10 @@ describe("shouldFireMaintenance", () => {
     expect(shouldFireMaintenance(at, at.tail_hint, profile, at.tail_hint)).toBe(true);
     const under = base({ tail_hint: q + 4, log_seq_start: 5, mean_entry_bytes: 0 });
     expect(shouldFireMaintenance(under, under.tail_hint, profile, under.tail_hint)).toBe(false);
+    // The verb found the fold would defer: the count arm stays off.
+    expect(
+      shouldFireMaintenance(at, at.tail_hint, profile, at.tail_hint, { foldWouldDefer: true }),
+    ).toBe(false);
   });
 
   test("does not fire when no arm trips", () => {

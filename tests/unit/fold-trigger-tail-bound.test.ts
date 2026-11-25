@@ -134,3 +134,105 @@ describe("the write tick bounds the live tail by entry count", () => {
     });
   }
 });
+
+describe("the count arm skips a fold that cannot land", () => {
+  /**
+   * A small host: `C` = 16 KiB, a 10-entry pass and a count arm of 4.
+   * Production Node runs both phases per tick.
+   */
+  const SMALL_C = 16 * 1024;
+  const SMALL: MaintenanceProfile = {
+    ...MAINTENANCE_PROFILE_NODE,
+    maxFoldBytes: SMALL_C,
+    maxFoldEntriesPerPass: 10,
+    foldAtTailEntries: 4,
+  };
+  const SEED_DOCS = 10;
+  const SEED_BLOB = "x".repeat(1000);
+  const UNTICKED = createObservabilityContext({ maintenance: { disabled: true } });
+
+  interface TickTraffic {
+    readonly snapshotGets: number;
+    readonly snapshotPuts: number;
+  }
+
+  test("a tail whose first pass rebuilds past C costs its ticks no snapshot GET or rebuild until a write makes it fit", async () => {
+    const inner = new MemoryStorage();
+    let snapshotGets = 0;
+    let snapshotPuts = 0;
+    const storage: Storage = {
+      get: (key, opts) => {
+        if (key.includes("/snapshot/")) {
+          snapshotGets += 1;
+        }
+        return inner.get(key, opts);
+      },
+      put: (key, body, opts) => {
+        if (key.includes("/snapshot/")) {
+          snapshotPuts += 1;
+        }
+        return inner.put(key, body, opts);
+      },
+      delete: (key, opts) => inner.delete(key, opts),
+      list: (prefix, opts) => inner.list(prefix, opts),
+    };
+    const docs = Db.create({ storage, app: APP, tenant: TENANT }).collection(COLL);
+
+    // Seed on a larger host: a ~10 KiB snapshot under SMALL's C, then one
+    // update that grows d0 so the snapshot folded through it is past it.
+    // That is the state a host move, or a lowered C, leaves behind.
+    await runWithContext(UNTICKED, async () => {
+      for (let i = 0; i < SEED_DOCS; i++) {
+        await docs.insert({ _id: `d${i}`, n: i, blob: SEED_BLOB });
+      }
+    });
+    await runMaintenancePass(
+      { storage: inner, currentJsonKey: CURRENT_JSON_KEY },
+      { compact: { minEntriesToCompact: 1 } },
+    );
+    await runWithContext(UNTICKED, () => docs.update("d0", { blob: "x".repeat(8000) }));
+    const seeded = (await readCurrentJson(inner, CURRENT_JSON_KEY))!.json;
+    expect(seeded.log_seq_start).toBe(SEED_DOCS);
+    expect(seeded.snapshot_bytes).toBeLessThan(SMALL_C);
+
+    // On SMALL, same-size updates are admitted (the run past C stays
+    // shorter than a pass). Each write's tick is captured and run on its
+    // own, so its traffic is measured apart from the write's own read.
+    const ticks: Array<() => Promise<void>> = [];
+    const ctx = createObservabilityContext({
+      maintenance: {
+        options: { profile: SMALL, phasesPerTick: "both" },
+        dispatch: (task) => {
+          ticks.push(task);
+        },
+      },
+    });
+    const writeAndTick = async (run: () => Promise<unknown>): Promise<TickTraffic> => {
+      await runWithContext(ctx, run);
+      const gets = snapshotGets;
+      const puts = snapshotPuts;
+      for (const tick of ticks.splice(0)) {
+        await tick();
+      }
+      return { snapshotGets: snapshotGets - gets, snapshotPuts: snapshotPuts - puts };
+    };
+
+    const stuck: TickTraffic[] = [];
+    for (let i = 0; i < 6; i++) {
+      stuck.push(await writeAndTick(() => docs.update("d1", { n: 2 + i })));
+    }
+    // The tail (7 entries) passed the count arm (4), and nothing folded.
+    await expect(readCurrentJson(inner, CURRENT_JSON_KEY)).resolves.toMatchObject({
+      json: { log_seq_start: SEED_DOCS },
+    });
+    expect(stuck).toEqual(Array.from({ length: 6 }, () => ({ snapshotGets: 0, snapshotPuts: 0 })));
+
+    // A write that brings the snapshot back within C ends the run, and the
+    // count arm folds the whole tail on that write's tick.
+    const unstuck = await writeAndTick(() => docs.update("d0", { blob: SEED_BLOB }));
+    expect(unstuck.snapshotPuts).toBe(1);
+    await expect(readCurrentJson(inner, CURRENT_JSON_KEY)).resolves.toMatchObject({
+      json: { log_seq_start: SEED_DOCS + 8 },
+    });
+  });
+});

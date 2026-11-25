@@ -203,6 +203,16 @@ export type CapacityDecision =
        * pending tail frees room or the tail holds a full fold pass.
        */
       readonly pressure: boolean;
+      /**
+       * Per planned write, in order: whether a fold the write tick runs
+       * once that write commits lands. A fold rebuilds at most one pass
+       * from `log_seq_start` and publishes its longest prefix within `C`,
+       * so it lands when some seq in that pass, through this write, leaves
+       * the snapshot within `C`. Otherwise it would rebuild the snapshot
+       * and defer, and the writer keeps the count arm of the fold trigger
+       * off that tick (`CommitAdmission.foldWouldDefer`).
+       */
+      readonly foldLands: readonly boolean[];
     }
   | {
       /** The `CapacityExceeded` refusal to throw. */
@@ -257,7 +267,7 @@ export const capacityDecision = (args: {
 }): CapacityDecision => {
   const { collection, head, base, tail, writes, ceilings } = args;
   if (writes.length === 0) {
-    return { refusal: undefined, pressure: false };
+    return { refusal: undefined, pressure: false, foldLands: [] };
   }
   const { maxFoldRows: maxRows, maxFoldBytes: maxBytes } = ceilings;
   const byteLimit = maxBytes - CAPACITY_BYTES_MARGIN;
@@ -292,6 +302,8 @@ export const capacityDecision = (args: {
   // ended by later entries.
   const pass = ceilings.maxFoldEntriesPerPass;
   let overRun = 0;
+  // Whether a seq in the first pass leaves the snapshot within `C`.
+  let firstPassFits = false;
   for (const [i, entry] of tail.entries()) {
     if (isOwnCollection(entry.collection, collection)) {
       // Where `compact()` stops: a row-adding entry at `E` rows.
@@ -305,6 +317,7 @@ export const capacityDecision = (args: {
     // The snapshot folded through this seq, exactly as compact() sizes it against `C`.
     const rebuilt = projection.bytesAt(head.log_seq_start + i + 1);
     overRun = rebuilt <= maxBytes ? 0 : overRun + 1;
+    firstPassFits ||= i < pass && rebuilt <= maxBytes;
     if (!(overRun < pass)) {
       return noProgress(
         `${overRun} pending entries in a row each leave the snapshot past ${maxBytes} bytes`,
@@ -360,32 +373,40 @@ export const capacityDecision = (args: {
    * The first write `p` refuses, applying every write onto `p` from a
    * state `overRun` seqs into a run over `C`: a growth write past the
    * growth limit, or any write that would complete a wall of `pass` seqs
-   * over `C` (`stranded`), which it would itself sit behind.
+   * over `C` (`stranded`), which it would itself sit behind. Pushes each
+   * admitted write's `foldLands` entry onto `foldLands` when given.
    */
   const firstRefused = (
     p: SnapshotProjection,
     run: number,
+    foldLands?: boolean[],
   ): { write: PlannedWrite; stranded: boolean } | undefined => {
+    let fits = firstPassFits;
     for (const [j, write] of writes.entries()) {
       const growth = isGrowth(write);
       p.apply(write.op, write.docId, write.after);
       if (growth && (!(p.peakRows < maxRows) || !(p.peakBytes <= byteLimit))) {
         return { write, stranded: false };
       }
-      run = p.bytesAt(head.log_seq_start + tail.length + j + 1) <= maxBytes ? 0 : run + 1;
+      const within = p.bytesAt(head.log_seq_start + tail.length + j + 1) <= maxBytes;
+      run = within ? 0 : run + 1;
       if (!(run < pass)) {
         return { write, stranded: true };
       }
+      fits ||= tail.length + j < pass && within;
+      foldLands?.push(fits);
     }
     return undefined;
   };
 
-  const first = firstRefused(projection, overRun);
+  const foldLands: boolean[] = [];
+  const first = firstRefused(projection, overRun, foldLands);
   if (first === undefined) {
     const warning = warningFor(projection.peakRows, projection.peakBytes, maxRows, byteLimit);
     return {
       refusal: undefined,
       pressure: forcesTick(projection),
+      foldLands,
       ...(warning !== undefined && { warning }),
     };
   }
